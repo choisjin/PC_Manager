@@ -30,6 +30,10 @@ internal static class Program
         if (args.Contains("--uninstall"))
             return Install.SetupUI.Uninstall(removeData: args.Contains("--purge"));
 
+        // 런처에서 멈춘 서비스를 다시 시작 (관리자 승격)
+        if (args.Contains("--start-service"))
+            return Install.ServiceControl.StartService();
+
         // 서버가 트리거하는 자가 업데이트: 창 없이 설치 (SYSTEM 권한 전제)
         if (args.Contains("--install") && args.Contains("--silent"))
             return Install.SetupUI.InstallSilent();

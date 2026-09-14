@@ -40,8 +40,45 @@ internal static class ServiceInstaller
         Run("sc.exe", $"config {AgentHost.ServiceName} start= delayed-auto");
         Run("sc.exe", $"failure {AgentHost.ServiceName} reset= 86400 actions= restart/5000/restart/5000/restart/5000");
 
+        CreateStartMenuShortcut(log);
+
         log("서비스 시작");
         Run("sc.exe", $"start {AgentHost.ServiceName}", allowFailure: true);
+    }
+
+    private static string StartMenuShortcutPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu), "Programs", "PC Manager 에이전트.lnk");
+
+    /// <summary>런처를 다시 열 수 있게 시작 메뉴 바로가기를 만든다 ([에이전트 종료] 후 재시작용).</summary>
+    private static void CreateStartMenuShortcut(Action<string> log)
+    {
+        try
+        {
+            var script =
+                "$s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:PCM_LNK); " +
+                "$s.TargetPath = $env:PCM_EXE; $s.Arguments = '--launcher'; " +
+                "$s.WorkingDirectory = Split-Path $env:PCM_EXE; $s.Description = 'PC Manager 에이전트'; $s.Save()";
+            var startInfo = new ProcessStartInfo("powershell.exe")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-ExecutionPolicy");
+            startInfo.ArgumentList.Add("Bypass");
+            startInfo.ArgumentList.Add("-Command");
+            startInfo.ArgumentList.Add(script);
+            startInfo.Environment["PCM_LNK"] = StartMenuShortcutPath;
+            startInfo.Environment["PCM_EXE"] = InstalledExePath;
+
+            using var process = Process.Start(startInfo)!;
+            process.WaitForExit(TimeSpan.FromSeconds(20));
+        }
+        catch (Exception ex)
+        {
+            // 바로가기 실패는 설치를 막지 않는다
+            log($"경고: 시작 메뉴 바로가기 생성 실패: {ex.Message}");
+        }
     }
 
     public static void Uninstall(bool removeData, Action<string> log)
@@ -51,6 +88,16 @@ internal static class ServiceInstaller
         {
             log("서비스 삭제");
             Run("sc.exe", $"delete {AgentHost.ServiceName}", allowFailure: true);
+        }
+
+        try
+        {
+            if (File.Exists(StartMenuShortcutPath))
+                File.Delete(StartMenuShortcutPath);
+        }
+        catch (IOException)
+        {
+            // 무시
         }
 
         // 실행 파일은 지금 실행 중일 수 있어(Program Files에서 실행된 경우) 재부팅 후 정리하도록 남긴다

@@ -11,6 +11,9 @@ public static class LocalControl
     public const string ConnectCommand = "connect";
     public const string DisconnectCommand = "disconnect";
     public const string UpdateCommand = "update";
+
+    /// <summary>에이전트 서비스(프로세스)를 완전히 종료</summary>
+    public const string StopCommand = "stop";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ConnectionStatus>))]

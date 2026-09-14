@@ -21,12 +21,16 @@ internal sealed class LauncherContext : ApplicationContext
         _form.DisconnectRequested += () => _ = SendAsync(new LocalRequest(LocalControl.DisconnectCommand), StatusTimeout);
         _form.UpdateRequested += () => _ = SendAsync(new LocalRequest(LocalControl.UpdateCommand), TimeSpan.FromMinutes(3));
         _form.DashboardRequested += OpenDashboard;
+        _form.StopRequested += () => _ = StopAgentAsync();
+        _form.StartRequested += StartAgent;
         // 창 핸들을 미리 만들어 다른 스레드에서 BeginInvoke할 수 있게 한다
         _ = _form.Handle;
 
         var menu = new ContextMenuStrip();
         menu.Items.Add("열기", null, (_, _) => ShowForm());
         menu.Items.Add("대시보드 열기", null, (_, _) => OpenDashboard());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("에이전트 종료", null, (_, _) => _ = StopAgentAsync());
 
         _tray = new NotifyIcon
         {
@@ -81,6 +85,40 @@ internal sealed class LauncherContext : ApplicationContext
             _form.ShowError(response.Error);
     }
 
+    /// <summary>에이전트 서비스를 완전히 종료하고 런처도 닫는다.</summary>
+    private async Task StopAgentAsync()
+    {
+        _form.SetBusy(LocalControl.StopCommand);
+        var response = await LocalControlClient.SendAsync(new LocalRequest(LocalControl.StopCommand), StatusTimeout);
+        _form.SetBusy(null);
+
+        // Ok(서비스가 곧 멈춤) 또는 이미 꺼져 있으면(Status null) 런처 종료
+        if (response.Ok || response.Status is null)
+            ExitThread();
+        else if (response.Error is not null)
+            _form.ShowError(response.Error);
+    }
+
+    /// <summary>멈춘 에이전트 서비스를 다시 시작한다 (별도 프로세스가 관리자 승격).</summary>
+    private void StartAgent()
+    {
+        _form.SetBusy("start");
+        try
+        {
+            Process.Start(new ProcessStartInfo(Environment.ProcessPath!)
+            {
+                Arguments = "--start-service",
+                UseShellExecute = false,
+            });
+            // 서비스가 뜨면 다음 상태 조회에서 자동으로 반영된다
+        }
+        catch (Exception ex)
+        {
+            _form.ShowError($"시작 실패: {ex.Message}");
+        }
+        _form.SetBusy(null);
+    }
+
     private void Apply(LocalResponse response)
     {
         var status = response.Status;
@@ -92,7 +130,7 @@ internal sealed class LauncherContext : ApplicationContext
             ConnectionStatus.Connecting => (TrayIcons.Connecting, "연결 중"),
             ConnectionStatus.Disconnected => (TrayIcons.Disconnected, "연결 끊김"),
             ConnectionStatus.NotConfigured => (TrayIcons.Disconnected, "서버 주소 필요"),
-            _ => (TrayIcons.Unknown, "서비스 꺼짐"),
+            _ => (TrayIcons.Unknown, "에이전트 꺼짐"),
         };
         if (status?.Updating == true)
             text = "업데이트 중";

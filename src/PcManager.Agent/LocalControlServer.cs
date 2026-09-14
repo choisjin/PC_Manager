@@ -12,6 +12,7 @@ public class LocalControlServer(
     AgentSettingsStore settings,
     AgentStatusTracker status,
     AgentUpdater updater,
+    IHostApplicationLifetime lifetime,
     ILogger<LocalControlServer> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -129,6 +130,16 @@ public class LocalControlServer(
                 updater.Start(null);
                 status.SetUpdating(true);
                 logger.LogInformation("런처에서 업데이트 시작");
+                return Ok();
+
+            case LocalControl.StopCommand:
+                logger.LogInformation("런처에서 에이전트 종료 요청");
+                // 응답이 런처에 전달된 뒤 서비스를 멈춘다
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(500);
+                    lifetime.StopApplication();
+                });
                 return Ok();
 
             default:
