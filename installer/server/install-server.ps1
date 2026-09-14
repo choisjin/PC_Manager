@@ -4,19 +4,22 @@
 
 .DESCRIPTION
   서버 패키지 압축을 푼 폴더에서 관리자 PowerShell로 실행합니다.
-  - 에이전트 토큰 자동 생성 (업그레이드 시 기존 토큰 유지)
+  - 에이전트는 서버 주소만으로 연결 (인증 없음). 내부망 전용.
   - 데이터(DB, 실행 로그, 결과 파일): C:\ProgramData\PcManager\Server\data
   - 방화벽 인바운드 허용, 서비스 자동 시작
 
 .EXAMPLE
   .\install-server.ps1
   .\install-server.ps1 -Port 8080 -PublicUrl http://pcmanager.mycompany.local:8080
+  .\install-server.ps1 -AgentToken (내부망이 아니라 토큰 인증을 쓰려는 고급 사용자용)
 #>
 param(
     [int] $Port = 5063,
     [string] $InstallDir = (Join-Path $env:ProgramFiles 'PcManager\Server'),
     # 에이전트가 접속할 주소. 비우면 이 PC의 IP 주소로 설정
-    [string] $PublicUrl
+    [string] $PublicUrl,
+    # 인증 토큰 (기본: 없음 = 주소만으로 연결). 지정하면 에이전트도 같은 값을 써야 함
+    [string] $AgentToken = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,8 +75,9 @@ if (-not $PublicUrl) {
         $PublicUrl = "http://$(Get-PrimaryIPv4):$Port"
     }
 }
-# 에이전트 인증 토큰: 기존 설정에 있으면 유지, 없으면 사용하지 않음(빈 값 = 주소만으로 연결)
-$token = if ($existingConfig) { [string]$existingConfig.Server.AgentToken } else { '' }
+# 에이전트 인증 토큰: 기본은 없음(주소만으로 연결). -AgentToken을 주면 그 값을 쓴다.
+# 업그레이드 시 이전에 토큰을 쓰던 서버라도 기본적으로 토큰을 제거한다(내부망 무인증 정책).
+$token = $AgentToken
 
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing -and $existing.Status -ne 'Stopped') {
