@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using PcManager.Shared;
 
 namespace PcManager.Agent;
 
@@ -12,7 +12,24 @@ public class AgentUpdater(
     ILogger<AgentUpdater> logger)
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(10) };
+
+    private static readonly string LogPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "PcManager", "Agent", "update.log");
+
     private int _started;
+
+    private static void FileLog(string message)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
+            File.AppendAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+        }
+        catch (IOException)
+        {
+            // 로그 실패는 무시
+        }
+    }
 
     /// <param name="setupUrl">설치 파일 URL. 비면 현재 서버 주소에서 받는다</param>
     public void Start(string? setupUrl)
@@ -32,6 +49,7 @@ public class AgentUpdater(
                 Interlocked.Exchange(ref _started, 0);
                 status.SetUpdating(false);
                 logger.LogError(ex, "에이전트 자가 업데이트 실패");
+                FileLog($"업데이트 준비 실패: {ex.Message}");
             }
         });
     }
@@ -39,35 +57,29 @@ public class AgentUpdater(
     private async Task RunAsync(string? setupUrl)
     {
         status.SetUpdating(true);
+        FileLog("=== 자가 업데이트 시작 ===");
 
         var url = !string.IsNullOrWhiteSpace(setupUrl)
             ? setupUrl
-            : new Uri(new Uri(settings.Current.ServerUrl), Shared.InstallPaths.AgentSetup).ToString();
+            : new Uri(new Uri(settings.Current.ServerUrl), InstallPaths.AgentSetup).ToString();
 
         var tempDir = Path.Combine(Path.GetTempPath(), "PcManagerUpdate", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
-        var setupPath = Path.Combine(tempDir, Shared.InstallPaths.AgentSetupFile);
+        var setupPath = Path.Combine(tempDir, InstallPaths.AgentSetupFile);
 
         logger.LogInformation("에이전트 업데이트 다운로드: {Url}", url);
+        FileLog($"다운로드: {url}");
         await using (var download = await Http.GetStreamAsync(url))
         await using (var file = new FileStream(setupPath, FileMode.Create, FileAccess.Write, FileShare.None))
         {
             await download.CopyToAsync(file);
         }
+        FileLog($"다운로드 완료: {new FileInfo(setupPath).Length} bytes");
 
-        // 설치기를 독립 프로세스로 실행한다. 설치기가 이 서비스를 멈추고 파일을 교체한 뒤 다시 시작한다.
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = setupPath,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = tempDir,
-        };
-        startInfo.ArgumentList.Add("--install");
-        startInfo.ArgumentList.Add("--elevated"); // SYSTEM이므로 UAC 승격 불필요
-        startInfo.ArgumentList.Add("--silent");    // 창 없이 설치
-
+        // 설치기를 부모(이 서비스)와 완전히 분리된 프로세스로 실행한다.
+        // 그래야 설치기가 이 서비스를 멈춘 뒤에도 살아남아 파일 교체·재시작을 끝낼 수 있다.
         logger.LogInformation("에이전트 설치기 실행 (곧 서비스가 재시작됩니다)");
-        Process.Start(startInfo);
+        FileLog("설치기 실행 (분리 프로세스)");
+        DetachedProcess.Start(setupPath, "--install --elevated --silent", tempDir);
     }
 }

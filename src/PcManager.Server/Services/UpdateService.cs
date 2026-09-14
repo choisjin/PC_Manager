@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -214,24 +213,15 @@ public class UpdateService
             var installer = Directory.EnumerateFiles(extractDir, "install-server.ps1", SearchOption.AllDirectories).FirstOrDefault()
                 ?? throw new InvalidOperationException("설치 스크립트를 찾을 수 없습니다.");
 
-            // 설치기는 서비스를 멈췄다 다시 시작하므로, 이 프로세스와 독립적으로 실행한다.
+            // 설치기는 이 서비스를 멈췄다 다시 시작하므로, 부모(이 서비스)와 완전히 분리해 실행한다.
+            // 그래야 서비스가 멈춘 뒤에도 설치기가 살아남아 파일 교체·재시작을 끝낼 수 있다.
             // 서버 서비스는 LocalSystem으로 실행되어 설치기가 관리자 권한을 갖는다.
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(installer)!,
-            };
-            startInfo.ArgumentList.Add("-NoProfile");
-            startInfo.ArgumentList.Add("-ExecutionPolicy");
-            startInfo.ArgumentList.Add("Bypass");
-            startInfo.ArgumentList.Add("-File");
-            startInfo.ArgumentList.Add(installer);
+            var powershell = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
 
             await SetServerPhaseAsync(UpdatePhase.Restarting, null);
             _logger.LogInformation("서버 설치기 실행: {Installer} (곧 서비스가 재시작됩니다)", installer);
-            Process.Start(startInfo);
+            DetachedProcess.Start(powershell, $"-NoProfile -ExecutionPolicy Bypass -File \"{installer}\"", Path.GetDirectoryName(installer));
             // 여기서 반환하면 곧 설치기가 이 서비스를 멈춘다. 새 버전이 다시 시작한다.
         }
         catch (Exception ex)
