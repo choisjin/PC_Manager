@@ -4,25 +4,24 @@
   배포 패키지를 만듭니다.
 
 .DESCRIPTION
-  artifacts 폴더에 두 개의 zip을 만듭니다.
-  - PcManager-Server-<버전>.zip : 서버 + 대시보드 + 에이전트 원격 설치 파일 + 설치 스크립트
-  - PcManager-Agent-<버전>.zip  : 에이전트 단독 설치용 (서버에 접속할 수 없는 PC에 수동 설치)
+  artifacts 폴더에 다음을 만듭니다.
+  - PcManager-Server-<버전>.zip     : 서버 + 대시보드 + 에이전트 설치 파일 + 설치 스크립트
+  - PcManager-Agent-Setup-<버전>.exe : 테스트 PC용 더블클릭 설치 파일 (단독 배포용)
 
-  필요: .NET 10 SDK, Node.js 20 이상. 결과물은 .NET 런타임 없이 실행되는 self-contained 빌드입니다.
+  에이전트는 단일 실행 파일 하나로 설치/서비스/런처를 모두 담당합니다.
+  필요: .NET 10 SDK, Node.js 20 이상. 결과물은 .NET 런타임 없이 실행됩니다.
 
 .EXAMPLE
   pwsh build/package.ps1
   pwsh build/package.ps1 -Version 0.3.0
 #>
 param(
-    # 비우면 Directory.Build.props의 Version
     [string] $Version,
     [string] $Runtime = 'win-x64',
     [string] $OutputDir
 )
 
 $ErrorActionPreference = 'Stop'
-# 외부 명령(dotnet, npm)이 실패하면 즉시 중단
 $PSNativeCommandUseErrorActionPreference = $true
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -36,6 +35,7 @@ function Write-Step([string] $Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 $staging = Join-Path $OutputDir 'staging'
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 New-Item -ItemType Directory -Path $staging -Force | Out-Null
@@ -60,15 +60,13 @@ finally {
     Pop-Location
 }
 
-Write-Step '에이전트 게시 (단일 실행 파일)'
-$agentDir = Join-Path $staging 'agent'
-dotnet publish (Join-Path $root 'src/PcManager.Agent.Service') @publishArgs `
+Write-Step '에이전트 설치 파일 게시 (단일 exe: 설치 + 서비스 + 런처)'
+$agentPublishDir = Join-Path $staging 'agent-publish'
+dotnet publish (Join-Path $root 'src/PcManager.Agent') @publishArgs `
     -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-    -o $agentDir
-Copy-Item -Path (Join-Path $root 'installer/agent/*') -Destination $agentDir
-
-$agentZip = Join-Path $OutputDir "PcManager-Agent-$Version.zip"
-Compress-Archive -Path (Join-Path $agentDir '*') -DestinationPath $agentZip -Force
+    -o $agentPublishDir
+$setupExe = Join-Path $OutputDir "PcManager-Agent-Setup-$Version.exe"
+Copy-Item -Path (Join-Path $agentPublishDir 'PcManager.Agent.exe') -Destination $setupExe -Force
 
 Write-Step '서버 게시'
 $serverPackageDir = Join-Path $staging 'server-package'
@@ -78,18 +76,18 @@ dotnet publish (Join-Path $root 'src/PcManager.Server') @publishArgs -o $serverD
 # 대시보드 정적 파일
 Copy-Item -Path (Join-Path $root 'web/dist') -Destination (Join-Path $serverDir 'wwwroot') -Recurse
 
-# 대시보드 'PC 추가'의 한 줄 설치 명령이 내려받는 파일
+# 대시보드 'PC 추가'에서 내려받는 설치 파일
 $serverAgentDir = New-Item -ItemType Directory -Path (Join-Path $serverDir 'agent') -Force
-Copy-Item -Path $agentZip -Destination (Join-Path $serverAgentDir 'PcManager-Agent.zip')
-Copy-Item -Path (Join-Path $root 'installer/agent/install-agent.ps1') -Destination $serverAgentDir
+Copy-Item -Path $setupExe -Destination (Join-Path $serverAgentDir 'PcManager-Agent-Setup.exe')
 
 Copy-Item -Path (Join-Path $root 'installer/server/*') -Destination $serverPackageDir
 
 $serverZip = Join-Path $OutputDir "PcManager-Server-$Version.zip"
-Compress-Archive -Path (Join-Path $serverPackageDir '*') -DestinationPath $serverZip -Force
+if (Test-Path $serverZip) { Remove-Item $serverZip -Force }
+Compress-Archive -Path (Join-Path $serverPackageDir '*') -DestinationPath $serverZip
 
 Remove-Item $staging -Recurse -Force
 
 Write-Step '완료'
-Get-Item $serverZip, $agentZip |
+Get-Item $serverZip, $setupExe |
     Format-Table Name, @{ Name = 'MB'; Expression = { [math]::Round($_.Length / 1MB, 1) } } -AutoSize

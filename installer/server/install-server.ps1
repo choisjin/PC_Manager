@@ -35,14 +35,6 @@ function Write-Step([string] $Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
-function New-AgentToken {
-    $bytes = New-Object byte[] 32
-    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-    $rng.GetBytes($bytes)
-    $rng.Dispose()
-    return [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-}
-
 function Get-PrimaryIPv4 {
     $ip = Get-NetIPConfiguration |
         Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } |
@@ -80,7 +72,8 @@ if (-not $PublicUrl) {
         $PublicUrl = "http://$(Get-PrimaryIPv4):$Port"
     }
 }
-$token = if ($existingConfig -and $existingConfig.Server.AgentToken) { $existingConfig.Server.AgentToken } else { New-AgentToken }
+# 에이전트 인증 토큰: 기존 설정에 있으면 유지, 없으면 사용하지 않음(빈 값 = 주소만으로 연결)
+$token = if ($existingConfig) { [string]$existingConfig.Server.AgentToken } else { '' }
 
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing -and $existing.Status -ne 'Stopped') {
@@ -175,7 +168,7 @@ else {
     Write-Warning '서비스는 시작했지만 응답을 확인하지 못했습니다. 이벤트 뷰어 > Windows 로그 > 응용 프로그램 (원본: PcManager.Server)을 확인하세요.'
 }
 Write-Host "대시보드 주소 : $PublicUrl"
-Write-Host "에이전트 설치 : 대시보드 왼쪽 'PC 추가' 버튼 > 명령 복사 > 테스트 PC의 관리자 PowerShell에서 실행"
+Write-Host "에이전트 설치 : 대시보드 왼쪽 'PC 추가' > 설치 파일 다운로드 > 테스트 PC에서 더블클릭 > 서버 주소 입력"
 Write-Host "설정 파일     : $ConfigPath (변경 후 'Restart-Service $ServiceName')"
 Write-Host ''
 Write-Warning '현재 버전은 대시보드 로그인이 없습니다. 신뢰할 수 있는 내부망에서만 사용하세요.'

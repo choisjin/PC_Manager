@@ -4,10 +4,10 @@ using System.Runtime.InteropServices;
 using Microsoft.Extensions.Options;
 using PcManager.Shared;
 
-namespace PcManager.Agent.Service;
+namespace PcManager.Agent;
 
 /// <summary>PC 고유 ID(최초 실행 시 생성해 저장)와 시스템 정보를 제공한다.</summary>
-public class AgentIdentity(IOptions<AgentOptions> options)
+public class AgentIdentity(IOptions<AgentOptions> options, AgentSettingsStore settings)
 {
     public string AgentId { get; } = LoadOrCreateId(options.Value.DataDirectory);
 
@@ -38,11 +38,11 @@ public class AgentIdentity(IOptions<AgentOptions> options)
             AgentId,
             Environment.MachineName,
             RuntimeInformation.OSDescription,
-            typeof(AgentIdentity).Assembly.GetName().Version?.ToString() ?? "0.0.0",
+            AgentStatusTracker.AgentVersionText,
             Environment.UserName,
             ipAddresses,
             macAddresses,
-            options.Value.Tags);
+            settings.Current.Tags);
     }
 
     private static string LoadOrCreateId(string dataDirectory)

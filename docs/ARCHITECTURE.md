@@ -14,10 +14,12 @@
         ▲  에이전트가 서버로 먼저 접속 (WSS + TLS) → NAT/방화벽 통과
         │
 [테스트 PC]
-  ├─ PcManager.Agent.Service  (Windows Service, SYSTEM)
-  │    서버 연결 유지, 작업 실행, 파일 송수신, 재부팅 후 재개, 자기 업데이트
-  └─ PcManager.Agent.Session  (로그인 사용자 세션)
-       화면 캡처, 입력 주입, 입력 잠금, GUI 테스트 실행
+  ├─ PcManager.Agent (단일 exe, 여러 모드)
+  │    --service  : Windows Service (SYSTEM). 서버 연결, 명령/Job/파일 전송, 세션에 런처 실행
+  │    --launcher : 트레이 런처 (로그인 사용자 세션). 연결/끊기/서버주소/업데이트/상태
+  │    --install / --uninstall : 더블클릭 설치기 (UAC 승격, 서비스 등록)
+  │    서비스 ↔ 런처는 named pipe로 통신 (LocalControl)
+  └─ (예정) 세션 에이전트: 화면 캡처, 입력 주입, 입력 잠금, GUI 테스트 실행
 ```
 
 서비스는 Session 0에서 실행되어 화면/입력에 접근할 수 없으므로, 세션 에이전트를 사용자 세션에 띄워 역할을 나눈다.

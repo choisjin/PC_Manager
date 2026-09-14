@@ -657,10 +657,18 @@ button.small-btn {
   padding-left: 20px;
 }
 
-.install-command {
-  font-size: 12px;
-  word-break: break-all;
-  resize: none;
+.install-steps a[aria-disabled='true'] {
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.server-url-row {
+  display: flex;
+  gap: 8px;
+}
+
+.server-url-row input {
+  flex: 1;
 }
 
 .dialog-actions {

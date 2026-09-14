@@ -5,57 +5,29 @@ interface Props {
   onClose: () => void
 }
 
-/** 테스트 PC에 에이전트를 설치하는 한 줄 명령을 보여준다. 마운트되면 열린다. */
+/** 테스트 PC에 에이전트를 설치하는 방법(더블클릭 설치 파일)을 안내한다. 마운트되면 열린다. */
 export function AddAgentDialog({ onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const commandRef = useRef<HTMLTextAreaElement>(null)
-  const [tags, setTags] = useState('')
   const [info, setInfo] = useState<InstallInfo | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     dialogRef.current?.showModal()
+    api
+      .installInfo()
+      .then(setInfo)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
   }, [])
 
-  // 태그 입력이 잠시 멈추면 태그가 들어간 명령을 다시 받는다
-  useEffect(() => {
-    let active = true
-    const normalized = tags
-      .split(',')
-      .map((t) => t.trim())
-      .filter(Boolean)
-      .join(',')
-    const timer = setTimeout(() => {
-      api
-        .installInfo(normalized)
-        .then((result) => {
-          if (!active) return
-          setInfo(result)
-          setError(null)
-          setCopied(false)
-        })
-        .catch((err) => {
-          if (active) setError(err instanceof Error ? err.message : String(err))
-        })
-    }, 250)
-    return () => {
-      active = false
-      clearTimeout(timer)
-    }
-  }, [tags])
-
-  const copy = async () => {
-    if (!info?.installCommand) return
+  const copyServer = async () => {
+    if (!info) return
     try {
-      // 클립보드 API는 https나 localhost에서만 동작한다
-      await navigator.clipboard.writeText(info.installCommand)
+      await navigator.clipboard.writeText(info.serverUrl)
       setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     } catch {
-      const textarea = commandRef.current
-      textarea?.select()
-      if (textarea && document.execCommand('copy')) setCopied(true)
-      else setError('자동 복사에 실패했습니다. 명령을 직접 선택해 복사하세요.')
+      setError('자동 복사에 실패했습니다. 주소를 직접 선택해 복사하세요.')
     }
   }
 
@@ -66,7 +38,6 @@ export function AddAgentDialog({ onClose }: Props) {
       aria-labelledby="add-agent-title"
       onClose={onClose}
       onClick={(e) => {
-        // 바깥(배경)을 누르면 닫는다
         if (e.target === dialogRef.current) dialogRef.current.close()
       }}
     >
@@ -78,51 +49,43 @@ export function AddAgentDialog({ onClose }: Props) {
       </div>
 
       <div className="dialog-body">
-        <ol className="install-steps">
-          <li>
-            테스트 PC에서 <b>관리자 권한 PowerShell</b>을 엽니다.
-          </li>
-          <li>아래 명령을 붙여넣어 실행합니다. 설치가 끝나면 왼쪽 목록에 PC가 나타납니다.</li>
-        </ol>
-
-        <label>
-          태그 (선택, 쉼표로 구분)
-          <input value={tags} placeholder="예: gui-test, site:seoul" onChange={(e) => setTags(e.target.value)} />
-        </label>
-
         {error && <p className="error">{error}</p>}
 
-        {info && !info.agentPackageAvailable && (
+        {info && !info.setupAvailable && (
           <p className="warning-box">
-            이 서버에는 에이전트 설치 파일이 없습니다. 개발 모드로 실행 중이라면 <code>build/package.ps1</code>로 만든 서버
-            패키지를 설치해 주세요.
+            이 서버에는 설치 파일이 없습니다. 개발 모드로 실행 중이라면 <code>build/package.ps1</code>로 만든 서버 패키지를
+            설치해 주세요.
           </p>
         )}
 
-        {info?.installCommand && (
-          <>
-            <textarea
-              ref={commandRef}
-              className="mono install-command"
-              readOnly
-              rows={4}
-              value={info.installCommand}
-              aria-label="설치 명령"
-              onFocus={(e) => e.currentTarget.select()}
-            />
-            <div className="dialog-actions">
-              <span className="muted small">
-                서버 {info.serverUrl} · 버전 {info.serverVersion}
-              </span>
-              <button type="button" className="primary" onClick={() => void copy()}>
-                {copied ? '복사됨 ✓' : '명령 복사'}
-              </button>
-            </div>
-          </>
-        )}
+        <ol className="install-steps">
+          <li>
+            <a href={info?.setupDownloadUrl} download aria-disabled={!info?.setupAvailable}>
+              설치 파일 다운로드
+            </a>
+            <span className="muted small"> (PcManager-Agent-Setup.exe)</span>
+            {info && <span className="muted small"> · 버전 {info.serverVersion}</span>}
+          </li>
+          <li>테스트 PC로 옮겨 더블클릭하고, 보안 경고가 뜨면 [예]를 누릅니다.</li>
+          <li>
+            잠시 뒤 열리는 에이전트 창에 <b>이 서버 주소</b>를 입력하고 [연결]을 누릅니다.
+          </li>
+          <li>연결되면 이 목록에 PC가 나타납니다.</li>
+        </ol>
+
+        <label>
+          서버 주소 (런처에 입력)
+          <div className="server-url-row">
+            <input className="mono" readOnly value={info?.serverUrl ?? ''} onFocus={(e) => e.currentTarget.select()} />
+            <button type="button" className="primary" disabled={!info} onClick={() => void copyServer()}>
+              {copied ? '복사됨 ✓' : '복사'}
+            </button>
+          </div>
+        </label>
 
         <p className="hint">
-          명령에는 에이전트 토큰이 들어 있으니 외부에 공유하지 마세요. 이미 설치된 PC에서 다시 실행하면 업그레이드됩니다.
+          설치 파일은 관리자 권한을 요청합니다(서비스 등록). 이미 설치된 PC에서 다시 실행하면 업그레이드됩니다. 서버 주소는
+          런처 창에서 언제든 바꿀 수 있습니다.
         </p>
       </div>
     </dialog>

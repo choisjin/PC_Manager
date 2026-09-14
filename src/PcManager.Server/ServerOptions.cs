@@ -2,7 +2,7 @@ namespace PcManager.Server;
 
 public class ServerOptions
 {
-    /// <summary>에이전트가 접속할 때 보내야 하는 등록 토큰</summary>
+    /// <summary>에이전트 등록 토큰 (선택). 비우면 인증 없이 서버 주소만으로 에이전트가 연결된다</summary>
     public string AgentToken { get; set; } = "";
 
     /// <summary>DB, 실행 로그, 결과 파일 저장 폴더 (ContentRoot 기준 상대 경로 허용)</summary>

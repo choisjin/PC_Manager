@@ -6,7 +6,7 @@ using System.Text;
 using Microsoft.Extensions.Options;
 using PcManager.Shared;
 
-namespace PcManager.Agent.Service;
+namespace PcManager.Agent;
 
 /// <summary>서버가 요청한 명령을 실행하고 출력과 결과를 보고 큐에 넣는다.</summary>
 public class CommandRunner(OutboundQueue outbound, IOptions<AgentOptions> options, ILogger<CommandRunner> logger)

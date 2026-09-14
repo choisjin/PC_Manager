@@ -21,8 +21,6 @@ builder.Services.AddWindowsService(o => o.ServiceName = "PcManagerServer");
 builder.Configuration.AddJsonFile(ServerOptions.InstalledConfigPath, optional: true, reloadOnChange: false);
 
 var serverOptions = builder.Configuration.GetSection("Server").Get<ServerOptions>() ?? new ServerOptions();
-if (string.IsNullOrWhiteSpace(serverOptions.AgentToken))
-    throw new InvalidOperationException("Server:AgentToken 설정이 필요합니다. (환경 변수 Server__AgentToken 또는 appsettings)");
 
 var paths = new AppPaths(Path.GetFullPath(serverOptions.DataDirectory, builder.Environment.ContentRootPath));
 Directory.CreateDirectory(paths.DataDirectory);
@@ -48,21 +46,25 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Ap
 }
 await app.Services.GetRequiredService<JobService>().RecoverInterruptedAsync();
 
-// 에이전트 Hub와 에이전트 전용 API는 등록 토큰이 맞는 요청만 통과시킨다
-var expectedToken = Encoding.UTF8.GetBytes(serverOptions.AgentToken);
-app.UseWhen(
-    context => context.Request.Path.StartsWithSegments(HubPaths.Agent)
-        || context.Request.Path.StartsWithSegments("/api/agent"),
-    branch => branch.Use(async (context, next) =>
-    {
-        var provided = Encoding.UTF8.GetBytes(context.Request.Headers[AgentHeaders.Token].ToString());
-        if (!CryptographicOperations.FixedTimeEquals(provided, expectedToken))
+// 에이전트 토큰(선택): 설정하면 에이전트 Hub와 에이전트 전용 API는 토큰이 맞는 요청만 통과시킨다.
+// 비워 두면 서버 주소만으로 에이전트가 연결된다 (신뢰할 수 있는 내부망 전제)
+if (!string.IsNullOrWhiteSpace(serverOptions.AgentToken))
+{
+    var expectedToken = Encoding.UTF8.GetBytes(serverOptions.AgentToken);
+    app.UseWhen(
+        context => context.Request.Path.StartsWithSegments(HubPaths.Agent)
+            || context.Request.Path.StartsWithSegments("/api/agent"),
+        branch => branch.Use(async (context, next) =>
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            return;
-        }
-        await next();
-    }));
+            var provided = Encoding.UTF8.GetBytes(context.Request.Headers[AgentHeaders.Token].ToString());
+            if (!CryptographicOperations.FixedTimeEquals(provided, expectedToken))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+            await next();
+        }));
+}
 
 // 배포 패키지는 대시보드 빌드 결과를 wwwroot에 포함한다 (개발 중에는 Vite 개발 서버 사용)
 app.UseDefaultFiles();
@@ -74,6 +76,8 @@ app.MapApi();
 app.MapFileApi();
 app.MapJobApi();
 app.MapInstallApi(serverOptions);
+
+// 설치 파일은 크므로 요청 크기 제한과 무관하게 스트리밍 (다운로드만, 업로드 아님)
 
 // 대시보드 화면 경로는 index.html로 돌려준다. 없는 API/Hub 경로는 404
 app.MapFallback("{*path:nonfile}", (HttpContext context, IWebHostEnvironment env) =>

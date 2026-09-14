@@ -1,6 +1,6 @@
 using System.Threading.Channels;
 
-namespace PcManager.Agent.Service;
+namespace PcManager.Agent;
 
 /// <summary>
 /// 서버로 보낼 보고(CommandStarted, CommandOutput, CommandCompleted) 큐.

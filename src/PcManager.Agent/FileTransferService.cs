@@ -4,14 +4,18 @@ using Microsoft.Extensions.FileSystemGlobbing;
 using Microsoft.Extensions.Options;
 using PcManager.Shared;
 
-namespace PcManager.Agent.Service;
+namespace PcManager.Agent;
 
 /// <summary>파일 탐색, 결과 수집, 서버와의 파일 송수신을 담당한다.</summary>
-public class FileTransferService(OutboundQueue outbound, IOptions<AgentOptions> options, ILogger<FileTransferService> logger)
+public class FileTransferService(
+    OutboundQueue outbound,
+    IOptions<AgentOptions> options,
+    AgentSettingsStore settings,
+    ILogger<FileTransferService> logger)
 {
     private const int MaxListEntries = 5000;
 
-    private readonly HttpClient _http = CreateHttpClient(options.Value);
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(30) };
 
     // 완료 보고가 서버에 전달될 때까지 추적 (재등록 시 서버가 실패 처리하지 않게)
     private readonly ConcurrentDictionary<string, byte> _unreported = new();
@@ -130,8 +134,8 @@ public class FileTransferService(OutboundQueue outbound, IOptions<AgentOptions> 
 
         try
         {
-            using var response = await _http.GetAsync(
-                AgentTransferPaths.Content(request.TransferId), HttpCompletionOption.ResponseHeadersRead);
+            using var contentRequest = CreateRequest(HttpMethod.Get, AgentTransferPaths.Content(request.TransferId));
+            using var response = await Http.SendAsync(contentRequest, HttpCompletionOption.ResponseHeadersRead);
             await EnsureSuccessAsync(response);
 
             await using (var source = await response.Content.ReadAsStreamAsync())
@@ -161,8 +165,10 @@ public class FileTransferService(OutboundQueue outbound, IOptions<AgentOptions> 
 
         using var content = new StreamContent(stream);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        var url = $"{AgentTransferPaths.UploadFile(transferId)}?path={Uri.EscapeDataString(relativePath)}";
-        using var response = await _http.PostAsync(url, content);
+        using var uploadRequest = CreateRequest(
+            HttpMethod.Post, $"{AgentTransferPaths.UploadFile(transferId)}?path={Uri.EscapeDataString(relativePath)}");
+        uploadRequest.Content = content;
+        using var response = await Http.SendAsync(uploadRequest);
         await EnsureSuccessAsync(response);
         return length;
     }
@@ -175,15 +181,14 @@ public class FileTransferService(OutboundQueue outbound, IOptions<AgentOptions> 
         throw new HttpRequestException($"서버 응답 {(int)response.StatusCode}: {body}");
     }
 
-    private static HttpClient CreateHttpClient(AgentOptions settings)
+    /// <summary>현재 연결 설정의 서버 주소로 요청을 만든다 (런처에서 서버를 바꿀 수 있음)</summary>
+    private HttpRequestMessage CreateRequest(HttpMethod method, string path)
     {
-        var http = new HttpClient
-        {
-            BaseAddress = new Uri(settings.ServerUrl),
-            Timeout = TimeSpan.FromMinutes(30),
-        };
-        http.DefaultRequestHeaders.Add(AgentHeaders.Token, settings.Token);
-        return http;
+        var current = settings.Current;
+        var request = new HttpRequestMessage(method, new Uri(new Uri(current.ServerUrl), path));
+        if (!string.IsNullOrEmpty(current.Token))
+            request.Headers.Add(AgentHeaders.Token, current.Token);
+        return request;
     }
 
     private sealed class TransferProgress

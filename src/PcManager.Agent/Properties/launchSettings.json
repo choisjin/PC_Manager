@@ -1,9 +1,17 @@
-﻿{
+{
   "$schema": "https://json.schemastore.org/launchsettings.json",
   "profiles": {
-    "PcManager.Agent.Service": {
+    "console": {
       "commandName": "Project",
+      "commandLineArgs": "--console",
       "dotnetRunMessages": true,
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    },
+    "launcher": {
+      "commandName": "Project",
+      "commandLineArgs": "--launcher",
       "environmentVariables": {
         "DOTNET_ENVIRONMENT": "Development"
       }
