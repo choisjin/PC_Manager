@@ -1012,8 +1012,50 @@ tr.file {
   cursor: default;
 }
 
-tr.dir td:first-child {
+tr.dir td:first-child,
+tr.video td:first-child {
   font-weight: 600;
+}
+
+tr.video {
+  cursor: pointer;
+}
+
+.row-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+/* 영상 뷰어 */
+.video-dialog {
+  width: min(900px, calc(100vw - 32px));
+}
+
+.video-body {
+  padding: 0;
+  background: #000;
+}
+
+.video-player {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  background: #000;
+}
+
+.video-fallback {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  padding: 40px 16px;
+  color: #fff;
+  text-align: center;
+}
+
+.video-hint {
+  padding: 8px 16px;
 }
 
 .file-icon {

@@ -133,6 +133,12 @@ public static class AgentClientMethods
 {
     /// <summary>string path → DirectoryListing</summary>
     public const string ListDirectory = "ListDirectory";
+
+    /// <summary>string path → long (파일 크기, 없거나 접근 불가면 -1). 영상 스트리밍용</summary>
+    public const string GetFileSize = "GetFileSize";
+
+    /// <summary>(string path, long offset, int length) → byte[] (EOF면 더 짧을 수 있음). 영상 스트리밍용</summary>
+    public const string ReadFileChunk = "ReadFileChunk";
 }
 
 /// <summary>에이전트 → 서버 Hub 메서드 이름</summary>

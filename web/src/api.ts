@@ -221,6 +221,10 @@ export const api = {
 
   listFiles: (agentId: string, path: string) =>
     request<DirectoryListing>(`/api/agents/${agentId}/files?${query({ path })}`),
+  /** 원격 PC의 미디어 파일을 서버로 옮기지 않고 바로 스트리밍하는 URL (video 태그 src용) */
+  mediaUrl: (agentId: string, path: string) =>
+    `/api/agents/${agentId}/media?${query({ path })}`,
+
   fetchFile: (agentId: string, path: string) =>
     request<Transfer>(`/api/agents/${agentId}/files/fetch`, { method: 'POST', body: JSON.stringify({ path }) }),
   pushFile: (agentId: string, destinationPath: string, file: Blob) =>

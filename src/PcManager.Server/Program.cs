@@ -28,7 +28,8 @@ Directory.CreateDirectory(paths.DataDirectory);
 builder.Services.AddSingleton(paths);
 builder.Services.AddDbContextFactory<AppDbContext>(o =>
     o.UseSqlite($"Data Source={Path.Combine(paths.DataDirectory, "pcmanager.db")}"));
-builder.Services.AddSignalR(o => o.MaximumReceiveMessageSize = 1024 * 1024);
+// 미디어 스트리밍 조각(256KB, base64)이 여유 있게 들어가도록 넉넉히 잡는다
+builder.Services.AddSignalR(o => o.MaximumReceiveMessageSize = 2 * 1024 * 1024);
 builder.Services.AddSingleton<AgentRegistry>();
 builder.Services.AddSingleton<RunLogStore>();
 builder.Services.AddSingleton<RunService>();
@@ -74,6 +75,7 @@ app.MapHub<AgentHub>(HubPaths.Agent);
 app.MapHub<DashboardHub>(HubPaths.Dashboard);
 app.MapApi();
 app.MapFileApi();
+app.MapMediaApi();
 app.MapJobApi();
 app.MapInstallApi(serverOptions);
 

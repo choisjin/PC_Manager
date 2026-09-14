@@ -1,8 +1,10 @@
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react'
 import { api, type Agent, type Artifact, type DirectoryListing, type Transfer } from '../api'
+import { isVideoFile } from '../fileTypes'
 import { formatBytes, formatTime } from '../format'
 import type { SubscribeTransfers } from '../useDashboard'
 import { StateBadge } from './StateBadge'
+import { VideoViewer } from './VideoViewer'
 
 interface Props {
   agents: Agent[]
@@ -74,6 +76,7 @@ function ExplorerPane({ agentId, picker, subscribeTransfers }: PaneProps) {
   const [error, setError] = useState<string | null>(null)
   const [transfers, setTransfers] = useState<Transfer[]>([])
   const [artifactByTransfer, setArtifactByTransfer] = useState<Record<string, Artifact>>({})
+  const [playing, setPlaying] = useState<{ path: string; name: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const requestRef = useRef(0)
 
@@ -242,7 +245,7 @@ function ExplorerPane({ agentId, picker, subscribeTransfers }: PaneProps) {
               <col />
               <col style={{ width: 100 }} />
               <col style={{ width: 130 }} />
-              <col style={{ width: 90 }} />
+              <col style={{ width: 130 }} />
             </colgroup>
             <thead>
               <tr>
@@ -270,19 +273,35 @@ function ExplorerPane({ agentId, picker, subscribeTransfers }: PaneProps) {
               {listing?.entries.map((entry) => (
                 <tr
                   key={entry.fullPath}
-                  className={entry.isDirectory ? 'dir' : 'file'}
-                  title={entry.isDirectory ? '열기' : undefined}
-                  onClick={() => entry.isDirectory && load(entry.fullPath)}
+                  className={entry.isDirectory ? 'dir' : isVideoFile(entry.name) ? 'file video' : 'file'}
+                  title={entry.isDirectory ? '열기' : isVideoFile(entry.name) ? '재생' : undefined}
+                  onClick={() => {
+                    if (entry.isDirectory) load(entry.fullPath)
+                    else if (agentId && isVideoFile(entry.name))
+                      setPlaying({ path: entry.fullPath, name: entry.name })
+                  }}
                 >
                   <td className="ellipsis">
                     <span className="file-icon" aria-hidden="true">
-                      {entry.isDirectory ? '📁' : '📄'}
+                      {entry.isDirectory ? '📁' : isVideoFile(entry.name) ? '🎬' : '📄'}
                     </span>
                     {entry.name}
                   </td>
                   <td>{entry.isDirectory ? '' : formatBytes(entry.size)}</td>
                   <td>{entry.modifiedAt ? formatTime(entry.modifiedAt) : ''}</td>
-                  <td>
+                  <td className="row-actions">
+                    {!entry.isDirectory && isVideoFile(entry.name) && agentId && (
+                      <button
+                        type="button"
+                        className="link"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setPlaying({ path: entry.fullPath, name: entry.name })
+                        }}
+                      >
+                        재생
+                      </button>
+                    )}
                     {!entry.isDirectory && (
                       <button
                         type="button"
@@ -341,6 +360,16 @@ function ExplorerPane({ agentId, picker, subscribeTransfers }: PaneProps) {
           })}
         </ul>
       </section>
+
+      {playing && agentId && (
+        <VideoViewer
+          agentId={agentId}
+          path={playing.path}
+          name={playing.name}
+          onFetch={() => void fetchFile(playing.path)}
+          onClose={() => setPlaying(null)}
+        />
+      )}
     </div>
   )
 }

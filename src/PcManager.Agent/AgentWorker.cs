@@ -122,9 +122,13 @@ public class AgentWorker(
         connection.On<CollectFilesRequest>(nameof(IAgentClient.CollectFiles), files.StartCollect);
         connection.On<UploadFileRequest>(nameof(IAgentClient.UploadFile), files.StartUpload);
         connection.On<DownloadFileRequest>(nameof(IAgentClient.DownloadFile), files.StartDownload);
-        // 응답을 기다리는 호출: 수신 루프를 막지 않도록 스레드 풀에서 조회
+        // 응답을 기다리는 호출: 수신 루프를 막지 않도록 스레드 풀에서 처리
         connection.On<string?, DirectoryListing>(AgentClientMethods.ListDirectory,
             path => Task.Run(() => files.ListDirectory(path)));
+        connection.On<string, long>(AgentClientMethods.GetFileSize,
+            path => Task.Run(() => files.GetFileSize(path)));
+        connection.On<string, long, int, byte[]>(AgentClientMethods.ReadFileChunk,
+            (path, offset, length) => Task.Run(() => files.ReadFileChunk(path, offset, length)));
 
         connection.Reconnecting += error =>
         {

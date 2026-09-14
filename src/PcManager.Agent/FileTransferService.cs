@@ -60,6 +60,48 @@ public class FileTransferService(
         }
     }
 
+    // 영상 등 미디어 스트리밍: 서버가 필요한 구간만 요청한다 (파일을 서버로 복사하지 않음)
+    private const int MaxChunk = 1024 * 1024;
+
+    /// <returns>파일 크기. 없거나 접근할 수 없으면 -1</returns>
+    public long GetFileSize(string path)
+    {
+        try
+        {
+            var file = new FileInfo(path);
+            return file.Exists ? file.Length : -1;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return -1;
+        }
+    }
+
+    /// <summary>파일의 [offset, offset+length) 구간을 읽는다. EOF에 걸리면 더 짧게 반환한다.</summary>
+    public byte[] ReadFileChunk(string path, long offset, int length)
+    {
+        if (offset < 0 || length <= 0)
+            return [];
+        length = Math.Min(length, MaxChunk);
+
+        // 테스트가 아직 쓰고 있는(녹화 중인) 파일도 읽을 수 있게 공유 모드로 연다
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        if (offset >= stream.Length)
+            return [];
+
+        stream.Seek(offset, SeekOrigin.Begin);
+        var buffer = new byte[Math.Min(length, (int)Math.Min(stream.Length - offset, int.MaxValue))];
+        var total = 0;
+        while (total < buffer.Length)
+        {
+            var read = stream.Read(buffer, total, buffer.Length - total);
+            if (read == 0)
+                break;
+            total += read;
+        }
+        return total == buffer.Length ? buffer : buffer[..total];
+    }
+
     public void StartCollect(CollectFilesRequest request) =>
         StartTransfer(request.TransferId, progress => CollectAsync(request, progress));
 
