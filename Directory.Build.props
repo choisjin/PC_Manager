@@ -1,0 +1,8 @@
+<Project>
+  <!-- 모든 프로젝트 공통. 릴리스할 때 이 버전만 올린다 (패키지 이름, 에이전트 버전 표시에 사용) -->
+  <PropertyGroup>
+    <Version>0.2.0</Version>
+    <Product>PC Manager</Product>
+    <Company>PC Manager</Company>
+  </PropertyGroup>
+</Project>

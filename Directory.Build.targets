@@ -1,0 +1,7 @@
+<Project>
+  <!-- 개발용 설정(개발 토큰 포함)은 배포 패키지에 넣지 않는다 -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+    <None Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+</Project>

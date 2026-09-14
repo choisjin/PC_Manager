@@ -1,33 +1,40 @@
 # PC Manager
 
-자동화 검증용 테스트 PC 관리 도구. 설계는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 참고.
+자동화 검증용 테스트 PC 관리 도구. 여러 테스트 PC에 명령과 Job을 일괄 실행하고, 결과 파일을 수집하고, PC와 파일을 주고받는다. 설계는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 참고.
 
-## 요구 사항
+## 설치 (실사용 환경)
 
-- .NET 10 SDK
-- Node.js 20 이상
+.NET이나 Node.js를 설치할 필요가 없다. Windows 10/11, Windows Server 2019 이상 (x64).
 
-## 개발 실행
+1. **패키지 준비**: [Releases](https://github.com/choisjin/PC_Manager/releases)에서 `PcManager-Server-<버전>.zip`을 받는다. (또는 아래 [배포 패키지 만들기](#배포-패키지-만들기))
+2. **서버 설치**: 서버로 쓸 PC에서 zip을 풀고, 그 폴더에서 관리자 PowerShell로 실행한다.
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\install-server.ps1
+   ```
+   토큰 생성, 서비스 등록, 방화벽 허용까지 자동으로 처리하고 대시보드 주소를 알려준다.
+3. **테스트 PC 추가**: 대시보드 왼쪽 **+ PC 추가** → 명령 복사 → 테스트 PC의 관리자 PowerShell에 붙여넣어 실행한다.
+   몇 초 뒤 대시보드에 PC가 온라인으로 표시된다.
 
-터미널 3개에서 각각 실행한다.
+업그레이드는 새 패키지로 같은 과정을 반복하면 된다 (토큰, DB, 결과 파일 유지). 자세한 내용은 패키지에 들어 있는 안내를 참고한다: [서버](installer/server/README.txt), [에이전트](installer/agent/README.txt).
 
-```sh
-# 1. 서버 (http://localhost:5063)
-dotnet run --project src/PcManager.Server
+| 구성 | 프로그램 | Windows 서비스 | 설정·데이터 |
+|---|---|---|---|
+| 서버 + 대시보드 | `C:\Program Files\PcManager\Server` | `PcManagerServer` (LocalService) | `C:\ProgramData\PcManager\Server` |
+| 에이전트 | `C:\Program Files\PcManager\Agent` | `PcManagerAgent` (LocalSystem) | `C:\ProgramData\PcManager\Agent` |
 
-# 2. 에이전트 (같은 PC에서 테스트)
-dotnet run --project src/PcManager.Agent.Service
+> **주의**
+> - 대시보드 로그인이 아직 없다. 신뢰할 수 있는 내부망에서만 사용한다. (5단계에서 인증 추가 예정)
+> - 에이전트는 SYSTEM 계정 서비스로 실행되므로 GUI 자동화 테스트는 아직 지원하지 않는다. (3단계)
 
-# 3. 대시보드 (http://localhost:5173)
-cd web
-npm run dev
-```
+## 사용법
 
-개발 환경에서는 서버와 에이전트 모두 `dev-agent-token` 토큰을 사용한다.
+### 명령 실행
 
-## Job과 결과 수집
+**명령 실행** 탭에서 PC를 골라 CMD/PowerShell 명령을 한꺼번에 실행하고 출력을 실시간으로 본다.
 
-대시보드 **Job** 탭에서 대상 PC(직접 선택 또는 태그)와 단계를 정해 실행한다.
+### Job과 결과 수집
+
+**Job** 탭에서 대상 PC(직접 선택 또는 태그)와 단계를 정해 실행한다.
 
 - 단계 종류: `명령 실행`, `결과 수집`
 - PC 안에서는 단계를 순서대로, PC 사이는 `동시 실행 PC 수`만큼 병렬로 실행
@@ -45,49 +52,54 @@ npm run dev
 pytest --junitxml=%PCM_RESULT_DIR%\junit.xml
 ```
 
-수집된 JUnit XML은 PC별 통과/실패/건너뜀으로 집계된다. 결과 파일은 서버 `src/PcManager.Server/App_Data/artifacts`에 저장된다.
+수집된 JUnit XML은 PC별 통과/실패/건너뜀으로 집계된다.
 
-## 파일 탐색기
+### 파일 탐색기
 
-**파일 탐색기** 탭에서 온라인 PC의 폴더를 탐색하고, 파일을 서버로 가져와 다운로드하거나 PC로 올릴 수 있다.
+**파일 탐색기** 탭에서 온라인 PC의 폴더를 탐색하고, 파일을 서버로 가져와 다운로드하거나 PC로 올린다.
 
-## 다른 PC의 에이전트 연결
+## 개발
 
-서버를 외부에서 접속 가능하게 실행하고 방화벽에서 포트를 허용한다.
+### 요구 사항
+
+- .NET 10 SDK
+- Node.js 20 이상
+
+### 실행
+
+터미널 3개에서 각각 실행한다. 개발 환경에서는 서버와 에이전트 모두 `dev-agent-token` 토큰을 쓴다.
 
 ```sh
-dotnet run --project src/PcManager.Server --urls http://0.0.0.0:5063
+# 1. 서버 (http://localhost:5063)
+dotnet run --project src/PcManager.Server
+
+# 2. 에이전트 (같은 PC에서 테스트)
+dotnet run --project src/PcManager.Agent.Service
+
+# 3. 대시보드 (http://localhost:5173)
+cd web
+npm run dev
 ```
 
-테스트 PC의 에이전트 `appsettings.json`:
+### 배포 패키지 만들기
 
-```json
-"Agent": {
-  "ServerUrl": "http://<서버 IP>:5063",
-  "Token": "<서버의 Server:AgentToken>",
-  "Tags": ["gui-test", "site:seoul"]
-}
-```
-
-## 에이전트를 Windows 서비스로 설치
-
-관리자 권한 PowerShell에서 실행한다.
+PowerShell 7.3 이상에서 실행한다.
 
 ```powershell
-dotnet publish src/PcManager.Agent.Service -c Release -r win-x64 --self-contained -o C:\PcManager\Agent
-sc.exe create PcManagerAgent binPath= "C:\PcManager\Agent\PcManager.Agent.Service.exe" start= auto
-sc.exe start PcManagerAgent
+pwsh build/package.ps1              # 버전: Directory.Build.props
+pwsh build/package.ps1 -Version 0.3.0
 ```
 
-- AgentId와 기본 작업 폴더: `C:\ProgramData\PcManager\Agent`
-- 서비스는 SYSTEM 계정·Session 0에서 실행되므로 **GUI 테스트는 아직 실행할 수 없다** (3단계 세션 에이전트에서 지원)
+`artifacts/`에 두 파일이 만들어진다.
 
-## 운영 서버 설정
+- `PcManager-Server-<버전>.zip`: 서버, 대시보드, 에이전트 원격 설치 파일, 설치 스크립트
+- `PcManager-Agent-<버전>.zip`: 서버에서 내려받을 수 없는 PC에 수동 설치할 때 사용
 
-`Server:AgentToken`이 비어 있으면 서버가 시작되지 않는다.
+GitHub에 `v*` 태그를 push하면 Actions가 패키지를 빌드해 Releases에 올린다.
 
 ```sh
-set Server__AgentToken=<충분히 긴 임의 문자열>
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-> 1단계에는 대시보드 로그인이 없다. 신뢰할 수 있는 내부망에서만 사용할 것 (5단계에서 인증/권한 추가).
+설치 스크립트 원본은 `installer/`에 있다. Windows PowerShell 5.1에서 한글이 깨지지 않도록 UTF-8 BOM으로 저장한다.

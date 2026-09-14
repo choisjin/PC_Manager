@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using PcManager.Server;
 using PcManager.Server.Api;
 using PcManager.Server.Data;
@@ -8,7 +9,16 @@ using PcManager.Server.Hubs;
 using PcManager.Server.Services;
 using PcManager.Shared;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    // 서비스로 실행되면 작업 폴더가 System32라서 실행 파일 폴더를 기준으로 삼는다
+    ContentRootPath = WindowsServiceHelpers.IsWindowsService() ? AppContext.BaseDirectory : null,
+});
+builder.Services.AddWindowsService(o => o.ServiceName = "PcManagerServer");
+
+// 설치형 배포: 설치 스크립트가 만든 설정 파일 (바이너리와 분리돼 업그레이드해도 유지)
+builder.Configuration.AddJsonFile(ServerOptions.InstalledConfigPath, optional: true, reloadOnChange: false);
 
 var serverOptions = builder.Configuration.GetSection("Server").Get<ServerOptions>() ?? new ServerOptions();
 if (string.IsNullOrWhiteSpace(serverOptions.AgentToken))
@@ -54,10 +64,23 @@ app.UseWhen(
         await next();
     }));
 
+// 배포 패키지는 대시보드 빌드 결과를 wwwroot에 포함한다 (개발 중에는 Vite 개발 서버 사용)
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.MapHub<AgentHub>(HubPaths.Agent);
 app.MapHub<DashboardHub>(HubPaths.Dashboard);
 app.MapApi();
 app.MapFileApi();
 app.MapJobApi();
+app.MapInstallApi(serverOptions);
+
+// 대시보드 화면 경로는 index.html로 돌려준다. 없는 API/Hub 경로는 404
+app.MapFallback("{*path:nonfile}", (HttpContext context, IWebHostEnvironment env) =>
+{
+    var indexPath = Path.Combine(env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot"), "index.html");
+    var isApi = context.Request.Path.StartsWithSegments("/api") || context.Request.Path.StartsWithSegments("/hubs");
+    return isApi || !File.Exists(indexPath) ? Results.NotFound() : Results.File(indexPath, "text/html; charset=utf-8");
+});
 
 app.Run();

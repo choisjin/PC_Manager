@@ -486,3 +486,6 @@ src/PcManager.Server/App_Data/
 
 # Playwright MCP 산출물
 .playwright-mcp/
+
+# 배포 패키지 빌드 결과 (build/package.ps1)
+artifacts/

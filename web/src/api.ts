@@ -150,6 +150,14 @@ export interface DirectoryListing {
   error: string | null
 }
 
+export interface InstallInfo {
+  serverUrl: string
+  serverVersion: string
+  agentPackageAvailable: boolean
+  /** 테스트 PC의 관리자 PowerShell에서 실행할 한 줄 명령. 서버에 에이전트 패키지가 없으면 null */
+  installCommand: string | null
+}
+
 export const isActiveRun = (state: RunState) => state === 'Pending' || state === 'Running'
 export const isActiveJob = (state: JobState) => state === 'Pending' || state === 'Running'
 
@@ -208,6 +216,8 @@ export const api = {
     `/api/artifacts/${artifactId}/download${inline ? '?inline=true' : ''}`,
   transfers: (filter: { agentId?: string; jobRunId?: string }) =>
     request<Transfer[]>(`/api/transfers?${query({ ...filter, take: 100 })}`),
+
+  installInfo: (tags: string) => request<InstallInfo>(`/api/install/info?${query({ tags })}`),
 
   listFiles: (agentId: string, path: string) =>
     request<DirectoryListing>(`/api/agents/${agentId}/files?${query({ path })}`),

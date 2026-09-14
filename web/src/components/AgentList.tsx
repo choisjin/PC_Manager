@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Agent } from '../api'
 import { formatTime } from '../format'
+import { AddAgentDialog } from './AddAgentDialog'
 
 interface Props {
   agents: Agent[]
@@ -10,6 +11,7 @@ interface Props {
 
 export function AgentList({ agents, selectedIds, onSelectionChange }: Props) {
   const [filter, setFilter] = useState('')
+  const [adding, setAdding] = useState(false)
 
   const visible = useMemo(() => {
     const query = filter.trim().toLowerCase()
@@ -45,10 +47,16 @@ export function AgentList({ agents, selectedIds, onSelectionChange }: Props) {
     <aside className="panel agents">
       <div className="panel-head">
         <h2>테스트 PC</h2>
-        <span className="muted small">
-          {onlineCount} / {agents.length} 온라인
+        <span className="head-actions">
+          <span className="muted small">
+            {onlineCount} / {agents.length} 온라인
+          </span>
+          <button type="button" className="primary small-btn" onClick={() => setAdding(true)}>
+            + PC 추가
+          </button>
         </span>
       </div>
+      {adding && <AddAgentDialog onClose={() => setAdding(false)} />}
 
       <div className="agent-tools">
         <input
@@ -68,7 +76,13 @@ export function AgentList({ agents, selectedIds, onSelectionChange }: Props) {
       </div>
 
       <ul className="agent-list">
-        {agents.length === 0 && <li className="placeholder">연결된 에이전트가 없습니다</li>}
+        {agents.length === 0 && (
+          <li className="placeholder">
+            등록된 PC가 없습니다
+            <br />
+            <span className="small">[+ PC 추가]로 테스트 PC에 에이전트를 설치하세요</span>
+          </li>
+        )}
         {agents.length > 0 && visible.length === 0 && (
           <li className="placeholder">검색 결과가 없습니다</li>
         )}

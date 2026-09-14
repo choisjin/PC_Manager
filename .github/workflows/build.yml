@@ -1,0 +1,48 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # 태그 빌드에서 GitHub 릴리스를 만든다
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: 배포 패키지 빌드
+        shell: pwsh
+        run: |
+          # 태그(v0.3.0)면 태그 버전, 아니면 Directory.Build.props 버전
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { '' }
+          ./build/package.ps1 -Version $version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pc-manager-packages
+          path: artifacts/*.zip
+
+      - name: GitHub 릴리스 생성
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $files = (Get-ChildItem artifacts/*.zip).FullName
+          gh release create $env:GITHUB_REF_NAME $files --title "PC Manager $env:GITHUB_REF_NAME" --generate-notes
