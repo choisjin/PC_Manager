@@ -30,7 +30,11 @@ internal static class Program
         if (args.Contains("--uninstall"))
             return Install.SetupUI.Uninstall(removeData: args.Contains("--purge"));
 
-        // 기본: 설치 프로그램
+        // 서버가 트리거하는 자가 업데이트: 창 없이 설치 (SYSTEM 권한 전제)
+        if (args.Contains("--install") && args.Contains("--silent"))
+            return Install.SetupUI.InstallSilent();
+
+        // 기본: 설치 프로그램 (더블클릭)
         return Install.SetupUI.Install();
     }
 }

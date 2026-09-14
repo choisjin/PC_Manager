@@ -6,9 +6,19 @@ import { FileExplorer } from './components/FileExplorer'
 import { JobsView } from './components/JobsView'
 import { RunOutput } from './components/RunOutput'
 import { RunTable } from './components/RunTable'
+import { UpdateDialog } from './components/UpdateDialog'
 import { useDashboard } from './useDashboard'
 
 type Tab = 'commands' | 'jobs' | 'files'
+
+function cmpVersion(a: string, b: string) {
+  const pa = a.split('.').map(Number)
+  const pb = b.split('.').map(Number)
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) - (pb[i] || 0)
+  }
+  return 0
+}
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'commands', label: '명령 실행' },
@@ -18,8 +28,9 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function App() {
   const dashboard = useDashboard()
-  const { agents, runs, connected, watchRun, upsertRuns, subscribeTransfers } = dashboard
+  const { agents, runs, connected, updateStatus, watchRun, upsertRuns, subscribeTransfers } = dashboard
   const [tab, setTab] = useState<Tab>('commands')
+  const [showUpdate, setShowUpdate] = useState(false)
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(() => new Set())
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [onlySelectedAgents, setOnlySelectedAgents] = useState(false)
@@ -32,6 +43,12 @@ export default function App() {
     [runs, onlySelectedAgents, selectedAgentIds],
   )
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null
+
+  // 서버 새 버전 또는 서버보다 구버전인 온라인 에이전트가 있으면 업데이트 알림
+  const outdatedAgentCount = updateStatus
+    ? agents.filter((a) => a.online && cmpVersion(a.agentVersion, updateStatus.currentVersion) < 0).length
+    : 0
+  const updateAvailable = (updateStatus?.updateAvailable ?? false) || outdatedAgentCount > 0
 
   const handleCreated = (created: Run[]) => {
     upsertRuns(created)
@@ -56,10 +73,24 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <span className={`conn ${connected ? 'on' : 'off'}`}>
-          {connected ? '서버 연결됨' : '서버 연결 중…'}
+        <span className="topbar-right">
+          <button
+            type="button"
+            className={`update-chip${updateAvailable ? ' available' : ''}`}
+            onClick={() => setShowUpdate(true)}
+            title="업데이트 확인"
+          >
+            {updateAvailable ? '● 업데이트 있음' : `v${updateStatus?.currentVersion ?? '…'}`}
+          </button>
+          <span className={`conn ${connected ? 'on' : 'off'}`}>
+            {connected ? '서버 연결됨' : '서버 연결 중…'}
+          </span>
         </span>
       </header>
+
+      {showUpdate && (
+        <UpdateDialog status={updateStatus} agents={agents} onClose={() => setShowUpdate(false)} />
+      )}
 
       <main className="layout">
         <AgentList

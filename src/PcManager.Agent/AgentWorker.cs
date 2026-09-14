@@ -13,6 +13,7 @@ public class AgentWorker(
     AgentIdentity identity,
     CommandRunner runner,
     FileTransferService files,
+    AgentUpdater updater,
     OutboundQueue outbound,
     ILogger<AgentWorker> logger) : BackgroundService
 {
@@ -129,6 +130,7 @@ public class AgentWorker(
             path => Task.Run(() => files.GetFileSize(path)));
         connection.On<string, long, int, byte[]>(AgentClientMethods.ReadFileChunk,
             (path, offset, length) => Task.Run(() => files.ReadFileChunk(path, offset, length)));
+        connection.On<string?>(nameof(IAgentClient.UpdateAgent), updater.Start);
 
         connection.Reconnecting += error =>
         {

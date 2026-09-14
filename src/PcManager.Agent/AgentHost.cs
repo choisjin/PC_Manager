@@ -25,6 +25,7 @@ public static class AgentHost
 
         builder.Services.AddSingleton<AgentSettingsStore>();
         builder.Services.AddSingleton<AgentStatusTracker>();
+        builder.Services.AddSingleton<AgentUpdater>();
         builder.Services.AddSingleton<AgentIdentity>();
         builder.Services.AddSingleton<OutboundQueue>();
         builder.Services.AddSingleton<CommandRunner>();

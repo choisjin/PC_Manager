@@ -11,6 +11,7 @@ namespace PcManager.Agent;
 public class LocalControlServer(
     AgentSettingsStore settings,
     AgentStatusTracker status,
+    AgentUpdater updater,
     ILogger<LocalControlServer> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -123,7 +124,12 @@ public class LocalControlServer(
                 return Ok();
 
             case LocalControl.UpdateCommand:
-                return Fail("업데이트 기능은 아직 준비 중입니다.");
+                if (!settings.Current.HasServer)
+                    return Fail("서버에 연결된 뒤 업데이트할 수 있습니다.");
+                updater.Start(null);
+                status.SetUpdating(true);
+                logger.LogInformation("런처에서 업데이트 시작");
+                return Ok();
 
             default:
                 return Fail($"알 수 없는 명령입니다: {request.Command}");

@@ -30,8 +30,8 @@ $ConfigPath = Join-Path $ConfigDir 'server.json'
 $DataDir = Join-Path $ConfigDir 'data'
 $FirewallRuleName = 'PC Manager Server'
 $EventSource = 'PcManager.Server'
-# 서버는 관리자 권한이 필요 없어 권한이 낮은 LocalService 계정으로 실행한다
-$ServiceAccount = 'NT AUTHORITY\LocalService'
+# 자가 업데이트(서비스가 자기 파일 교체·재시작)를 위해 LocalSystem으로 실행한다
+$ServiceAccount = 'LocalSystem'
 $LocalServiceSid = '*S-1-5-19'
 
 function Write-Step([string] $Message) {
@@ -137,7 +137,7 @@ if (-not $service) {
         -Description 'PC Manager 서버 - 테스트 PC 관리 대시보드와 API' -StartupType Automatic | Out-Null
     $service = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'"
 }
-$result = $service | Invoke-CimMethod -MethodName Change -Arguments @{ StartName = $ServiceAccount; StartPassword = '' }
+$result = $service | Invoke-CimMethod -MethodName Change -Arguments @{ StartName = $ServiceAccount; StartPassword = $null }
 if ($result.ReturnValue -ne 0) {
     throw "서비스 실행 계정 설정 실패 (코드 $($result.ReturnValue))"
 }

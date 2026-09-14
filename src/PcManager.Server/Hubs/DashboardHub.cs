@@ -13,6 +13,7 @@ public interface IDashboardClient
     Task TransferUpdated(TransferView transfer);
     Task JobRunUpdated(JobRunView job);
     Task JobTargetUpdated(JobTargetView target);
+    Task UpdateStatusChanged(UpdateStatusView status);
 }
 
 /// <summary>웹 대시보드가 접속하는 Hub. 출력은 보고 있는 실행에만 전달한다.</summary>

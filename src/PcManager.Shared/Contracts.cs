@@ -81,6 +81,15 @@ public static class AgentEnvironment
     public const string ResultDir = "PCM_RESULT_DIR";
 }
 
+/// <summary>에이전트 설치 파일 관련 경로</summary>
+public static class InstallPaths
+{
+    public const string AgentSetupFile = "PcManager-Agent-Setup.exe";
+
+    /// <summary>서버가 제공하는 에이전트 설치 파일 다운로드 경로</summary>
+    public static string AgentSetup => "/api/install/" + AgentSetupFile;
+}
+
 /// <summary>파일 전송용 HTTP 경로 (에이전트 토큰 필요)</summary>
 public static class AgentTransferPaths
 {
@@ -126,6 +135,9 @@ public interface IAgentClient
     Task CollectFiles(CollectFilesRequest request);
     Task UploadFile(UploadFileRequest request);
     Task DownloadFile(DownloadFileRequest request);
+
+    /// <param name="setupUrl">설치 파일 URL. null이면 에이전트가 자신의 서버 주소에서 받는다</param>
+    Task UpdateAgent(string? setupUrl);
 }
 
 /// <summary>서버 → 에이전트 호출 중 응답을 기다리는 메서드 (SignalR client result)</summary>

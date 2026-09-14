@@ -10,6 +10,7 @@ import {
   type Run,
   type RunState,
   type Transfer,
+  type UpdateStatus,
 } from './api'
 
 export interface RunWatcher {
@@ -84,6 +85,7 @@ export function useDashboard() {
   const [runs, setRuns] = useState<Run[]>([])
   const [jobs, setJobs] = useState<JobRun[]>([])
   const [jobTargets, setJobTargets] = useState<Record<string, JobTarget[]>>({})
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [connected, setConnected] = useState(false)
   const connectionRef = useRef<signalR.HubConnection | null>(null)
   const watchersRef = useRef(new Map<string, RunWatcher>())
@@ -131,14 +133,21 @@ export function useDashboard() {
     connection.on('TransferUpdated', (transfer: Transfer) => {
       for (const listener of transferListeners) listener(transfer)
     })
+    connection.on('UpdateStatusChanged', (status: UpdateStatus) => setUpdateStatus(status))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
     const sync = async () => {
-      const [agentList, runList, jobList] = await Promise.all([api.agents(), api.runs(), api.jobs()])
+      const [agentList, runList, jobList, update] = await Promise.all([
+        api.agents(),
+        api.runs(),
+        api.jobs(),
+        api.updateStatus().catch(() => null),
+      ])
       if (disposed) return
       setAgents(agentList.sort(byMachineName))
       setRuns(runList)
       setJobs(jobList)
+      if (update) setUpdateStatus(update)
       for (const jobRunId of loadedJobIds) {
         api
           .job(jobRunId)
@@ -228,6 +237,7 @@ export function useDashboard() {
     runs,
     jobs,
     jobTargets,
+    updateStatus,
     connected,
     watchRun,
     upsertRuns,

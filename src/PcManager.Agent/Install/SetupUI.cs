@@ -31,6 +31,37 @@ internal static class SetupUI
         }, autoCloseOnSuccess: true);
     }
 
+    /// <summary>창 없이 설치한다 (서버 트리거 자가 업데이트용, SYSTEM 권한 전제). 로그는 파일로 남긴다.</summary>
+    public static int InstallSilent()
+    {
+        var logPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "PcManager", "Agent", "update.log");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+            using var writer = new StreamWriter(logPath, append: true) { AutoFlush = true };
+            void Log(string m) => writer.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {m}");
+
+            Log("=== 자가 업데이트 시작 ===");
+            ServiceInstaller.Install(Log);
+            Log("자가 업데이트 완료");
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                File.AppendAllText(logPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} 오류: {ex}\n");
+            }
+            catch (IOException)
+            {
+                // 로그 실패는 무시
+            }
+            return 1;
+        }
+    }
+
     public static int Uninstall(bool removeData)
     {
         if (!ElevationHelper.IsElevated)

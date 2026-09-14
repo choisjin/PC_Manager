@@ -12,6 +12,12 @@ public class ServerOptions
     /// <summary>에이전트가 접속할 서버 주소 (예: http://192.168.0.10:5063). 비우면 대시보드 요청 주소를 쓴다</summary>
     public string? PublicUrl { get; set; }
 
+    /// <summary>업데이트 확인에 쓰는 GitHub 저장소 (owner/repo)</summary>
+    public string UpdateRepo { get; set; } = "choisjin/PC_Manager";
+
+    /// <summary>업데이트 자동 확인 주기(분). 0이면 자동 확인 안 함(수동 확인만)</summary>
+    public int UpdateCheckIntervalMinutes { get; set; } = 180;
+
     /// <summary>설치 스크립트가 만드는 설정 파일 위치</summary>
     public static string InstalledConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "PcManager", "Server", "server.json");

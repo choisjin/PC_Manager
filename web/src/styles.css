@@ -708,8 +708,106 @@ button.small-btn {
   background: var(--selected);
 }
 
-.topbar .conn {
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-left: auto;
+}
+
+.update-chip {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border-radius: 999px;
+}
+
+.update-chip.available {
+  color: #fff;
+  font-weight: 600;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* 업데이트 대화상자 */
+.update-dialog {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.version-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.version-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.version-arrow {
+  color: var(--muted);
+  font-size: 18px;
+}
+
+.new-badge {
+  font-size: 10px;
+}
+
+.release-notes {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.release-notes-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--hover);
+  border-bottom: 1px solid var(--border);
+}
+
+.release-notes-body {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  padding: 12px;
+  font-family: 'Cascadia Mono', 'D2Coding', Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.update-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.update-action-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.update-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.update-action button {
+  flex: none;
 }
 
 /* Job */

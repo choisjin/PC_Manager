@@ -1,3 +1,5 @@
+using PcManager.Shared;
+
 namespace PcManager.Server.Api;
 
 /// <param name="ServerUrl">테스트 PC의 런처에 입력할 서버 주소</param>
@@ -12,7 +14,7 @@ public record InstallInfo(string ServerUrl, string ServerVersion, bool SetupAvai
 public static class InstallEndpoints
 {
     public const string PackageFolder = "agent";
-    public const string SetupFileName = "PcManager-Agent-Setup.exe";
+    public static string SetupFileName => InstallPaths.AgentSetupFile;
 
     public static void MapInstallApi(this WebApplication app, ServerOptions options)
     {

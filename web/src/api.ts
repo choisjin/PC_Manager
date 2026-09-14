@@ -150,6 +150,29 @@ export interface DirectoryListing {
   error: string | null
 }
 
+export type UpdatePhase = 'Idle' | 'Downloading' | 'Installing' | 'Restarting' | 'Failed'
+
+export interface UpdateStatus {
+  currentVersion: string
+  latestVersion: string | null
+  updateAvailable: boolean
+  releaseName: string | null
+  releaseNotes: string | null
+  releaseUrl: string | null
+  publishedAt: string | null
+  checkedAt: string | null
+  checkError: string | null
+  serverAssetAvailable: boolean
+  serverPhase: UpdatePhase
+  serverError: string | null
+}
+
+export interface AgentUpdateResult {
+  requested: number
+  dispatched: number
+  error: string | null
+}
+
 export interface InstallInfo {
   serverUrl: string
   serverVersion: string
@@ -218,6 +241,15 @@ export const api = {
     request<Transfer[]>(`/api/transfers?${query({ ...filter, take: 100 })}`),
 
   installInfo: () => request<InstallInfo>('/api/install/info'),
+
+  updateStatus: () => request<UpdateStatus>('/api/update'),
+  checkUpdate: () => request<UpdateStatus>('/api/update/check', { method: 'POST' }),
+  updateServer: () => request<void>('/api/update/server', { method: 'POST' }),
+  updateAgents: (agentIds?: string[]) =>
+    request<AgentUpdateResult>('/api/update/agents', {
+      method: 'POST',
+      body: JSON.stringify({ agentIds: agentIds ?? null }),
+    }),
 
   listFiles: (agentId: string, path: string) =>
     request<DirectoryListing>(`/api/agents/${agentId}/files?${query({ path })}`),
