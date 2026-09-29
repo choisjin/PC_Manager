@@ -34,6 +34,7 @@ interface Props {
   favorites: string[]
   onAddFavorite: (path: string) => void
   onRemoveFavorite: (path: string) => void
+  onReorderFavorites: (paths: string[]) => void
   subscribeTransfers: SubscribeTransfers
   watchRun: WatchRun
   onClose: () => void
@@ -69,6 +70,8 @@ const joinPath = (directory: string, name: string) =>
 
 const toMessage = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
+const SIDE_WIDTH_KEY = 'pcm.paneSideWidth'
+
 export function ExplorerPane({
   paneId,
   agentId,
@@ -84,6 +87,7 @@ export function ExplorerPane({
   favorites,
   onAddFavorite,
   onRemoveFavorite,
+  onReorderFavorites,
   subscribeTransfers,
   watchRun,
   onClose,
@@ -109,6 +113,18 @@ export function ExplorerPane({
   const sectionRef = useRef<HTMLElement>(null)
   const requestRef = useRef(0)
   const anchorRef = useRef(-1)
+  // 즐겨찾기 순서 변경(드래그)
+  const favDragIndex = useRef<number | null>(null)
+  const [favOverIndex, setFavOverIndex] = useState<number | null>(null)
+  // 왼쪽 경로 패널 폭 (드래그로 조절, 브라우저에 저장)
+  const [sideWidth, setSideWidth] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem(SIDE_WIDTH_KEY))
+      return saved >= 90 && saved <= 360 ? saved : 138
+    } catch {
+      return 138
+    }
+  })
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0]
   const path = activeTab.stack[activeTab.idx] ?? ''
@@ -211,6 +227,38 @@ export function ExplorerPane({
     const w = Math.round(el.offsetWidth)
     const h = Math.round(el.offsetHeight)
     if (w !== (width ?? 0) || h !== (height ?? 0)) onResize(w, h)
+  }
+
+  // 왼쪽 경로 패널 폭 드래그 조절
+  const startSideResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = sideWidth
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(90, Math.min(360, startW + ev.clientX - startX))
+      setSideWidth(next)
+    }
+    const onUp = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      const next = Math.max(90, Math.min(360, startW + ev.clientX - startX))
+      try {
+        localStorage.setItem(SIDE_WIDTH_KEY, String(next))
+      } catch {
+        // 무시
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  // 즐겨찾기 순서 바꾸기 (드래그한 항목을 대상 위치로 이동)
+  const reorderFavorites = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0) return
+    const next = favorites.slice()
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    onReorderFavorites(next)
   }
 
   const fetchFiles = (entries: FileEntry[]) => {
@@ -542,13 +590,41 @@ export function ExplorerPane({
       {error && <div className="output-error">{error}</div>}
 
       <div className="pane-body">
-        <div className="pane-side">
+        <div className="pane-side" style={{ width: sideWidth }}>
           <div className="pane-side-section">
             <div className="pane-side-title">즐겨찾기</div>
             {favorites.length === 0 && <div className="drive-hint small muted">폴더 우클릭 → 즐겨찾기에 추가</div>}
             <ul className="fav-list">
-              {favorites.map((fp) => (
-                <li key={fp} className={`fav-item${samePath(fp, path) ? ' current' : ''}`}>
+              {favorites.map((fp, i) => (
+                <li
+                  key={fp}
+                  className={`fav-item${samePath(fp, path) ? ' current' : ''}${favOverIndex === i ? ' fav-over' : ''}`}
+                  draggable
+                  onDragStart={(e) => {
+                    favDragIndex.current = i
+                    e.dataTransfer.effectAllowed = 'move'
+                    e.dataTransfer.setData('text/plain', fp)
+                  }}
+                  onDragOver={(e) => {
+                    if (favDragIndex.current !== null) {
+                      e.preventDefault()
+                      setFavOverIndex(i)
+                    }
+                  }}
+                  onDragLeave={() => setFavOverIndex((v) => (v === i ? null : v))}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    if (favDragIndex.current !== null) reorderFavorites(favDragIndex.current, i)
+                    favDragIndex.current = null
+                    setFavOverIndex(null)
+                  }}
+                  onDragEnd={() => {
+                    favDragIndex.current = null
+                    setFavOverIndex(null)
+                  }}
+                >
+                  <span className="fav-grip" aria-hidden="true">⠿</span>
                   <button type="button" className="drive-name ellipsis fav-btn" title={fp} onClick={() => navigate(fp)}>
                     <Icon name="star" size={13} /> {favName(fp)}
                   </button>
@@ -561,6 +637,8 @@ export function ExplorerPane({
           </div>
           <DriveTree agentId={agentId} currentPath={path} onNavigate={navigate} />
         </div>
+
+        <div className="pane-side-resizer" title="드래그해서 폭 조절" onMouseDown={startSideResize} />
 
         <div
           className={`table-wrap${dragOver ? ' drop-active' : ''}`}

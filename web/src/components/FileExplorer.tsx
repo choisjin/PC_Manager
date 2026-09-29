@@ -156,27 +156,16 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       <div className="explorer-main">
         <ExplorerToolbar controller={activeController} />
 
-        <div className="workspace-bar">
-          <span className="workspace-left">
-            <span className="muted small">열린 창 {panes.length}개</span>
-            {clipboard && (
-              <span className="clip-chip">
-                {clipboard.mode === 'cut' ? '잘라냄' : '복사됨'}: <b className="ellipsis">{clipboard.items[0]?.name}{clipboard.items.length > 1 ? ` 외 ${clipboard.items.length - 1}` : ''}</b>
-                <button type="button" className="icon-mini" title="지우기" onClick={() => setClipboard(null)}>
-                  ✕
-                </button>
-              </span>
-            )}
-          </span>
-          <span className="workspace-cols">
-            <span className="muted small">창을 클릭하면 위 툴바가 그 창에 적용됩니다 · 모서리를 끌어 크기 조절</span>
-            {panes.length > 0 && (
-              <button type="button" className="link" onClick={() => { updatePanes([]); setActivePaneId(null); setActiveController(null) }}>
-                모두 닫기
+        {clipboard && (
+          <div className="workspace-bar">
+            <span className="clip-chip">
+              {clipboard.mode === 'cut' ? '잘라냄' : '복사됨'}: <b className="ellipsis">{clipboard.items[0]?.name}{clipboard.items.length > 1 ? ` 외 ${clipboard.items.length - 1}` : ''}</b>
+              <button type="button" className="icon-mini" title="지우기" onClick={() => setClipboard(null)}>
+                ✕
               </button>
-            )}
-          </span>
-        </div>
+            </span>
+          </div>
+        )}
 
         <div
           className={`workspace-grid${dropActive ? ' drop-active' : ''}`}
@@ -223,6 +212,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
                 favorites={favorites.favorites[pane.agentId] ?? []}
                 onAddFavorite={(p) => addFavorite(pane.agentId, p)}
                 onRemoveFavorite={(p) => removeFavorite(pane.agentId, p)}
+                onReorderFavorites={(paths) => setAgentFavorites(pane.agentId, paths)}
                 subscribeTransfers={subscribeTransfers}
                 watchRun={watchRun}
                 onClose={() => closePane(pane.paneId)}
