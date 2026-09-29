@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type InstallInfo } from '../api'
+import { copyText } from './explorer/pcGroups'
 
 interface Props {
   onClose: () => void
@@ -22,11 +23,11 @@ export function AddAgentDialog({ onClose }: Props) {
 
   const copyServer = async () => {
     if (!info) return
-    try {
-      await navigator.clipboard.writeText(info.serverUrl)
+    // http 내부망에서도 되도록 폴백 포함 복사 사용
+    if (await copyText(info.serverUrl)) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch {
+    } else {
       setError('자동 복사에 실패했습니다. 주소를 직접 선택해 복사하세요.')
     }
   }

@@ -6,8 +6,19 @@ export const EMPTY_GROUPS: PcGroups = { folders: [], assignments: {} }
 export const AGENT_MIME = 'application/x-pcm-agent'
 export const PANE_MIME = 'application/x-pcm-pane'
 
+// crypto.randomUUID는 보안 컨텍스트(HTTPS/localhost)에서만 동작하므로,
+// http로 접속하는 내부망에서도 되도록 폴백을 둔다. (폴더·창 ID는 암호학적 강도 불필요)
 export function newId(): string {
-  return crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(8)
+      crypto.getRandomValues(bytes)
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+    }
+  } catch {
+    // 아래 폴백 사용
+  }
+  return (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 16)
 }
 
 /** 복사/잘라내기 클립보드 (패널 간 공유) */
