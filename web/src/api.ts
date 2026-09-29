@@ -316,10 +316,10 @@ export const api = {
   crossCopy: (body: { sourceAgentId: string; sourcePath: string; destAgentId: string; destFolder: string; move: boolean }) =>
     request<FileOpResult>('/api/files/cross-copy', { method: 'POST', body: JSON.stringify(body) }),
 
-  /** PC 안에서 선택 항목을 ZIP으로 압축 (PC에서 직접 수행). 진행 상황은 전송 기록에 표시된다 */
-  compressFiles: (agentId: string, paths: string[], destinationFolder: string, archiveName?: string) =>
+  /** PC 안에서 선택 항목을 ZIP으로 압축 (PC에서 직접 수행). splitBytes>0이면 분할 압축. 진행 상황은 전송 기록에 표시된다 */
+  compressFiles: (agentId: string, paths: string[], destinationFolder: string, archiveName?: string, splitBytes = 0) =>
     request<Transfer>(`/api/agents/${agentId}/files/compress`, {
       method: 'POST',
-      body: JSON.stringify({ paths, destinationFolder, archiveName: archiveName ?? null }),
+      body: JSON.stringify({ paths, destinationFolder, archiveName: archiveName ?? null, splitBytes }),
     }),
 }

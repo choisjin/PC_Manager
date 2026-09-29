@@ -113,7 +113,7 @@ public static class FileEndpoints
             if (request.Paths is null or { Count: 0 } || string.IsNullOrWhiteSpace(request.DestinationFolder))
                 return Results.BadRequest("압축할 항목과 대상 폴더가 필요합니다.");
             var name = string.IsNullOrWhiteSpace(request.ArchiveName) ? DefaultArchiveName(request.Paths) : request.ArchiveName!;
-            return Results.Ok(await transfers.CompressAsync(agentId, request.Paths, request.DestinationFolder!, name));
+            return Results.Ok(await transfers.CompressAsync(agentId, request.Paths, request.DestinationFolder!, name, Math.Max(0, request.SplitBytes)));
         });
 
         // PC 간 붙여넣기 (원본 → 서버 중계 → 대상, 디스크 미경유). 단일 파일만.

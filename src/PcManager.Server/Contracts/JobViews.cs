@@ -36,7 +36,8 @@ public record CrossCopyRequest(string SourceAgentId, string SourcePath, string D
 /// <param name="Paths">압축할 파일·폴더의 전체 경로</param>
 /// <param name="DestinationFolder">.zip을 만들 폴더</param>
 /// <param name="ArchiveName">만들 zip 이름. 비우면 서버가 기본 이름을 정한다</param>
-public record CompressFilesRequest(IReadOnlyList<string>? Paths, string? DestinationFolder, string? ArchiveName);
+/// <param name="SplitBytes">0보다 크면 이 크기로 분할 압축(.zip.001…)</param>
+public record CompressFilesRequest(IReadOnlyList<string>? Paths, string? DestinationFolder, string? ArchiveName, long SplitBytes = 0);
 
 public static class JobViewMappings
 {

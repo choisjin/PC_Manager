@@ -7,6 +7,7 @@ import { VideoViewer } from '../VideoViewer'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DriveTree } from './DriveTree'
 import { copyText, type FileClipboard, PANE_MIME } from './pcGroups'
+import { SplitCompressModal } from './SplitCompressModal'
 import { TerminalModal } from './TerminalModal'
 
 export interface Pane {
@@ -72,6 +73,7 @@ export function ExplorerPane({
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState<{ path: string; name: string } | null>(null)
   const [terminal, setTerminal] = useState(false)
+  const [splitTargets, setSplitTargets] = useState<FileEntry[] | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; targets: FileEntry[]; folder: string | null } | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dragOver, setDragOver] = useState(false)
@@ -142,11 +144,25 @@ export function ExplorerPane({
       .forEach((e) => void api.fetchFile(agentId, e.fullPath).catch((err) => setError(toMessage(err))))
   }
 
+  // 선택 항목을 하나의 zip으로 (이름은 서버가 정한다). 진행 상황은 하단 전송 기록에 표시된다.
   const compress = (targets: FileEntry[]) => {
     if (!path || targets.length === 0) return
     setError(null)
-    // 이름은 서버가 정한다(한 개면 "이름.zip", 여러 개면 "첫이름 외 N개.zip"). 진행 상황은 하단 전송 기록에 표시된다.
     void api.compressFiles(agentId, targets.map((t) => t.fullPath), path).catch((err) => setError(toMessage(err)))
+  }
+
+  // 선택 항목을 각각 개별 zip으로
+  const compressEach = (targets: FileEntry[]) => {
+    if (!path || targets.length === 0) return
+    setError(null)
+    for (const t of targets) void api.compressFiles(agentId, [t.fullPath], path).catch((err) => setError(toMessage(err)))
+  }
+
+  // 분할 압축: 하나의 zip으로 만든 뒤 지정 크기로 .zip.001, .002 … 볼륨 분할
+  const compressSplit = (targets: FileEntry[], splitBytes: number) => {
+    if (!path || targets.length === 0) return
+    setError(null)
+    void api.compressFiles(agentId, targets.map((t) => t.fullPath), path, undefined, splitBytes).catch((err) => setError(toMessage(err)))
   }
 
   const pushFiles = async (files: FileList) => {
@@ -285,7 +301,11 @@ export function ExplorerPane({
       items.push({ label: `가져오기${files.length > 1 ? ` (${files.length})` : ''}`, onClick: () => fetchFiles(files) })
     }
     if (targets.length > 0) {
-      items.push({ label: `압축 (ZIP)${targets.length > 1 ? ` (${targets.length})` : ''}`, disabled: !path, onClick: () => compress(targets) })
+      items.push({ label: `압축 (ZIP)${targets.length > 1 ? ` (${targets.length}개 합쳐서)` : ''}`, disabled: !path, onClick: () => compress(targets) })
+      if (targets.length > 1) {
+        items.push({ label: `각각 압축 (${targets.length}개)`, disabled: !path, onClick: () => compressEach(targets) })
+      }
+      items.push({ label: '분할 압축…', disabled: !path, onClick: () => setSplitTargets(targets) })
     }
     if (targets.length === 1 && isVideoFile(targets[0].name)) {
       items.push({ label: '재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
@@ -484,6 +504,17 @@ export function ExplorerPane({
 
       {terminal && (
         <TerminalModal agentId={agentId} machineName={machineName} path={path} watchRun={watchRun} onClose={() => setTerminal(false)} />
+      )}
+
+      {splitTargets && (
+        <SplitCompressModal
+          count={splitTargets.length}
+          onConfirm={(bytes) => {
+            compressSplit(splitTargets, bytes)
+            setSplitTargets(null)
+          }}
+          onClose={() => setSplitTargets(null)}
+        />
       )}
     </section>
   )

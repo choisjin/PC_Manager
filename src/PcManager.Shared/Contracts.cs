@@ -125,7 +125,8 @@ public record DownloadFileRequest(string TransferId, string DestinationPath);
 /// <param name="Paths">압축할 파일·폴더의 전체 경로 목록</param>
 /// <param name="DestinationFolder">.zip을 만들 폴더 (보통 원본과 같은 폴더)</param>
 /// <param name="ArchiveName">만들 zip 파일 이름 (충돌 시 자동 번호)</param>
-public record CompressRequest(string TransferId, IReadOnlyList<string> Paths, string DestinationFolder, string ArchiveName);
+/// <param name="SplitBytes">0보다 크면 이 크기로 나눠 .zip.001, .zip.002… 볼륨으로 만든다</param>
+public record CompressRequest(string TransferId, IReadOnlyList<string> Paths, string DestinationFolder, string ArchiveName, long SplitBytes = 0);
 
 public record TransferCompleted(string TransferId, bool Success, int FileCount, long TotalBytes, string? Error, DateTime FinishedAt);
 

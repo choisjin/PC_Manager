@@ -691,6 +691,45 @@ button.small-btn {
   border-radius: 6px;
 }
 
+.split-dialog {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.split-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.split-preset {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.split-preset:hover {
+  border-color: var(--accent);
+}
+
+.split-preset.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.split-size-row {
+  display: flex;
+  gap: 8px;
+}
+
+.split-size-row input {
+  flex: 1;
+}
+
 /* 탭 */
 .tabs {
   display: flex;

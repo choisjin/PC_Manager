@@ -143,12 +143,12 @@ public class TransferService(
         await dashboard.Clients.All.TransferUpdated(transfer.ToView());
     }
 
-    /// <summary>파일 탐색기: PC 안에서 선택 항목을 ZIP으로 압축한다 (PC에서 직접 수행).</summary>
-    public async Task<TransferView> CompressAsync(string agentId, IReadOnlyList<string> paths, string destFolder, string archiveName)
+    /// <summary>파일 탐색기: PC 안에서 선택 항목을 ZIP으로 압축한다 (PC에서 직접 수행). splitBytes>0이면 분할 압축.</summary>
+    public async Task<TransferView> CompressAsync(string agentId, IReadOnlyList<string> paths, string destFolder, string archiveName, long splitBytes = 0)
     {
         var target = destFolder.TrimEnd('\\', '/') + "\\" + archiveName;
         var transfer = NewTransfer(agentId, TransferKind.Compress, target);
-        await DispatchAsync(transfer, client => client.Compress(new CompressRequest(transfer.Id, paths, destFolder, archiveName)));
+        await DispatchAsync(transfer, client => client.Compress(new CompressRequest(transfer.Id, paths, destFolder, archiveName, splitBytes)));
         return transfer.ToView();
     }
 

@@ -407,36 +407,87 @@ public class FileTransferService(
         var lastPercent = -1;
         var lastReport = DateTime.MinValue;
 
+        async Task WriteEntriesAsync(ZipArchive zip)
+        {
+            var buffer = new byte[81920];
+            foreach (var (full, entryName) in files)
+            {
+                var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
+                await using (var entryStream = entry.Open())
+                // 테스트가 쓰고 있는 파일도 읽을 수 있게 공유 모드
+                await using (var source = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, useAsync: true))
+                {
+                    int read;
+                    while ((read = await source.ReadAsync(buffer)) > 0)
+                    {
+                        await entryStream.WriteAsync(buffer.AsMemory(0, read));
+                        doneBytes += read;
+                        var percent = totalBytes > 0 ? (int)(doneBytes * 100 / totalBytes) : 100;
+                        var now = DateTime.UtcNow;
+                        if (percent != lastPercent && (now - lastReport).TotalMilliseconds >= 250)
+                        {
+                            lastPercent = percent;
+                            lastReport = now;
+                            outbound.Enqueue(new TransferProgressReport(request.TransferId, progress.Files, doneBytes, percent));
+                        }
+                    }
+                }
+                progress.Files++;
+            }
+        }
+
+        // 분할 압축: 최소 볼륨 크기 64KB로 제한
+        var splitBytes = request.SplitBytes > 0 ? Math.Max(request.SplitBytes, 64 * 1024) : 0;
+
+        if (splitBytes > 0)
+        {
+            var split = new SplitWriteStream(finalPath, splitBytes);
+            try
+            {
+                await using (split)
+                using (var zip = new ZipArchive(split, ZipArchiveMode.Create, leaveOpen: true))
+                {
+                    await WriteEntriesAsync(zip);
+                }
+
+                // 볼륨이 하나뿐이면 .001을 떼고 일반 zip 이름으로 되돌린다
+                if (split.Volumes.Count == 1)
+                {
+                    File.Move(split.Volumes[0], finalPath, overwrite: false);
+                    progress.Bytes = new FileInfo(finalPath).Length;
+                }
+                else
+                {
+                    progress.Bytes = split.Total;
+                }
+                logger.LogInformation("분할 압축 완료 {TransferId}: {File} ({Volumes}개 볼륨, {Bytes} bytes)",
+                    request.TransferId, finalPath, split.Volumes.Count, progress.Bytes);
+            }
+            catch
+            {
+                foreach (var volume in split.Volumes)
+                {
+                    try
+                    {
+                        if (File.Exists(volume))
+                            File.Delete(volume);
+                    }
+                    catch (IOException)
+                    {
+                        // 정리 실패는 무시
+                    }
+                }
+                throw;
+            }
+            return;
+        }
+
         try
         {
             await using (var zipStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create))
             {
-                var buffer = new byte[81920];
-                foreach (var (full, entryName) in files)
-                {
-                    var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
-                    await using (var entryStream = entry.Open())
-                    // 테스트가 쓰고 있는 파일도 읽을 수 있게 공유 모드
-                    await using (var source = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, useAsync: true))
-                    {
-                        int read;
-                        while ((read = await source.ReadAsync(buffer)) > 0)
-                        {
-                            await entryStream.WriteAsync(buffer.AsMemory(0, read));
-                            doneBytes += read;
-                            var percent = totalBytes > 0 ? (int)(doneBytes * 100 / totalBytes) : 100;
-                            var now = DateTime.UtcNow;
-                            if (percent != lastPercent && (now - lastReport).TotalMilliseconds >= 250)
-                            {
-                                lastPercent = percent;
-                                lastReport = now;
-                                outbound.Enqueue(new TransferProgressReport(request.TransferId, progress.Files, doneBytes, percent));
-                            }
-                        }
-                    }
-                    progress.Files++;
-                }
+                await WriteEntriesAsync(zip);
             }
 
             File.Move(tempPath, finalPath, overwrite: false);
@@ -456,6 +507,80 @@ public class FileTransferService(
             }
             throw;
         }
+    }
+
+    /// <summary>zip 출력을 일정 크기마다 .001, .002… 볼륨 파일로 나눠 기록하는 쓰기 전용 스트림.</summary>
+    private sealed class SplitWriteStream(string basePath, long volumeSize) : Stream
+    {
+        private readonly List<string> _volumes = [];
+        private FileStream? _current;
+        private long _currentLength;
+        private long _total;
+
+        public IReadOnlyList<string> Volumes => _volumes;
+        public long Total => _total;
+
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _total;
+        public override long Position { get => _total; set => throw new NotSupportedException(); }
+
+        public override void Write(byte[] buffer, int offset, int count) => WriteCore(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer) => WriteCore(buffer);
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            WriteCore(buffer.AsSpan(offset, count));
+            return Task.CompletedTask;
+        }
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            WriteCore(buffer.Span);
+            return ValueTask.CompletedTask;
+        }
+
+        private void WriteCore(ReadOnlySpan<byte> data)
+        {
+            while (!data.IsEmpty)
+            {
+                if (_current is null || _currentLength >= volumeSize)
+                    OpenNextVolume();
+
+                var room = (int)Math.Min(data.Length, volumeSize - _currentLength);
+                _current!.Write(data[..room]);
+                _currentLength += room;
+                _total += room;
+                data = data[room..];
+            }
+        }
+
+        private void OpenNextVolume()
+        {
+            _current?.Dispose();
+            var path = $"{basePath}.{_volumes.Count + 1:D3}";
+            _current = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920);
+            _currentLength = 0;
+            _volumes.Add(path);
+        }
+
+        public override void Flush() => _current?.Flush();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _current?.Dispose();
+                _current = null;
+            }
+            base.Dispose(disposing);
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
     }
 
     private static string EnsureZipName(string name)
