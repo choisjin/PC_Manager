@@ -151,7 +151,29 @@ public static class AgentClientMethods
 
     /// <summary>(string path, long offset, int length) → byte[] (EOF면 더 짧을 수 있음). 영상 스트리밍용</summary>
     public const string ReadFileChunk = "ReadFileChunk";
+
+    /// <summary>FileOpRequest → FileOpResult. 같은 PC 안의 파일 조작(복사/이동/삭제/폴더 생성/이름 변경)</summary>
+    public const string FileOp = "FileOp";
 }
+
+[JsonConverter(typeof(JsonStringEnumConverter<FileOpKind>))]
+public enum FileOpKind
+{
+    /// <summary>Path를 Target 폴더로 복사 (이름 충돌 시 자동 번호)</summary>
+    Copy,
+    /// <summary>Path를 Target 폴더로 이동</summary>
+    Move,
+    /// <summary>Path 삭제 (폴더는 하위 포함)</summary>
+    Delete,
+    /// <summary>Path 폴더 안에 Target 이름의 새 폴더 생성</summary>
+    CreateDirectory,
+    /// <summary>Path의 이름을 Target으로 변경</summary>
+    Rename,
+}
+
+public record FileOpRequest(FileOpKind Op, string Path, string? Target);
+
+public record FileOpResult(bool Success, string? Error, string? ResultPath);
 
 /// <summary>에이전트 → 서버 Hub 메서드 이름</summary>
 public static class AgentHubMethods

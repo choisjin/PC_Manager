@@ -14,9 +14,66 @@ public class TransferService(
     ArtifactStore store,
     CompletionNotifier notifier,
     IHubContext<AgentHub, IAgentClient> agentHub,
+    IHubContext<AgentHub> agentHubRaw,
     IHubContext<DashboardHub, IDashboardClient> dashboard,
     ILogger<TransferService> logger)
 {
+    /// <summary>
+    /// PC 간 파일 붙여넣기: 원본을 서버로 가져온 뒤 대상 PC로 보낸다. 잘라내기면 원본을 지운다.
+    /// 단일 파일만 지원하며, 대상에 같은 이름이 있으면 덮어쓴다.
+    /// </summary>
+    public async Task<FileOpResult> CrossCopyAsync(
+        string sourceAgentId, string sourcePath, string destAgentId, string destFolder, bool move, CancellationToken ct)
+    {
+        var fileName = Path.GetFileName(sourcePath.TrimEnd('\\', '/'));
+        if (string.IsNullOrEmpty(fileName))
+            return new FileOpResult(false, "잘못된 원본 경로입니다.", null);
+
+        // 1. 원본을 서버로 가져오기 (완료까지 대기)
+        var fetch = NewTransfer(sourceAgentId, TransferKind.Fetch, sourcePath);
+        var fetchDone = notifier.WaitAsync(fetch.Id, ct);
+        await DispatchAsync(fetch, c => c.UploadFile(new UploadFileRequest(fetch.Id, sourcePath)));
+        await fetchDone;
+        if (await FindAsync(fetch.Id) is not { State: TransferState.Succeeded } fetched)
+            return new FileOpResult(false, (await FindAsync(fetch.Id))?.Error ?? "원본을 가져오지 못했습니다.", null);
+        _ = fetched;
+
+        var localPath = store.GetArtifactPath(fetch.Id, fileName);
+        if (!File.Exists(localPath))
+            return new FileOpResult(false, "가져온 파일을 찾을 수 없습니다 (폴더는 PC 간 복사를 지원하지 않습니다).", null);
+
+        // 2. 대상 PC로 보내기 (완료까지 대기)
+        var destPath = destFolder.TrimEnd('\\', '/') + "\\" + fileName;
+        var push = NewTransfer(destAgentId, TransferKind.Push, destPath);
+        await using (var fs = File.OpenRead(localPath))
+            push.TotalBytes = await store.SaveAsync(store.GetPushContentPath(push.Id), fs, ct);
+        var pushDone = notifier.WaitAsync(push.Id, ct);
+        await DispatchAsync(push, c => c.DownloadFile(new DownloadFileRequest(push.Id, destPath)));
+        await pushDone;
+        if (await FindAsync(push.Id) is not { State: TransferState.Succeeded })
+            return new FileOpResult(false, (await FindAsync(push.Id))?.Error ?? "대상 PC로 보내지 못했습니다.", null);
+
+        // 3. 잘라내기면 원본 삭제
+        if (move)
+        {
+            if (!registry.TryGetConnection(sourceAgentId, out var connectionId))
+                return new FileOpResult(true, "복사는 완료됐지만 원본 삭제 실패(원본 PC 오프라인).", destPath);
+            try
+            {
+                var del = await agentHubRaw.Clients.Client(connectionId)
+                    .InvokeAsync<FileOpResult>(AgentClientMethods.FileOp, new FileOpRequest(FileOpKind.Delete, sourcePath, null), ct);
+                if (!del.Success)
+                    return new FileOpResult(true, "복사는 완료됐지만 원본 삭제 실패: " + del.Error, destPath);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return new FileOpResult(true, "복사는 완료됐지만 원본 삭제 실패: " + ex.Message, destPath);
+            }
+        }
+
+        return new FileOpResult(true, null, destPath);
+    }
+
     /// <summary>Job 단계: PC의 결과 파일을 수집하고 끝날 때까지 기다린다.</summary>
     public async Task<TransferEntity> CollectAndWaitAsync(
         string agentId, string jobRunId, int stepIndex, string? sourceDirectory, IReadOnlyList<string> patterns, CancellationToken ct)

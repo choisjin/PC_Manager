@@ -134,6 +134,7 @@ export default function App() {
             pcGroups={pcGroups}
             saveGroups={saveGroups}
             subscribeTransfers={subscribeTransfers}
+            watchRun={watchRun}
           />
         )}
       </main>

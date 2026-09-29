@@ -102,6 +102,143 @@ public class FileTransferService(
         return total == buffer.Length ? buffer : buffer[..total];
     }
 
+    /// <summary>같은 PC 안의 파일 조작 (복사/이동/삭제/폴더 생성/이름 변경)</summary>
+    public FileOpResult PerformFileOp(FileOpRequest request)
+    {
+        try
+        {
+            switch (request.Op)
+            {
+                case FileOpKind.Copy:
+                {
+                    var dest = UniqueChildPath(Require(request.Target, "대상 폴더"), Path.GetFileName(request.Path.TrimEnd('\\', '/')));
+                    CopyRecursive(request.Path, dest);
+                    return new FileOpResult(true, null, dest);
+                }
+                case FileOpKind.Move:
+                {
+                    var dest = UniqueChildPath(Require(request.Target, "대상 폴더"), Path.GetFileName(request.Path.TrimEnd('\\', '/')));
+                    MovePath(request.Path, dest);
+                    return new FileOpResult(true, null, dest);
+                }
+                case FileOpKind.Delete:
+                    DeletePath(request.Path);
+                    return new FileOpResult(true, null, null);
+                case FileOpKind.CreateDirectory:
+                {
+                    var dest = UniqueChildPath(request.Path, Require(request.Target, "폴더 이름"));
+                    Directory.CreateDirectory(dest);
+                    return new FileOpResult(true, null, dest);
+                }
+                case FileOpKind.Rename:
+                {
+                    var parent = Path.GetDirectoryName(request.Path.TrimEnd('\\', '/'))
+                        ?? throw new IOException("상위 폴더를 찾을 수 없습니다.");
+                    var dest = Path.Combine(parent, CleanName(Require(request.Target, "새 이름")));
+                    if (!string.Equals(dest, request.Path, StringComparison.OrdinalIgnoreCase) && Exists(dest))
+                        throw new IOException("같은 이름이 이미 있습니다.");
+                    MovePath(request.Path, dest);
+                    return new FileOpResult(true, null, dest);
+                }
+                default:
+                    return new FileOpResult(false, "지원하지 않는 작업입니다.", null);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            logger.LogWarning("파일 조작 실패 {Op} {Path}: {Message}", request.Op, request.Path, ex.Message);
+            return new FileOpResult(false, ex.Message, null);
+        }
+    }
+
+    /// <summary>서버가 준 원본 파일을 대상 폴더로 저장한다 (PC 간 붙여넣기의 받는 쪽).</summary>
+    public async Task<string> ReceiveIntoAsync(string destinationFolder, string fileName, Stream content)
+    {
+        var dest = UniqueChildPath(destinationFolder, CleanName(fileName));
+        Directory.CreateDirectory(destinationFolder);
+        await using var file = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+        await content.CopyToAsync(file);
+        return dest;
+    }
+
+    private static string Require(string? value, string what) =>
+        string.IsNullOrWhiteSpace(value) ? throw new ArgumentException($"{what}이(가) 필요합니다.") : value;
+
+    private static string CleanName(string name)
+    {
+        var trimmed = name.Trim();
+        if (trimmed.Length == 0 || trimmed.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            throw new ArgumentException("이름에 사용할 수 없는 문자가 있습니다.");
+        return trimmed;
+    }
+
+    private static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
+
+    /// <summary>대상 폴더 안에서 겹치지 않는 이름을 만든다 ("이름", "이름 (2)"...)</summary>
+    private static string UniqueChildPath(string folder, string name)
+    {
+        var candidate = Path.Combine(folder, name);
+        if (!Exists(candidate))
+            return candidate;
+
+        var stem = Path.GetFileNameWithoutExtension(name);
+        var ext = Path.GetExtension(name);
+        for (var i = 2; i < 10000; i++)
+        {
+            candidate = Path.Combine(folder, $"{stem} ({i}){ext}");
+            if (!Exists(candidate))
+                return candidate;
+        }
+        throw new IOException("겹치지 않는 이름을 만들 수 없습니다.");
+    }
+
+    private static void CopyRecursive(string source, string dest)
+    {
+        if (Directory.Exists(source))
+        {
+            Directory.CreateDirectory(dest);
+            foreach (var file in Directory.EnumerateFiles(source))
+                File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), overwrite: false);
+            foreach (var dir in Directory.EnumerateDirectories(source))
+                CopyRecursive(dir, Path.Combine(dest, Path.GetFileName(dir)));
+        }
+        else if (File.Exists(source))
+        {
+            File.Copy(source, dest, overwrite: false);
+        }
+        else
+        {
+            throw new FileNotFoundException($"원본이 없습니다: {source}");
+        }
+    }
+
+    private static void MovePath(string source, string dest)
+    {
+        try
+        {
+            if (Directory.Exists(source))
+                Directory.Move(source, dest);
+            else
+                File.Move(source, dest);
+        }
+        catch (IOException)
+        {
+            // 다른 드라이브 등으로 Move가 안 되면 복사 후 삭제
+            CopyRecursive(source, dest);
+            DeletePath(source);
+        }
+    }
+
+    private static void DeletePath(string path)
+    {
+        if (Directory.Exists(path))
+            Directory.Delete(path, recursive: true);
+        else if (File.Exists(path))
+            File.Delete(path);
+        else
+            throw new FileNotFoundException($"대상이 없습니다: {path}");
+    }
+
     public void StartCollect(CollectFilesRequest request) =>
         StartTransfer(request.TransferId, progress => CollectAsync(request, progress));
 

@@ -30,6 +30,8 @@ public record CreateJobRequest(
 
 public record FetchFileRequest(string? Path);
 
+public record CrossCopyRequest(string SourceAgentId, string SourcePath, string DestAgentId, string DestFolder, bool Move);
+
 public static class JobViewMappings
 {
     public static TransferView ToView(this TransferEntity t) => new(

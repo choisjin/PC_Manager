@@ -65,10 +65,45 @@ public static class FileEndpoints
             }
         });
 
+        // 같은 PC 안의 파일 조작 (복사/이동/삭제/폴더 생성/이름 변경)
+        api.MapPost("/agents/{agentId}/files/op", async (
+            string agentId, FileOpRequest request, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+        {
+            if (!registry.TryGetConnection(agentId, out var connectionId))
+                return Results.Conflict("에이전트가 오프라인입니다.");
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromMinutes(5));
+            try
+            {
+                var result = await agentHub.Clients.Client(connectionId)
+                    .InvokeAsync<FileOpResult>(AgentClientMethods.FileOp, request, timeout.Token);
+                return result.Success ? Results.Ok(result) : Results.BadRequest(result.Error ?? "작업에 실패했습니다.");
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return Results.Problem("작업 시간이 초과되었습니다.", statusCode: StatusCodes.Status504GatewayTimeout);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+
         api.MapPost("/agents/{agentId}/files/fetch", async (string agentId, FetchFileRequest request, TransferService transfers) =>
             string.IsNullOrWhiteSpace(request.Path)
                 ? Results.BadRequest("가져올 파일 경로를 입력하세요.")
                 : Results.Ok(await transfers.FetchAsync(agentId, request.Path)));
+
+        // PC 간 붙여넣기 (원본 → 서버 → 대상). 단일 파일만.
+        api.MapPost("/files/cross-copy", async (CrossCopyRequest request, TransferService transfers, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.SourcePath) || string.IsNullOrWhiteSpace(request.DestFolder))
+                return Results.BadRequest("원본과 대상 폴더가 필요합니다.");
+            var result = await transfers.CrossCopyAsync(
+                request.SourceAgentId, request.SourcePath, request.DestAgentId, request.DestFolder, request.Move, ct);
+            return result.Success ? Results.Ok(result) : Results.BadRequest(result.Error ?? "실패");
+        });
 
         // 브라우저는 파일 내용을 요청 본문 그대로 보낸다 (path = PC에 저장할 전체 경로)
         api.MapPost("/agents/{agentId}/files/push", async (

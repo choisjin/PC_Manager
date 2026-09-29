@@ -142,6 +142,14 @@ export interface FileEntry {
   modifiedAt: string | null
 }
 
+export type FileOpKind = 'Copy' | 'Move' | 'Delete' | 'CreateDirectory' | 'Rename'
+
+export interface FileOpResult {
+  success: boolean
+  error: string | null
+  resultPath: string | null
+}
+
 export interface DirectoryListing {
   /** 빈 문자열이면 드라이브 목록 */
   path: string
@@ -233,6 +241,7 @@ const query = (params: Record<string, string | number | undefined>) =>
 export const api = {
   agents: () => request<Agent[]>('/api/agents'),
   runs: () => request<Run[]>('/api/runs?take=200'),
+  run: (runId: string) => request<Run>(`/api/runs/${runId}`),
   output: (runId: string, afterSeq = 0) =>
     request<OutputLine[]>(`/api/runs/${runId}/output?afterSeq=${afterSeq}`),
   createRuns: (body: CreateRunsRequest) =>
@@ -282,4 +291,15 @@ export const api = {
       body: file,
       headers: { 'Content-Type': 'application/octet-stream' },
     }),
+
+  /** 같은 PC 안의 파일 조작 (복사/이동/삭제/폴더 생성/이름 변경) */
+  fileOp: (agentId: string, op: FileOpKind, path: string, target?: string) =>
+    request<FileOpResult>(`/api/agents/${agentId}/files/op`, {
+      method: 'POST',
+      body: JSON.stringify({ op, path, target: target ?? null }),
+    }),
+
+  /** PC 간 파일 붙여넣기 (원본 → 서버 → 대상, 단일 파일) */
+  crossCopy: (body: { sourceAgentId: string; sourcePath: string; destAgentId: string; destFolder: string; move: boolean }) =>
+    request<FileOpResult>('/api/files/cross-copy', { method: 'POST', body: JSON.stringify(body) }),
 }

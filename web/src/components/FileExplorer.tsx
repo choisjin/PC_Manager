@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import type { Agent, PcGroups } from '../api'
-import type { SubscribeTransfers } from '../useDashboard'
+import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
 import { PcTree } from './explorer/PcTree'
-import { AGENT_MIME, newId } from './explorer/pcGroups'
+import { AGENT_MIME, type FileClipboard, newId } from './explorer/pcGroups'
 import { TransfersBar } from './explorer/TransfersBar'
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
   pcGroups: PcGroups
   saveGroups: (groups: PcGroups) => void
   subscribeTransfers: SubscribeTransfers
+  watchRun: WatchRun
 }
 
 // 브라우저별 저장 (열린 창, 열/접힘 상태)
@@ -34,11 +35,12 @@ const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 const COLUMNS_KEY = 'pcm.explorer.columns'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   const [collapsed, setCollapsed] = useState(() => loadLocal(COLLAPSE_KEY, false))
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [columns, setColumns] = useState(() => loadLocal(COLUMNS_KEY, 2))
+  const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
   const [dropActive, setDropActive] = useState(false)
 
   const update = <T,>(setter: (v: T) => void, key: string, value: T) => {
@@ -75,7 +77,17 @@ export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers 
 
       <div className="explorer-main">
         <div className="workspace-bar">
-          <span className="muted small">열린 창 {panes.length}개</span>
+          <span className="workspace-left">
+            <span className="muted small">열린 창 {panes.length}개</span>
+            {clipboard && (
+              <span className="clip-chip">
+                {clipboard.mode === 'cut' ? '잘라냄' : '복사됨'}: <b className="ellipsis">{clipboard.name}</b>
+                <button type="button" className="icon-mini" title="지우기" onClick={() => setClipboard(null)}>
+                  ✕
+                </button>
+              </span>
+            )}
+          </span>
           <span className="workspace-cols">
             <span className="muted small">열</span>
             {[1, 2, 3].map((c) => (
@@ -133,7 +145,10 @@ export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers 
                 agentId={pane.agentId}
                 machineName={agent?.machineName ?? pane.agentId.slice(0, 8)}
                 online={agent?.online ?? false}
+                clipboard={clipboard}
+                setClipboard={setClipboard}
                 subscribeTransfers={subscribeTransfers}
+                watchRun={watchRun}
                 onClose={() => closePane(pane.paneId)}
                 onReorderDrop={(fromPaneId) => reorder(fromPaneId, pane.paneId)}
               />

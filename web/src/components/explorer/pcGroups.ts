@@ -10,6 +10,37 @@ export function newId(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 12)
 }
 
+/** 복사/잘라내기 클립보드 (패널 간 공유) */
+export interface FileClipboard {
+  agentId: string
+  path: string
+  name: string
+  isDir: boolean
+  mode: 'copy' | 'cut'
+}
+
+/** 텍스트를 클립보드에 복사 (http 환경에서도 동작하도록 폴백 포함) */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      return ok
+    } catch {
+      return false
+    }
+  }
+}
+
 export interface FolderNode {
   folder: PcGroupFolder
   children: FolderNode[]
