@@ -6,6 +6,7 @@ import {
   type JobRun,
   type JobState,
   type JobTarget,
+  type Org,
   type OutputLine,
   type PcFavorites,
   type PcGroups,
@@ -17,6 +18,16 @@ import {
   type UpdateStatus,
 } from './api'
 import { EMPTY_GROUPS } from './components/explorer/pcGroups'
+
+export interface OrgActions {
+  createProject: (name: string) => Promise<void>
+  renameProject: (id: string, name: string) => Promise<void>
+  deleteProject: (id: string) => Promise<void>
+  setProjectUsers: (id: string, userIds: string[]) => Promise<void>
+  createUser: (name: string) => Promise<void>
+  deleteUser: (id: string) => Promise<void>
+  setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
+}
 
 export interface RunWatcher {
   onLines: (lines: OutputLine[]) => void
@@ -94,8 +105,12 @@ export function useDashboard() {
   const [pcGroups, setPcGroups] = useState<PcGroups>(EMPTY_GROUPS)
   const [favorites, setFavorites] = useState<PcFavorites>({ favorites: {} })
   const [shares, setShares] = useState<SharedFolder[]>([])
+  const [org, setOrg] = useState<Org>({ projects: [], users: [], projectUsers: {}, agentProjects: {} })
+  const [presence, setPresence] = useState<Record<string, string[]>>({})
   const [connected, setConnected] = useState(false)
   const connectionRef = useRef<signalR.HubConnection | null>(null)
+  // 재연결 시 다시 알리기 위한 마지막 프레즌스
+  const presenceRef = useRef<{ userId: string; agentIds: string[] } | null>(null)
   const watchersRef = useRef(new Map<string, RunWatcher>())
   const transferListenersRef = useRef(new Set<(transfer: Transfer) => void>())
   // 상세를 연 Job: 재연결 시 대상 PC 상태를 다시 불러온다
@@ -145,6 +160,8 @@ export function useDashboard() {
     connection.on('PcGroupsChanged', (groups: PcGroups) => setPcGroups(groups))
     connection.on('PcFavoritesChanged', (f: PcFavorites) => setFavorites(f))
     connection.on('SharesChanged', (s: SharedFolders) => setShares(s.shares))
+    connection.on('OrgChanged', (o: Org) => setOrg(o))
+    connection.on('PresenceChanged', (viewers: Record<string, string[]>) => setPresence(viewers))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
     const sync = async () => {
@@ -157,6 +174,7 @@ export function useDashboard() {
       ])
       const favs = await api.pcFavorites().catch(() => null)
       const shareList = await api.shares().catch(() => null)
+      const orgData = await api.org().catch(() => null)
       if (disposed) return
       setAgents(agentList.sort(byMachineName))
       setRuns(runList)
@@ -165,6 +183,10 @@ export function useDashboard() {
       if (groups) setPcGroups(groups)
       if (favs) setFavorites(favs)
       if (shareList) setShares(shareList.shares)
+      if (orgData) setOrg(orgData)
+      // 재연결 후 프레즌스 복구
+      if (presenceRef.current)
+        connection.invoke('SetPresence', presenceRef.current.userId, presenceRef.current.agentIds).catch(() => {})
       for (const jobRunId of loadedJobIds) {
         api
           .job(jobRunId)
@@ -282,6 +304,23 @@ export function useDashboard() {
     api.removeShare(id).then((s: SharedFolders) => setShares(s.shares)).catch((err) => console.error('공유 폴더 삭제 실패', err))
   }, [])
 
+  // 프로젝트/사용자 관리 (서버가 OrgChanged로 다시 알려주지만 응답으로도 즉시 반영)
+  const orgActions: OrgActions = {
+    createProject: (name: string) => api.createProject(name).then(setOrg),
+    renameProject: (id: string, name: string) => api.renameProject(id, name).then(setOrg),
+    deleteProject: (id: string) => api.deleteProject(id).then(setOrg),
+    setProjectUsers: (id: string, userIds: string[]) => api.setProjectUsers(id, userIds).then(setOrg),
+    createUser: (name: string) => api.createUser(name).then(setOrg),
+    deleteUser: (id: string) => api.deleteUser(id).then(setOrg),
+    setAgentProject: (agentId: string, projectId: string | null) => api.setAgentProject(agentId, projectId).then(setOrg),
+  }
+
+  // 지금 보고 있는 PC를 서버에 알린다 (실시간 프레즌스)
+  const announcePresence = useCallback((userId: string, agentIds: string[]) => {
+    presenceRef.current = { userId, agentIds }
+    connectionRef.current?.invoke('SetPresence', userId, agentIds).catch(() => {})
+  }, [])
+
   return {
     agents,
     runs,
@@ -295,6 +334,10 @@ export function useDashboard() {
     shares,
     addShare,
     removeShare,
+    org,
+    orgActions,
+    presence,
+    announcePresence,
     connected,
     watchRun,
     upsertRuns,

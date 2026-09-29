@@ -1766,6 +1766,236 @@ tr.video {
   }
 }
 
+/* ===== 프로젝트/사용자 게이트 ===== */
+.gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px 16px;
+  background: var(--bg);
+}
+
+.gate-card {
+  width: min(680px, 100%);
+  padding: 28px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 12%);
+}
+
+.gate-title {
+  margin: 0;
+  font-size: 22px;
+}
+
+.gate-sub {
+  margin: 4px 0 20px;
+}
+
+.gate-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.gate-col-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.gate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.gate-item {
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.gate-item:hover {
+  border-color: var(--accent);
+}
+
+.gate-item.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.gate-empty {
+  padding: 16px 8px;
+}
+
+.gate-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 20px;
+}
+
+/* 헤더의 신원 칩 + 설정 톱니 */
+.identity-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.identity-project {
+  font-weight: 600;
+}
+
+.identity-user {
+  color: var(--muted);
+}
+
+.gear-btn {
+  font-size: 18px;
+}
+
+/* PC 트리: 프로젝트 배지 · 사용 중 배지 · 프레즌스 팝오버 */
+.proj-badge {
+  flex: none;
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--selected);
+  border-radius: 999px;
+}
+
+.using-badge {
+  flex: none;
+  font-size: 10px;
+  color: #1a9d5a;
+  font-weight: 600;
+}
+
+.presence-pop {
+  position: fixed;
+  z-index: 1200;
+  min-width: 180px;
+  max-width: 260px;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 20%);
+  pointer-events: none;
+}
+
+.presence-row {
+  display: flex;
+  gap: 8px;
+}
+
+.presence-row + .presence-row {
+  margin-top: 4px;
+}
+
+.presence-label {
+  flex: none;
+  width: 52px;
+  color: var(--muted);
+}
+
+/* ===== 설정 모달 ===== */
+.settings-dialog {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.settings-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.settings-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-add {
+  display: flex;
+  gap: 6px;
+}
+
+.settings-add input {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.settings-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.settings-item:hover {
+  background: var(--hover);
+}
+
+.settings-item.active {
+  background: var(--selected);
+}
+
+.settings-item-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.settings-assign {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
 /* 공유 서버 섹션 (PC 트리 하단) */
 .share-section {
   flex: none;

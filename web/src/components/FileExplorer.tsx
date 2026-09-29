@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import type { Agent, PcFavorites, PcGroups, SharedFolder } from '../api'
+import { useEffect, useMemo, useState } from 'react'
+import type { Agent, Org, PcFavorites, PcGroups, SharedFolder } from '../api'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
 import { ExplorerToolbar } from './explorer/ExplorerToolbar'
@@ -17,6 +17,12 @@ interface Props {
   shares: SharedFolder[]
   addShare: (name: string, path: string) => Promise<void>
   removeShare: (id: string) => void
+  org: Org
+  setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
+  presence: Record<string, string[]>
+  filterProjectId: string | null
+  selfUserId: string | null
+  announcePresence: (userId: string, agentIds: string[]) => void
   subscribeTransfers: SubscribeTransfers
   watchRun: WatchRun
 }
@@ -41,8 +47,19 @@ function saveLocal(key: string, value: unknown) {
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
+  // 선택한 프로젝트의 에이전트 + 아직 미배정 에이전트를 노출 (다른 프로젝트 전용은 숨김). 전체 보기면 모두.
+  const visibleAgents = useMemo(
+    () =>
+      filterProjectId
+        ? agents.filter((a) => {
+            const pid = org.agentProjects[a.id]
+            return !pid || pid === filterProjectId
+          })
+        : agents,
+    [agents, org.agentProjects, filterProjectId],
+  )
   const shareById = useMemo(() => new Map(shares.map((s) => [s.id, s])), [shares])
   // 창 제목·온라인 상태: 에이전트면 별칭, 공유 폴더면 공유 이름
   const sourceName = (id: string) => {
@@ -63,6 +80,14 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   const [collapsed, setCollapsed] = useState(() => loadLocal(COLLAPSE_KEY, false))
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
+
+  // 지금 열어둔 PC를 서버에 알린다(실시간 프레즌스). 이름을 고른 사용자만.
+  const openAgentKey = panes.map((p) => p.agentId).join(',')
+  useEffect(() => {
+    if (selfUserId) announcePresence(selfUserId, [...new Set(panes.map((p) => p.agentId))])
+    // openAgentKey/selfUserId가 바뀔 때만
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openAgentKey, selfUserId, announcePresence])
   const [dropActive, setDropActive] = useState(false)
   const [activePaneId, setActivePaneId] = useState<string | null>(null)
   const [activeController, setActiveController] = useState<PaneController | null>(null)
@@ -113,12 +138,16 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   return (
     <div className={`explorer-shell${collapsed ? ' tree-collapsed' : ''}`}>
       <PcTree
-        agents={agents}
+        agents={visibleAgents}
         groups={pcGroups}
         saveGroups={saveGroups}
         shares={shares}
         addShare={addShare}
         removeShare={removeShare}
+        org={org}
+        setAgentProject={setAgentProject}
+        presence={presence}
+        filterProjectId={filterProjectId}
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}
         onOpenAgent={addPane}

@@ -214,6 +214,25 @@ export interface SharedFolders {
   shares: SharedFolder[]
 }
 
+export interface Project {
+  id: string
+  name: string
+}
+
+export interface OrgUser {
+  id: string
+  name: string
+}
+
+export interface Org {
+  projects: Project[]
+  users: OrgUser[]
+  /** projectId → 할당된 userId 목록 */
+  projectUsers: Record<string, string[]>
+  /** agentId → projectId (없으면 미배정) */
+  agentProjects: Record<string, string>
+}
+
 export interface InstallInfo {
   serverUrl: string
   serverVersion: string
@@ -296,6 +315,16 @@ export const api = {
   addShare: (name: string, path: string) =>
     request<SharedFolder>('/api/shares', { method: 'POST', body: JSON.stringify({ name, path }) }),
   removeShare: (id: string) => request<SharedFolders>(`/api/shares/${id}`, { method: 'DELETE' }),
+
+  org: () => request<Org>('/api/org'),
+  createProject: (name: string) => request<Org>('/api/projects', { method: 'POST', body: JSON.stringify({ name }) }),
+  renameProject: (id: string, name: string) => request<Org>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+  deleteProject: (id: string) => request<Org>(`/api/projects/${id}`, { method: 'DELETE' }),
+  setProjectUsers: (id: string, userIds: string[]) => request<Org>(`/api/projects/${id}/users`, { method: 'PUT', body: JSON.stringify({ userIds }) }),
+  createUser: (name: string) => request<Org>('/api/users', { method: 'POST', body: JSON.stringify({ name }) }),
+  deleteUser: (id: string) => request<Org>(`/api/users/${id}`, { method: 'DELETE' }),
+  setAgentProject: (agentId: string, projectId: string | null) =>
+    request<Org>(`/api/agents/${agentId}/project`, { method: 'PUT', body: JSON.stringify({ projectId }) }),
 
   updateStatus: () => request<UpdateStatus>('/api/update'),
   checkUpdate: () => request<UpdateStatus>('/api/update/check', { method: 'POST' }),

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
-import type { Agent, PcGroups, SharedFolder } from '../../api'
+import type { Agent, Org, PcGroups, SharedFolder } from '../../api'
 import { AddShareModal } from './AddShareModal'
-import { ContextMenu } from './ContextMenu'
+import { ContextMenu, type MenuItem } from './ContextMenu'
 import { Icon } from './Icon'
 import { addFolder, AGENT_MIME, assignAgent, buildTree, deleteFolder, displayName, type FolderNode, renameFolder, setAlias } from './pcGroups'
 
@@ -12,20 +12,38 @@ interface Props {
   shares: SharedFolder[]
   addShare: (name: string, path: string) => Promise<void>
   removeShare: (id: string) => void
+  org: Org
+  setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
+  presence: Record<string, string[]>
+  filterProjectId: string | null
   collapsed: boolean
   onToggleCollapse: () => void
   onOpenAgent: (agentId: string) => void
 }
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, collapsed, onToggleCollapse, onOpenAgent }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, org, setAgentProject, presence, filterProjectId, collapsed, onToggleCollapse, onOpenAgent }: Props) {
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null) // folderId 또는 'root'
   const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null)
   const [showAddShare, setShowAddShare] = useState(false)
+  const [hover, setHover] = useState<{ agentId: string; x: number; y: number } | null>(null)
 
   const onlineCount = agents.filter((a) => a.online).length
+
+  // 프레즌스/할당 도우미
+  const userName = (userId: string) => org.users.find((u) => u.id === userId)?.name ?? '알 수 없음'
+  const projectName = (agentId: string) => {
+    const pid = org.agentProjects[agentId]
+    return pid ? org.projects.find((p) => p.id === pid)?.name : undefined
+  }
+  const viewersOf = (agentId: string) => (presence[agentId] ?? []).map(userName)
+  const accessUsersOf = (agentId: string) => {
+    const pid = org.agentProjects[agentId]
+    if (!pid) return []
+    return (org.projectUsers[pid] ?? []).map(userName)
+  }
 
   const toggleFolder = (id: string) =>
     setExpanded((prev) => {
@@ -83,22 +101,27 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
 
   const renderAgent = (agent: Agent) => {
     const alias = groups.aliases?.[agent.id]?.trim()
+    const viewers = viewersOf(agent.id)
+    const proj = filterProjectId ? undefined : projectName(agent.id)
     return (
       <li
         key={agent.id}
         className={`tree-agent${agent.online ? '' : ' offline'}`}
         draggable
-        title={`${displayName(agent, groups)}${alias ? ` (${agent.machineName})` : ''} — 더블클릭·드래그해서 열기, 우클릭 메뉴`}
         onDragStart={(e) => {
           e.dataTransfer.setData(AGENT_MIME, agent.id)
           e.dataTransfer.effectAllowed = 'copyMove'
         }}
         onDoubleClick={() => onOpenAgent(agent.id)}
         onContextMenu={(e) => openAgentMenu(e, agent)}
+        onMouseEnter={(e) => setHover({ agentId: agent.id, x: e.currentTarget.getBoundingClientRect().right, y: e.currentTarget.getBoundingClientRect().top })}
+        onMouseLeave={() => setHover((h) => (h?.agentId === agent.id ? null : h))}
       >
         <span className={`dot ${agent.online ? 'on' : 'off'}`} />
         <span className="ellipsis">{displayName(agent, groups)}</span>
+        {proj && <span className="proj-badge">{proj}</span>}
         {alias && <span className="tree-host mono">{agent.machineName}</span>}
+        {viewers.length > 0 && <span className="using-badge" title={`사용 중: ${viewers.join(', ')}`}>● {viewers.length}</span>}
         <button type="button" className="tree-open" title="열기" onClick={() => onOpenAgent(agent.id)}>
           ＋
         </button>
@@ -243,15 +266,41 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
           x={menu.x}
           y={menu.y}
           onClose={() => setMenu(null)}
-          items={[
-            { label: '열기', onClick: () => onOpenAgent(menu.agent.id) },
-            { separator: true },
-            { label: groups.aliases?.[menu.agent.id] ? '별칭 변경…' : '별칭 지정…', onClick: () => editAlias(menu.agent) },
-            ...(groups.aliases?.[menu.agent.id]
-              ? [{ label: '별칭 제거', onClick: () => saveGroups(setAlias(groups, menu.agent.id, '')) }]
-              : []),
-          ]}
+          items={((): MenuItem[] => {
+            const a = menu.agent
+            const currentPid = org.agentProjects[a.id]
+            const projectItems: MenuItem[] = org.projects.map((p) => ({
+              label: `${currentPid === p.id ? '● ' : ''}${p.name}`,
+              onClick: () => void setAgentProject(a.id, p.id),
+            }))
+            return [
+              { label: '열기', onClick: () => onOpenAgent(a.id) },
+              { separator: true },
+              { label: groups.aliases?.[a.id] ? '별칭 변경…' : '별칭 지정…', onClick: () => editAlias(a) },
+              ...(groups.aliases?.[a.id]
+                ? [{ label: '별칭 제거', onClick: () => saveGroups(setAlias(groups, a.id, '')) }]
+                : []),
+              { separator: true },
+              ...(org.projects.length > 0
+                ? projectItems
+                : [{ label: '프로젝트 없음 (설정에서 추가)', disabled: true, onClick: () => {} }]),
+              ...(currentPid ? [{ label: '프로젝트 해제', onClick: () => void setAgentProject(a.id, null) }] : []),
+            ]
+          })()}
         />
+      )}
+
+      {hover && (viewersOf(hover.agentId).length > 0 || accessUsersOf(hover.agentId).length > 0) && (
+        <div className="presence-pop" style={{ left: hover.x + 6, top: hover.y }}>
+          <div className="presence-row">
+            <span className="presence-label">사용 중</span>
+            <span>{viewersOf(hover.agentId).length ? viewersOf(hover.agentId).join(', ') : '없음'}</span>
+          </div>
+          <div className="presence-row">
+            <span className="presence-label">접근 가능</span>
+            <span>{accessUsersOf(hover.agentId).length ? accessUsersOf(hover.agentId).join(', ') : '전체'}</span>
+          </div>
+        </div>
       )}
     </aside>
   )
