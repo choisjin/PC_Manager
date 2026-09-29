@@ -1420,16 +1420,17 @@ tr.cut td {
 }
 
 .workspace-grid {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
-  align-content: start;
+  align-content: flex-start;
   overflow: auto;
   padding: 2px;
   border-radius: 8px;
 }
 
 .workspace-empty {
-  grid-column: 1 / -1;
+  width: 100%;
   padding: 48px 24px;
   text-align: center;
   line-height: 1.8;
@@ -1438,10 +1439,21 @@ tr.cut td {
   border-radius: 10px;
 }
 
-/* 개별 PC 패널 */
+/* 개별 PC 패널 — 놓는 대로 흐르고, 모서리를 끌어 크기 조절 */
 .pane {
-  min-height: 280px;
-  max-height: 560px;
+  flex: none;
+  width: 480px;
+  height: 440px;
+  min-width: 300px;
+  min-height: 220px;
+  max-width: none;
+  max-height: none;
+  resize: both;
+  overflow: hidden;
+}
+
+.noselect {
+  user-select: none;
 }
 
 .pane-head {

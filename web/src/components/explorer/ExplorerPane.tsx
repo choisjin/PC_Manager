@@ -11,6 +11,8 @@ import { TerminalModal } from './TerminalModal'
 export interface Pane {
   paneId: string
   agentId: string
+  w?: number
+  h?: number
 }
 
 interface Props {
@@ -18,12 +20,15 @@ interface Props {
   agentId: string
   machineName: string
   online: boolean
+  width?: number
+  height?: number
   clipboard: FileClipboard | null
   setClipboard: (clipboard: FileClipboard | null) => void
   subscribeTransfers: SubscribeTransfers
   watchRun: WatchRun
   onClose: () => void
   onReorderDrop: (fromPaneId: string) => void
+  onResize: (w: number, h: number) => void
 }
 
 const joinPath = (directory: string, name: string) =>
@@ -36,12 +41,15 @@ export function ExplorerPane({
   agentId,
   machineName,
   online,
+  width,
+  height,
   clipboard,
   setClipboard,
   subscribeTransfers,
   watchRun,
   onClose,
   onReorderDrop,
+  onResize,
 }: Props) {
   const [path, setPath] = useState('')
   const [pathInput, setPathInput] = useState('')
@@ -50,10 +58,13 @@ export function ExplorerPane({
   const [error, setError] = useState<string | null>(null)
   const [playing, setPlaying] = useState<{ path: string; name: string } | null>(null)
   const [terminal, setTerminal] = useState(false)
-  const [menu, setMenu] = useState<{ x: number; y: number; entry: FileEntry | null } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; targets: FileEntry[]; folder: string | null } | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const sectionRef = useRef<HTMLElement>(null)
   const requestRef = useRef(0)
+  const anchorRef = useRef(-1)
 
   const showListing = (requestId: number, result: DirectoryListing) => {
     if (requestId !== requestRef.current) return
@@ -66,6 +77,8 @@ export function ExplorerPane({
     setListing(result)
     setPath(result.path)
     setPathInput(result.path)
+    setSelected(new Set())
+    anchorRef.current = -1
   }
 
   const load = (target: string) => {
@@ -98,12 +111,20 @@ export function ExplorerPane({
     return () => unsubscribe()
   }, [subscribeTransfers])
 
-  const fetchFile = async (fullPath: string) => {
-    try {
-      await api.fetchFile(agentId, fullPath)
-    } catch (err) {
-      setError(toMessage(err))
-    }
+  // 모서리 드래그 리사이즈 후(마우스 뗄 때) 크기가 바뀌었으면 저장한다.
+  // (마운트 시점 관측이 저장된 크기를 덮어쓰지 않도록 ResizeObserver 대신 이 방식을 쓴다)
+  const saveSizeIfChanged = () => {
+    const el = sectionRef.current
+    if (!el) return
+    const w = Math.round(el.offsetWidth)
+    const h = Math.round(el.offsetHeight)
+    if (w !== (width ?? 0) || h !== (height ?? 0)) onResize(w, h)
+  }
+
+  const fetchFiles = (entries: FileEntry[]) => {
+    entries
+      .filter((e) => !e.isDirectory)
+      .forEach((e) => void api.fetchFile(agentId, e.fullPath).catch((err) => setError(toMessage(err))))
   }
 
   const pushFiles = async (files: FileList) => {
@@ -117,42 +138,79 @@ export function ExplorerPane({
     }
   }
 
-  // --- 우클릭 메뉴 동작 ---
-  const paste = async (targetFolder: string) => {
-    if (!clipboard || !targetFolder) return
-    setError(null)
-    try {
-      if (clipboard.agentId === agentId) {
-        const result = await api.fileOp(agentId, clipboard.mode === 'cut' ? 'Move' : 'Copy', clipboard.path, targetFolder)
-        if (!result.success) throw new Error(result.error ?? '붙여넣기 실패')
-      } else {
-        if (clipboard.isDir) throw new Error('PC 간에는 폴더 복사를 아직 지원하지 않습니다 (파일만 가능).')
-        const result = await api.crossCopy({
-          sourceAgentId: clipboard.agentId,
-          sourcePath: clipboard.path,
-          destAgentId: agentId,
-          destFolder: targetFolder,
-          move: clipboard.mode === 'cut',
-        })
-        if (!result.success) throw new Error(result.error ?? '붙여넣기 실패')
-      }
-      if (clipboard.mode === 'cut') setClipboard(null)
-      refresh()
-    } catch (err) {
-      setError(toMessage(err))
+  // --- 선택 ---
+  const selectClick = (e: React.MouseEvent, entry: FileEntry, index: number) => {
+    const entries = listing?.entries ?? []
+    if (e.shiftKey && anchorRef.current >= 0) {
+      const [a, b] = [anchorRef.current, index].sort((x, y) => x - y)
+      setSelected(new Set(entries.slice(a, b + 1).map((en) => en.fullPath)))
+    } else if (e.ctrlKey || e.metaKey) {
+      setSelected((prev) => {
+        const next = new Set(prev)
+        if (next.has(entry.fullPath)) next.delete(entry.fullPath)
+        else next.add(entry.fullPath)
+        return next
+      })
+      anchorRef.current = index
+    } else {
+      setSelected(new Set([entry.fullPath]))
+      anchorRef.current = index
     }
   }
 
-  const remove = async (entry: FileEntry) => {
-    if (!window.confirm(`'${entry.name}'을(를) 삭제합니다. 되돌릴 수 없습니다. 계속할까요?`)) return
+  const openEntry = (entry: FileEntry) => {
+    if (entry.isDirectory) load(entry.fullPath)
+    else if (isVideoFile(entry.name)) setPlaying({ path: entry.fullPath, name: entry.name })
+    else fetchFiles([entry])
+  }
+
+  // --- 파일 조작 ---
+  const paste = async (targetFolder: string) => {
+    if (!clipboard || !targetFolder) return
     setError(null)
-    try {
-      const result = await api.fileOp(agentId, 'Delete', entry.fullPath)
-      if (!result.success) throw new Error(result.error ?? '삭제 실패')
-      refresh()
-    } catch (err) {
-      setError(toMessage(err))
+    const errors: string[] = []
+    for (const item of clipboard.items) {
+      try {
+        if (clipboard.agentId === agentId) {
+          const result = await api.fileOp(agentId, clipboard.mode === 'cut' ? 'Move' : 'Copy', item.path, targetFolder)
+          if (!result.success) errors.push(`${item.name}: ${result.error}`)
+        } else if (item.isDir) {
+          errors.push(`${item.name}: PC 간에는 폴더 복사를 지원하지 않습니다`)
+        } else {
+          const result = await api.crossCopy({
+            sourceAgentId: clipboard.agentId,
+            sourcePath: item.path,
+            destAgentId: agentId,
+            destFolder: targetFolder,
+            move: clipboard.mode === 'cut',
+          })
+          if (!result.success) errors.push(`${item.name}: ${result.error}`)
+        }
+      } catch (err) {
+        errors.push(`${item.name}: ${toMessage(err)}`)
+      }
     }
+    if (clipboard.mode === 'cut' && errors.length === 0) setClipboard(null)
+    refresh()
+    if (errors.length) setError(errors.join(' · '))
+  }
+
+  const remove = async (entries: FileEntry[]) => {
+    if (entries.length === 0) return
+    const label = entries.length === 1 ? `'${entries[0].name}'을(를)` : `${entries.length}개 항목을`
+    if (!window.confirm(`${label} 삭제합니다. 되돌릴 수 없습니다. 계속할까요?`)) return
+    setError(null)
+    const errors: string[] = []
+    for (const entry of entries) {
+      try {
+        const result = await api.fileOp(agentId, 'Delete', entry.fullPath)
+        if (!result.success) errors.push(`${entry.name}: ${result.error}`)
+      } catch (err) {
+        errors.push(`${entry.name}: ${toMessage(err)}`)
+      }
+    }
+    refresh()
+    if (errors.length) setError(errors.join(' · '))
   }
 
   const rename = async (entry: FileEntry) => {
@@ -185,25 +243,33 @@ export function ExplorerPane({
     }
   }
 
-  const buildMenu = (entry: FileEntry | null): MenuItem[] => {
-    const pasteTarget = entry?.isDirectory ? entry.fullPath : path
+  const setClip = (targets: FileEntry[], mode: 'copy' | 'cut') =>
+    setClipboard({ agentId, items: targets.map((t) => ({ path: t.fullPath, name: t.name, isDir: t.isDirectory })), mode })
+
+  const buildMenu = (targets: FileEntry[], folder: string | null): MenuItem[] => {
+    const pasteTarget = folder ?? path
+    const files = targets.filter((t) => !t.isDirectory)
     const items: MenuItem[] = []
-    if (entry) {
-      const clip = (mode: 'copy' | 'cut') => () =>
-        setClipboard({ agentId, path: entry.fullPath, name: entry.name, isDir: entry.isDirectory, mode })
-      items.push({ label: '복사', onClick: clip('copy') })
-      items.push({ label: '잘라내기', onClick: clip('cut') })
+    if (targets.length > 0) {
+      items.push({ label: `복사${targets.length > 1 ? ` (${targets.length})` : ''}`, onClick: () => setClip(targets, 'copy') })
+      items.push({ label: `잘라내기${targets.length > 1 ? ` (${targets.length})` : ''}`, onClick: () => setClip(targets, 'cut') })
     }
     items.push({
-      label: clipboard ? `붙여넣기${entry?.isDirectory ? ' (폴더 안)' : ''}` : '붙여넣기',
+      label: clipboard ? `붙여넣기${folder ? ' (폴더 안)' : ''}${clipboard.items.length > 1 ? ` (${clipboard.items.length})` : ''}` : '붙여넣기',
       disabled: !clipboard || !pasteTarget,
       onClick: () => void paste(pasteTarget),
     })
-    if (entry) {
-      items.push({ label: '경로 복사', onClick: () => void copyText(entry.fullPath) })
+    if (files.length > 0) {
+      items.push({ label: `가져오기${files.length > 1 ? ` (${files.length})` : ''}`, onClick: () => fetchFiles(files) })
+    }
+    if (targets.length === 1 && isVideoFile(targets[0].name)) {
+      items.push({ label: '재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
+    }
+    if (targets.length > 0) {
+      items.push({ label: '경로 복사', onClick: () => void copyText(targets.map((t) => t.fullPath).join('\n')) })
       items.push({ separator: true })
-      items.push({ label: '이름 바꾸기', onClick: () => void rename(entry) })
-      items.push({ label: '삭제', danger: true, onClick: () => void remove(entry) })
+      if (targets.length === 1) items.push({ label: '이름 바꾸기', onClick: () => void rename(targets[0]) })
+      items.push({ label: `삭제${targets.length > 1 ? ` (${targets.length})` : ''}`, danger: true, onClick: () => void remove(targets) })
     }
     items.push({ separator: true })
     items.push({ label: '새 폴더', disabled: !path, onClick: () => void createFolder() })
@@ -211,14 +277,29 @@ export function ExplorerPane({
     return items
   }
 
-  const openMenu = (e: React.MouseEvent, entry: FileEntry | null) => {
+  const openRowMenu = (e: React.MouseEvent, entry: FileEntry, index: number) => {
     e.preventDefault()
     e.stopPropagation()
-    setMenu({ x: e.clientX, y: e.clientY, entry })
+    // 선택에 없는 항목을 우클릭하면 그 항목만 선택
+    let targetSet = selected
+    if (!selected.has(entry.fullPath)) {
+      targetSet = new Set([entry.fullPath])
+      setSelected(targetSet)
+      anchorRef.current = index
+    }
+    const targets = (listing?.entries ?? []).filter((en) => targetSet.has(en.fullPath))
+    setMenu({ x: e.clientX, y: e.clientY, targets: targets.length ? targets : [entry], folder: entry.isDirectory ? entry.fullPath : null })
   }
 
+  const openEmptyMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setMenu({ x: e.clientX, y: e.clientY, targets: [], folder: null })
+  }
+
+  const style = width && height ? { width, height } : undefined
+
   return (
-    <section className="panel pane">
+    <section ref={sectionRef} className="panel pane" style={style} onMouseUp={saveSizeIfChanged}>
       <div className="panel-head pane-head">
         <span
           className="pane-title"
@@ -231,6 +312,7 @@ export function ExplorerPane({
         >
           <span className={`dot ${online ? 'on' : 'off'}`} />
           <span className="ellipsis">{machineName}</span>
+          {selected.size > 0 && <span className="muted small">· {selected.size}개 선택</span>}
         </span>
         <span className="pane-head-actions">
           <button type="button" className="icon" title="터미널 열기" onClick={() => setTerminal(true)}>
@@ -266,7 +348,7 @@ export function ExplorerPane({
 
       <div
         className={`table-wrap${dragOver ? ' drop-active' : ''}`}
-        onContextMenu={(e) => openMenu(e, null)}
+        onContextMenu={openEmptyMenu}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes(PANE_MIME)) {
             e.preventDefault()
@@ -283,48 +365,44 @@ export function ExplorerPane({
           }
         }}
       >
-        <table>
+        <table className="noselect">
           <colgroup>
             <col />
-            <col style={{ width: 84 }} />
-            <col style={{ width: 116 }} />
-            <col style={{ width: 118 }} />
+            <col style={{ width: 90 }} />
+            <col style={{ width: 130 }} />
           </colgroup>
           <thead>
             <tr>
               <th>이름</th>
               <th>크기</th>
               <th>수정</th>
-              <th />
             </tr>
           </thead>
           <tbody>
             {!online && (
               <tr>
-                <td colSpan={4} className="placeholder">
+                <td colSpan={3} className="placeholder">
                   오프라인 PC
                 </td>
               </tr>
             )}
             {online && listing && listing.entries.length === 0 && (
               <tr>
-                <td colSpan={4} className="placeholder">
+                <td colSpan={3} className="placeholder">
                   빈 폴더입니다 (우클릭으로 새 폴더·붙여넣기)
                 </td>
               </tr>
             )}
-            {listing?.entries.map((entry) => {
-              const cut = clipboard?.mode === 'cut' && clipboard.agentId === agentId && clipboard.path === entry.fullPath
+            {listing?.entries.map((entry, index) => {
+              const isSel = selected.has(entry.fullPath)
+              const cut = clipboard?.mode === 'cut' && clipboard.agentId === agentId && clipboard.items.some((i) => i.path === entry.fullPath)
               return (
                 <tr
                   key={entry.fullPath}
-                  className={`${entry.isDirectory ? 'dir' : isVideoFile(entry.name) ? 'file video' : 'file'}${cut ? ' cut' : ''}`}
-                  title={entry.isDirectory ? '열기' : isVideoFile(entry.name) ? '재생' : undefined}
-                  onClick={() => {
-                    if (entry.isDirectory) load(entry.fullPath)
-                    else if (isVideoFile(entry.name)) setPlaying({ path: entry.fullPath, name: entry.name })
-                  }}
-                  onContextMenu={(e) => openMenu(e, entry)}
+                  className={`${entry.isDirectory ? 'dir' : isVideoFile(entry.name) ? 'file video' : 'file'}${isSel ? ' selected' : ''}${cut ? ' cut' : ''}`}
+                  onClick={(e) => selectClick(e, entry, index)}
+                  onDoubleClick={() => openEntry(entry)}
+                  onContextMenu={(e) => openRowMenu(e, entry, index)}
                 >
                   <td className="ellipsis">
                     <span className="file-icon" aria-hidden="true">
@@ -334,18 +412,6 @@ export function ExplorerPane({
                   </td>
                   <td>{entry.isDirectory ? '' : formatBytes(entry.size)}</td>
                   <td>{entry.modifiedAt ? formatTime(entry.modifiedAt) : ''}</td>
-                  <td className="row-actions">
-                    {!entry.isDirectory && isVideoFile(entry.name) && (
-                      <button type="button" className="link" onClick={(e) => { e.stopPropagation(); setPlaying({ path: entry.fullPath, name: entry.name }) }}>
-                        재생
-                      </button>
-                    )}
-                    {!entry.isDirectory && (
-                      <button type="button" className="link" onClick={(e) => { e.stopPropagation(); void fetchFile(entry.fullPath) }}>
-                        가져오기
-                      </button>
-                    )}
-                  </td>
                 </tr>
               )
             })}
@@ -353,10 +419,10 @@ export function ExplorerPane({
         </table>
       </div>
 
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={buildMenu(menu.entry)} onClose={() => setMenu(null)} />}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={buildMenu(menu.targets, menu.folder)} onClose={() => setMenu(null)} />}
 
       {playing && (
-        <VideoViewer agentId={agentId} path={playing.path} name={playing.name} onFetch={() => void fetchFile(playing.path)} onClose={() => setPlaying(null)} />
+        <VideoViewer agentId={agentId} path={playing.path} name={playing.name} onFetch={() => fetchFiles([{ fullPath: playing.path, name: playing.name, isDirectory: false, size: 0, modifiedAt: null }])} onClose={() => setPlaying(null)} />
       )}
 
       {terminal && (

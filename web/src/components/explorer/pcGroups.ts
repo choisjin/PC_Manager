@@ -21,12 +21,16 @@ export function newId(): string {
   return (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 16)
 }
 
-/** 복사/잘라내기 클립보드 (패널 간 공유) */
-export interface FileClipboard {
-  agentId: string
+export interface ClipItem {
   path: string
   name: string
   isDir: boolean
+}
+
+/** 복사/잘라내기 클립보드 (패널 간 공유, 여러 항목) */
+export interface FileClipboard {
+  agentId: string
+  items: ClipItem[]
   mode: 'copy' | 'cut'
 }
 

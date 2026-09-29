@@ -33,26 +33,32 @@ function saveLocal(key: string, value: unknown) {
 
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
-const COLUMNS_KEY = 'pcm.explorer.columns'
 
 export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   const [collapsed, setCollapsed] = useState(() => loadLocal(COLLAPSE_KEY, false))
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
-  const [columns, setColumns] = useState(() => loadLocal(COLUMNS_KEY, 2))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
   const [dropActive, setDropActive] = useState(false)
 
-  const update = <T,>(setter: (v: T) => void, key: string, value: T) => {
-    setter(value)
-    saveLocal(key, value)
+  const updatePanes = (next: Pane[]) => {
+    setPanes(next)
+    saveLocal(PANES_KEY, next)
   }
 
-  const addPane = (agentId: string) =>
-    update(setPanes, PANES_KEY, [...panes, { paneId: newId(), agentId }])
+  const toggleCollapse = () => {
+    setCollapsed((v) => {
+      saveLocal(COLLAPSE_KEY, !v)
+      return !v
+    })
+  }
 
-  const closePane = (paneId: string) =>
-    update(setPanes, PANES_KEY, panes.filter((p) => p.paneId !== paneId))
+  const addPane = (agentId: string) => updatePanes([...panes, { paneId: newId(), agentId }])
+
+  const closePane = (paneId: string) => updatePanes(panes.filter((p) => p.paneId !== paneId))
+
+  const resizePane = (paneId: string, w: number, h: number) =>
+    updatePanes(panes.map((p) => (p.paneId === paneId ? { ...p, w, h } : p)))
 
   const reorder = (fromPaneId: string, toPaneId: string) => {
     const from = panes.findIndex((p) => p.paneId === fromPaneId)
@@ -61,7 +67,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers,
     const next = panes.slice()
     const [moved] = next.splice(from, 1)
     next.splice(to, 0, moved)
-    update(setPanes, PANES_KEY, next)
+    updatePanes(next)
   }
 
   return (
@@ -71,7 +77,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers,
         groups={pcGroups}
         saveGroups={saveGroups}
         collapsed={collapsed}
-        onToggleCollapse={() => update(setCollapsed, COLLAPSE_KEY, !collapsed)}
+        onToggleCollapse={toggleCollapse}
         onOpenAgent={addPane}
       />
 
@@ -81,7 +87,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers,
             <span className="muted small">열린 창 {panes.length}개</span>
             {clipboard && (
               <span className="clip-chip">
-                {clipboard.mode === 'cut' ? '잘라냄' : '복사됨'}: <b className="ellipsis">{clipboard.name}</b>
+                {clipboard.mode === 'cut' ? '잘라냄' : '복사됨'}: <b className="ellipsis">{clipboard.items[0]?.name}{clipboard.items.length > 1 ? ` 외 ${clipboard.items.length - 1}` : ''}</b>
                 <button type="button" className="icon-mini" title="지우기" onClick={() => setClipboard(null)}>
                   ✕
                 </button>
@@ -89,19 +95,9 @@ export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers,
             )}
           </span>
           <span className="workspace-cols">
-            <span className="muted small">열</span>
-            {[1, 2, 3].map((c) => (
-              <button
-                key={c}
-                type="button"
-                className={`col-btn${columns === c ? ' active' : ''}`}
-                onClick={() => update(setColumns, COLUMNS_KEY, c)}
-              >
-                {c}
-              </button>
-            ))}
+            <span className="muted small">모서리를 끌어 창 크기 조절</span>
             {panes.length > 0 && (
-              <button type="button" className="link" onClick={() => update(setPanes, PANES_KEY, [])}>
+              <button type="button" className="link" onClick={() => updatePanes([])}>
                 모두 닫기
               </button>
             )}
@@ -110,7 +106,6 @@ export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers,
 
         <div
           className={`workspace-grid${dropActive ? ' drop-active' : ''}`}
-          style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
           onDragOver={(e) => {
             if (e.dataTransfer.types.includes(AGENT_MIME)) {
               e.preventDefault()
@@ -145,12 +140,15 @@ export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers,
                 agentId={pane.agentId}
                 machineName={agent?.machineName ?? pane.agentId.slice(0, 8)}
                 online={agent?.online ?? false}
+                width={pane.w}
+                height={pane.h}
                 clipboard={clipboard}
                 setClipboard={setClipboard}
                 subscribeTransfers={subscribeTransfers}
                 watchRun={watchRun}
                 onClose={() => closePane(pane.paneId)}
                 onReorderDrop={(fromPaneId) => reorder(fromPaneId, pane.paneId)}
+                onResize={(w, h) => resizePane(pane.paneId, w, h)}
               />
             )
           })}
