@@ -28,7 +28,8 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function App() {
   const dashboard = useDashboard()
-  const { agents, runs, connected, updateStatus, watchRun, upsertRuns, subscribeTransfers } = dashboard
+  const { agents, runs, connected, updateStatus, pcGroups, saveGroups, watchRun, upsertRuns, subscribeTransfers } =
+    dashboard
   const [tab, setTab] = useState<Tab>('commands')
   const [showUpdate, setShowUpdate] = useState(false)
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(() => new Set())
@@ -92,12 +93,14 @@ export default function App() {
         <UpdateDialog status={updateStatus} agents={agents} onClose={() => setShowUpdate(false)} />
       )}
 
-      <main className="layout">
-        <AgentList
-          agents={agents}
-          selectedIds={selectedAgentIds}
-          onSelectionChange={setSelectedAgentIds}
-        />
+      <main className={`layout${tab === 'files' ? ' full' : ''}`}>
+        {tab !== 'files' && (
+          <AgentList
+            agents={agents}
+            selectedIds={selectedAgentIds}
+            onSelectionChange={setSelectedAgentIds}
+          />
+        )}
 
         {tab === 'commands' && (
           <section className="workspace">
@@ -128,7 +131,8 @@ export default function App() {
         {tab === 'files' && (
           <FileExplorer
             agents={agents}
-            selectedAgentIds={selectedAgentIds}
+            pcGroups={pcGroups}
+            saveGroups={saveGroups}
             subscribeTransfers={subscribeTransfers}
           />
         )}

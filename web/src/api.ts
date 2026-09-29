@@ -173,6 +173,19 @@ export interface AgentUpdateResult {
   error: string | null
 }
 
+export interface PcGroupFolder {
+  id: string
+  name: string
+  parentId: string | null
+  order: number
+}
+
+export interface PcGroups {
+  folders: PcGroupFolder[]
+  /** agentId → folderId. 없는 PC는 미분류 */
+  assignments: Record<string, string>
+}
+
 export interface InstallInfo {
   serverUrl: string
   serverVersion: string
@@ -241,6 +254,10 @@ export const api = {
     request<Transfer[]>(`/api/transfers?${query({ ...filter, take: 100 })}`),
 
   installInfo: () => request<InstallInfo>('/api/install/info'),
+
+  pcGroups: () => request<PcGroups>('/api/pc-groups'),
+  savePcGroups: (groups: PcGroups) =>
+    request<PcGroups>('/api/pc-groups', { method: 'PUT', body: JSON.stringify(groups) }),
 
   updateStatus: () => request<UpdateStatus>('/api/update'),
   checkUpdate: () => request<UpdateStatus>('/api/update/check', { method: 'POST' }),

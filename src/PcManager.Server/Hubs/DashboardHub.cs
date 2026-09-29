@@ -14,6 +14,7 @@ public interface IDashboardClient
     Task JobRunUpdated(JobRunView job);
     Task JobTargetUpdated(JobTargetView target);
     Task UpdateStatusChanged(UpdateStatusView status);
+    Task PcGroupsChanged(PcGroupsView groups);
 }
 
 /// <summary>웹 대시보드가 접속하는 Hub. 출력은 보고 있는 실행에만 전달한다.</summary>

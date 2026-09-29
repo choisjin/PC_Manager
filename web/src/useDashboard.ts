@@ -7,11 +7,13 @@ import {
   type JobState,
   type JobTarget,
   type OutputLine,
+  type PcGroups,
   type Run,
   type RunState,
   type Transfer,
   type UpdateStatus,
 } from './api'
+import { EMPTY_GROUPS } from './components/explorer/pcGroups'
 
 export interface RunWatcher {
   onLines: (lines: OutputLine[]) => void
@@ -86,6 +88,7 @@ export function useDashboard() {
   const [jobs, setJobs] = useState<JobRun[]>([])
   const [jobTargets, setJobTargets] = useState<Record<string, JobTarget[]>>({})
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
+  const [pcGroups, setPcGroups] = useState<PcGroups>(EMPTY_GROUPS)
   const [connected, setConnected] = useState(false)
   const connectionRef = useRef<signalR.HubConnection | null>(null)
   const watchersRef = useRef(new Map<string, RunWatcher>())
@@ -134,20 +137,23 @@ export function useDashboard() {
       for (const listener of transferListeners) listener(transfer)
     })
     connection.on('UpdateStatusChanged', (status: UpdateStatus) => setUpdateStatus(status))
+    connection.on('PcGroupsChanged', (groups: PcGroups) => setPcGroups(groups))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
     const sync = async () => {
-      const [agentList, runList, jobList, update] = await Promise.all([
+      const [agentList, runList, jobList, update, groups] = await Promise.all([
         api.agents(),
         api.runs(),
         api.jobs(),
         api.updateStatus().catch(() => null),
+        api.pcGroups().catch(() => null),
       ])
       if (disposed) return
       setAgents(agentList.sort(byMachineName))
       setRuns(runList)
       setJobs(jobList)
       if (update) setUpdateStatus(update)
+      if (groups) setPcGroups(groups)
       for (const jobRunId of loadedJobIds) {
         api
           .job(jobRunId)
@@ -232,12 +238,23 @@ export function useDashboard() {
     }
   }, [])
 
+  // 낙관적 반영 후 서버 저장 (실패하면 서버 상태로 되돌린다)
+  const saveGroups = useCallback((groups: PcGroups) => {
+    setPcGroups(groups)
+    api.savePcGroups(groups).then(setPcGroups).catch((err) => {
+      console.error('PC 그룹 저장 실패', err)
+      api.pcGroups().then(setPcGroups).catch(() => {})
+    })
+  }, [])
+
   return {
     agents,
     runs,
     jobs,
     jobTargets,
     updateStatus,
+    pcGroups,
+    saveGroups,
     connected,
     watchRun,
     upsertRuns,

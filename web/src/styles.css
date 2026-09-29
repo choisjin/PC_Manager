@@ -145,6 +145,10 @@ textarea {
   padding: 12px;
 }
 
+.layout.full {
+  grid-template-columns: 1fr;
+}
+
 .workspace {
   display: grid;
   grid-template-rows: auto minmax(150px, 1fr) minmax(220px, 1.3fr);
@@ -1084,26 +1088,260 @@ button.small-btn {
   font-size: 12px;
 }
 
-/* 파일 탐색기 */
-.explorer-layout {
+/* 파일 탐색기 (트리 + 멀티패널) */
+.explorer-shell {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(140px, 30%);
+  grid-template-columns: 260px minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
 }
 
-.explorer-head {
-  justify-content: flex-start;
+.explorer-shell.tree-collapsed {
+  grid-template-columns: 40px minmax(0, 1fr);
 }
 
-.agent-select {
-  width: auto;
-  max-width: 180px;
+/* PC 트리 사이드바 */
+.pc-tree {
+  overflow: auto;
 }
 
-.path-form {
+.pc-tree.collapsed {
+  align-items: center;
+  padding-top: 8px;
+}
+
+.tree-collapse,
+.tree-expand {
+  flex: none;
+}
+
+.tree-root,
+.tree-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tree-root {
+  flex: 1;
+  padding: 4px;
+  overflow: auto;
+}
+
+.tree-folder {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.tree-folder:hover {
+  background: var(--hover);
+}
+
+.tree-folder.drop-active,
+.workspace-grid.drop-active,
+.table-wrap.drop-active {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  background: var(--selected);
+}
+
+.tree-caret {
+  width: 16px;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.tree-folder-icon {
+  flex: none;
+}
+
+.tree-folder-name {
   flex: 1;
   min-width: 0;
+  cursor: default;
+}
+
+.tree-rename {
+  flex: 1;
+  padding: 1px 4px;
+}
+
+.tree-folder-actions {
+  display: none;
+  gap: 2px;
+}
+
+.tree-folder:hover .tree-folder-actions {
+  display: flex;
+}
+
+.icon-mini {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.icon-mini:hover {
+  color: var(--text);
+}
+
+.tree-children {
+  padding-left: 22px;
+}
+
+.tree-agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: grab;
+}
+
+.tree-agent:hover {
+  background: var(--hover);
+}
+
+.tree-agent.offline .ellipsis {
+  color: var(--muted);
+}
+
+.tree-open {
+  display: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 13px;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.tree-agent:hover .tree-open {
+  display: block;
+}
+
+.tree-hint {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* 작업 영역 */
+.explorer-main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 0;
+}
+
+.workspace-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.workspace-cols {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.col-btn {
+  width: 26px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.col-btn.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.workspace-grid {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  overflow: auto;
+  padding: 2px;
+  border-radius: 8px;
+}
+
+.workspace-empty {
+  grid-column: 1 / -1;
+  padding: 48px 24px;
+  text-align: center;
+  line-height: 1.8;
+  color: var(--muted);
+  border: 2px dashed var(--border);
+  border-radius: 10px;
+}
+
+/* 개별 PC 패널 */
+.pane {
+  min-height: 280px;
+  max-height: 560px;
+}
+
+.pane-head {
+  gap: 6px;
+}
+
+.pane-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  font-weight: 600;
+  cursor: grab;
+}
+
+.pane-head-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+}
+
+.pane-path {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* 하단 전송 바 */
+.transfers-bar {
+  max-height: 34vh;
+}
+
+.transfers-bar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-weight: 600;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  cursor: pointer;
+}
+
+.transfers-bar.open .transfers-bar-head {
+  border-bottom: 1px solid var(--border);
 }
 
 tr.file {
@@ -1162,7 +1400,7 @@ tr.video {
 
 .transfer {
   display: grid;
-  grid-template-columns: auto 56px minmax(0, 1fr) minmax(0, 220px) 56px;
+  grid-template-columns: auto 56px minmax(80px, 120px) minmax(0, 1fr) minmax(0, 180px) 56px;
   align-items: center;
   gap: 10px;
   padding: 5px 8px;
@@ -1180,9 +1418,13 @@ tr.video {
     grid-template-columns: 1fr;
   }
 
-  .job-detail,
-  .explorer-layout {
+  .job-detail {
     grid-template-rows: auto;
+  }
+
+  .explorer-shell,
+  .explorer-shell.tree-collapsed {
+    grid-template-columns: 1fr;
   }
 
   .layout {
