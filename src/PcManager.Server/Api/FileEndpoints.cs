@@ -86,7 +86,12 @@ public static class FileEndpoints
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                return Results.Problem(ex.Message, statusCode: StatusCodes.Status502BadGateway);
+                // 옛 에이전트에는 파일 조작 핸들러가 없어 인자 파싱/메서드 오류가 난다
+                var message = ex.Message.Contains("parse argument", StringComparison.OrdinalIgnoreCase)
+                    || ex.Message.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+                    ? "이 PC의 에이전트가 파일 조작을 지원하지 않는 옛 버전입니다. 에이전트를 최신 버전으로 업데이트하세요."
+                    : ex.Message;
+                return Results.Problem(message, statusCode: StatusCodes.Status502BadGateway);
             }
         });
 

@@ -145,17 +145,27 @@ export function ExplorerPane({
 
   const remove = async (entry: FileEntry) => {
     if (!window.confirm(`'${entry.name}'을(를) 삭제합니다. 되돌릴 수 없습니다. 계속할까요?`)) return
-    const result = await api.fileOp(agentId, 'Delete', entry.fullPath)
-    if (!result.success) setError(result.error ?? '삭제 실패')
-    else refresh()
+    setError(null)
+    try {
+      const result = await api.fileOp(agentId, 'Delete', entry.fullPath)
+      if (!result.success) throw new Error(result.error ?? '삭제 실패')
+      refresh()
+    } catch (err) {
+      setError(toMessage(err))
+    }
   }
 
   const rename = async (entry: FileEntry) => {
     const name = window.prompt('새 이름', entry.name)
     if (!name || name === entry.name) return
-    const result = await api.fileOp(agentId, 'Rename', entry.fullPath, name)
-    if (!result.success) setError(result.error ?? '이름 바꾸기 실패')
-    else refresh()
+    setError(null)
+    try {
+      const result = await api.fileOp(agentId, 'Rename', entry.fullPath, name)
+      if (!result.success) throw new Error(result.error ?? '이름 바꾸기 실패')
+      refresh()
+    } catch (err) {
+      setError(toMessage(err))
+    }
   }
 
   const createFolder = async () => {
@@ -165,9 +175,14 @@ export function ExplorerPane({
     }
     const name = window.prompt('새 폴더 이름', '새 폴더')
     if (!name) return
-    const result = await api.fileOp(agentId, 'CreateDirectory', path, name)
-    if (!result.success) setError(result.error ?? '폴더 생성 실패')
-    else refresh()
+    setError(null)
+    try {
+      const result = await api.fileOp(agentId, 'CreateDirectory', path, name)
+      if (!result.success) throw new Error(result.error ?? '폴더 생성 실패')
+      refresh()
+    } catch (err) {
+      setError(toMessage(err))
+    }
   }
 
   const buildMenu = (entry: FileEntry | null): MenuItem[] => {
