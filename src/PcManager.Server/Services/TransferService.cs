@@ -178,6 +178,46 @@ public class TransferService(
         return await FindAsync(transfer.Id) ?? transfer;
     }
 
+    /// <summary>공유 폴더(서버 직접 접근)의 파일을 가져오기: 서버가 아티팩트로 저장해 다운로드할 수 있게 한다.</summary>
+    public async Task<TransferView> FetchLocalAsync(string sourceId, string sourcePath, Stream content, long size, CancellationToken ct)
+    {
+        var fileName = Path.GetFileName(sourcePath.TrimEnd('\\', '/'));
+        var transfer = NewTransfer(sourceId, TransferKind.Fetch, sourcePath);
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
+        {
+            db.Transfers.Add(transfer);
+            await db.SaveChangesAsync(ct);
+        }
+        await dashboard.Clients.All.TransferUpdated(transfer.ToView());
+        try
+        {
+            await SaveUploadedFileAsync(transfer.Id, fileName, content, ct);
+            await MarkCompletedAsync(sourceId, new TransferCompleted(transfer.Id, true, 1, size, null, DateTime.UtcNow));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await MarkCompletedAsync(sourceId, new TransferCompleted(transfer.Id, false, 0, 0, ex.Message, DateTime.UtcNow));
+        }
+        return (await FindAsync(transfer.Id))?.ToView() ?? transfer.ToView();
+    }
+
+    /// <summary>공유 폴더에서 서버가 이미 끝낸 작업(올리기·압축)을 전송 기록에 남긴다.</summary>
+    public async Task<TransferView> RecordLocalDoneAsync(string sourceId, TransferKind kind, string path, long size)
+    {
+        var transfer = NewTransfer(sourceId, kind, path);
+        transfer.State = TransferState.Succeeded;
+        transfer.FileCount = 1;
+        transfer.TotalBytes = size;
+        transfer.FinishedAt = DateTime.UtcNow;
+        await using (var db = await dbFactory.CreateDbContextAsync())
+        {
+            db.Transfers.Add(transfer);
+            await db.SaveChangesAsync();
+        }
+        await dashboard.Clients.All.TransferUpdated(transfer.ToView());
+        return transfer.ToView();
+    }
+
     /// <summary>파일 탐색기: PC의 파일을 서버로 가져온다.</summary>
     public async Task<TransferView> FetchAsync(string agentId, string sourcePath)
     {

@@ -37,6 +37,9 @@ export default function App() {
     saveGroups,
     favorites,
     setAgentFavorites,
+    shares,
+    addShare,
+    removeShare,
     watchRun,
     upsertRuns,
     subscribeTransfers,
@@ -146,6 +149,9 @@ export default function App() {
             saveGroups={saveGroups}
             favorites={favorites}
             setAgentFavorites={setAgentFavorites}
+            shares={shares}
+            addShare={addShare}
+            removeShare={removeShare}
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}
           />

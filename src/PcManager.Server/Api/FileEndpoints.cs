@@ -49,8 +49,13 @@ public static class FileEndpoints
         var api = app.MapGroup("/api");
 
         api.MapGet("/agents/{agentId}/files", async (
-            string agentId, string? path, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            string agentId, string? path, AgentRegistry registry, IHubContext<AgentHub> agentHub,
+            SharedFolderStore shares, LocalShareFiles localShare, CancellationToken ct) =>
         {
+            // 공유 폴더면 서버가 직접 처리
+            if (shares.TryGet(agentId, out var share))
+                return Results.Ok(localShare.ListDirectory(share, path));
+
             if (!registry.TryGetConnection(agentId, out var connectionId))
                 return Results.Conflict("에이전트가 오프라인입니다.");
 
@@ -74,8 +79,15 @@ public static class FileEndpoints
 
         // 같은 PC 안의 파일 조작 (복사/이동/삭제/폴더 생성/이름 변경)
         api.MapPost("/agents/{agentId}/files/op", async (
-            string agentId, FileOpRequest request, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            string agentId, FileOpRequest request, AgentRegistry registry, IHubContext<AgentHub> agentHub,
+            SharedFolderStore shares, LocalShareFiles localShare, CancellationToken ct) =>
         {
+            if (shares.TryGet(agentId, out var share))
+            {
+                var localResult = localShare.PerformFileOp(share, request);
+                return localResult.Success ? Results.Ok(localResult) : Results.BadRequest(localResult.Error ?? "작업에 실패했습니다.");
+            }
+
             if (!registry.TryGetConnection(agentId, out var connectionId))
                 return Results.Conflict("에이전트가 오프라인입니다.");
 
@@ -102,25 +114,56 @@ public static class FileEndpoints
             }
         });
 
-        api.MapPost("/agents/{agentId}/files/fetch", async (string agentId, FetchFileRequest request, TransferService transfers) =>
-            string.IsNullOrWhiteSpace(request.Path)
-                ? Results.BadRequest("가져올 파일 경로를 입력하세요.")
-                : Results.Ok(await transfers.FetchAsync(agentId, request.Path)));
+        api.MapPost("/agents/{agentId}/files/fetch", async (
+            string agentId, FetchFileRequest request, TransferService transfers,
+            SharedFolderStore shares, LocalShareFiles localShare, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Path))
+                return Results.BadRequest("가져올 파일 경로를 입력하세요.");
+            if (shares.TryGet(agentId, out var share))
+            {
+                var stream = localShare.OpenRead(share, request.Path);
+                if (stream is null)
+                    return Results.BadRequest("파일이 없거나 접근할 수 없습니다.");
+                var size = stream.Length;
+                await using (stream)
+                    return Results.Ok(await transfers.FetchLocalAsync(agentId, request.Path, stream, size, ct));
+            }
+            return Results.Ok(await transfers.FetchAsync(agentId, request.Path));
+        });
 
-        // PC 안에서 선택 항목을 ZIP으로 압축 (PC에서 직접 수행, 진행 상황은 전송 기록에 표시)
-        api.MapPost("/agents/{agentId}/files/compress", async (string agentId, CompressFilesRequest request, TransferService transfers) =>
+        // PC(또는 공유 폴더) 안에서 선택 항목을 ZIP으로 압축
+        api.MapPost("/agents/{agentId}/files/compress", async (
+            string agentId, CompressFilesRequest request, TransferService transfers,
+            SharedFolderStore shares, LocalShareFiles localShare) =>
         {
             if (request.Paths is null or { Count: 0 } || string.IsNullOrWhiteSpace(request.DestinationFolder))
                 return Results.BadRequest("압축할 항목과 대상 폴더가 필요합니다.");
             var name = string.IsNullOrWhiteSpace(request.ArchiveName) ? DefaultArchiveName(request.Paths) : request.ArchiveName!;
+
+            if (shares.TryGet(agentId, out var share))
+            {
+                try
+                {
+                    var size = localShare.Compress(share, request.Paths, request.DestinationFolder!, name);
+                    var target = request.DestinationFolder!.TrimEnd('\\', '/') + "\\" + name;
+                    return Results.Ok(await transfers.RecordLocalDoneAsync(agentId, TransferKind.Compress, target, size));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or FileNotFoundException)
+                {
+                    return Results.BadRequest("압축 실패: " + ex.Message);
+                }
+            }
             return Results.Ok(await transfers.CompressAsync(agentId, request.Paths, request.DestinationFolder!, name, Math.Max(0, request.SplitBytes)));
         });
 
         // PC 간 붙여넣기 (원본 → 서버 중계 → 대상, 디스크 미경유). 단일 파일만.
-        api.MapPost("/files/cross-copy", async (CrossCopyRequest request, TransferService transfers, CancellationToken ct) =>
+        api.MapPost("/files/cross-copy", async (CrossCopyRequest request, TransferService transfers, SharedFolderStore shares, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.SourcePath) || string.IsNullOrWhiteSpace(request.DestFolder))
                 return Results.BadRequest("원본과 대상 폴더가 필요합니다.");
+            if (shares.TryGet(request.SourceAgentId, out _) || shares.TryGet(request.DestAgentId, out _))
+                return Results.BadRequest("공유 폴더와 PC 사이의 복사는 아직 지원하지 않습니다. (같은 위치 안에서는 가능)");
             var result = await transfers.CrossCopyAsync(
                 request.SourceAgentId, request.SourcePath, request.DestAgentId, request.DestFolder, request.Move, ct);
             return result.Success ? Results.Ok(result) : Results.BadRequest(result.Error ?? "실패");
@@ -128,11 +171,26 @@ public static class FileEndpoints
 
         // 브라우저는 파일 내용을 요청 본문 그대로 보낸다 (path = PC에 저장할 전체 경로)
         api.MapPost("/agents/{agentId}/files/push", async (
-            string agentId, string path, HttpRequest request, TransferService transfers, CancellationToken ct) =>
-            string.IsNullOrWhiteSpace(path)
-                ? Results.BadRequest("저장할 경로를 입력하세요.")
-                : Results.Ok(await transfers.PushAsync(agentId, path, request.Body, ct)))
-            .WithMetadata(new DisableRequestSizeLimitAttribute());
+            string agentId, string path, HttpRequest request, TransferService transfers,
+            SharedFolderStore shares, LocalShareFiles localShare, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return Results.BadRequest("저장할 경로를 입력하세요.");
+            if (shares.TryGet(agentId, out var share))
+            {
+                try
+                {
+                    var saved = await localShare.SaveUploadAsync(share, path, request.Body, ct);
+                    var size = new FileInfo(saved).Length;
+                    return Results.Ok(await transfers.RecordLocalDoneAsync(agentId, TransferKind.Push, saved, size));
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    return Results.BadRequest("올리기 실패: " + ex.Message);
+                }
+            }
+            return Results.Ok(await transfers.PushAsync(agentId, path, request.Body, ct));
+        }).WithMetadata(new DisableRequestSizeLimitAttribute());
 
         api.MapGet("/transfers", async (string? agentId, string? jobRunId, int? take, IDbContextFactory<AppDbContext> dbFactory) =>
         {

@@ -203,6 +203,17 @@ export interface PcFavorites {
   favorites: Record<string, string[]>
 }
 
+/** 서버가 직접 접근하는 공유 폴더 */
+export interface SharedFolder {
+  id: string
+  name: string
+  path: string
+}
+
+export interface SharedFolders {
+  shares: SharedFolder[]
+}
+
 export interface InstallInfo {
   serverUrl: string
   serverVersion: string
@@ -280,6 +291,11 @@ export const api = {
   pcFavorites: () => request<PcFavorites>('/api/pc-favorites'),
   savePcFavorites: (favorites: PcFavorites) =>
     request<PcFavorites>('/api/pc-favorites', { method: 'PUT', body: JSON.stringify(favorites) }),
+
+  shares: () => request<SharedFolders>('/api/shares'),
+  addShare: (name: string, path: string) =>
+    request<SharedFolder>('/api/shares', { method: 'POST', body: JSON.stringify({ name, path }) }),
+  removeShare: (id: string) => request<SharedFolders>(`/api/shares/${id}`, { method: 'DELETE' }),
 
   updateStatus: () => request<UpdateStatus>('/api/update'),
   checkUpdate: () => request<UpdateStatus>('/api/update/check', { method: 'POST' }),

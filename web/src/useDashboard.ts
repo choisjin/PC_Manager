@@ -11,6 +11,8 @@ import {
   type PcGroups,
   type Run,
   type RunState,
+  type SharedFolder,
+  type SharedFolders,
   type Transfer,
   type UpdateStatus,
 } from './api'
@@ -91,6 +93,7 @@ export function useDashboard() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [pcGroups, setPcGroups] = useState<PcGroups>(EMPTY_GROUPS)
   const [favorites, setFavorites] = useState<PcFavorites>({ favorites: {} })
+  const [shares, setShares] = useState<SharedFolder[]>([])
   const [connected, setConnected] = useState(false)
   const connectionRef = useRef<signalR.HubConnection | null>(null)
   const watchersRef = useRef(new Map<string, RunWatcher>())
@@ -141,6 +144,7 @@ export function useDashboard() {
     connection.on('UpdateStatusChanged', (status: UpdateStatus) => setUpdateStatus(status))
     connection.on('PcGroupsChanged', (groups: PcGroups) => setPcGroups(groups))
     connection.on('PcFavoritesChanged', (f: PcFavorites) => setFavorites(f))
+    connection.on('SharesChanged', (s: SharedFolders) => setShares(s.shares))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
     const sync = async () => {
@@ -152,6 +156,7 @@ export function useDashboard() {
         api.pcGroups().catch(() => null),
       ])
       const favs = await api.pcFavorites().catch(() => null)
+      const shareList = await api.shares().catch(() => null)
       if (disposed) return
       setAgents(agentList.sort(byMachineName))
       setRuns(runList)
@@ -159,6 +164,7 @@ export function useDashboard() {
       if (update) setUpdateStatus(update)
       if (groups) setPcGroups(groups)
       if (favs) setFavorites(favs)
+      if (shareList) setShares(shareList.shares)
       for (const jobRunId of loadedJobIds) {
         api
           .job(jobRunId)
@@ -266,6 +272,16 @@ export function useDashboard() {
     })
   }, [])
 
+  // 공유 폴더 등록/삭제 (서버가 SharesChanged로 전체를 다시 알려준다)
+  const addShare = useCallback(async (name: string, path: string) => {
+    await api.addShare(name, path)
+    const list = await api.shares().catch(() => null)
+    if (list) setShares(list.shares)
+  }, [])
+  const removeShare = useCallback((id: string) => {
+    api.removeShare(id).then((s: SharedFolders) => setShares(s.shares)).catch((err) => console.error('공유 폴더 삭제 실패', err))
+  }, [])
+
   return {
     agents,
     runs,
@@ -276,6 +292,9 @@ export function useDashboard() {
     saveGroups,
     favorites,
     setAgentFavorites,
+    shares,
+    addShare,
+    removeShare,
     connected,
     watchRun,
     upsertRuns,

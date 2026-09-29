@@ -26,7 +26,8 @@ public static class MediaEndpoints
     }
 
     private static async Task HandleAsync(
-        string agentId, string? path, HttpContext context, AgentRegistry registry, IHubContext<AgentHub> agentHub)
+        string agentId, string? path, HttpContext context, AgentRegistry registry, IHubContext<AgentHub> agentHub,
+        SharedFolderStore shares, LocalShareFiles localShare)
     {
         var response = context.Response;
         if (string.IsNullOrWhiteSpace(path))
@@ -34,6 +35,29 @@ public static class MediaEndpoints
             response.StatusCode = StatusCodes.Status400BadRequest;
             return;
         }
+
+        // 공유 폴더면 서버 로컬 파일을 Range 지원으로 바로 내보낸다
+        if (shares.TryGet(agentId, out var share))
+        {
+            try
+            {
+                var full = localShare.ResolveWithin(share, path);
+                if (!File.Exists(full))
+                {
+                    response.StatusCode = StatusCodes.Status404NotFound;
+                    return;
+                }
+                var shareType = ContentTypes.TryGetContentType(full, out var mt) ? mt : "application/octet-stream";
+                await Results.File(full, shareType, enableRangeProcessing: true).ExecuteAsync(context);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                response.StatusCode = StatusCodes.Status502BadGateway;
+                await response.WriteAsync(ex.Message, context.RequestAborted);
+            }
+            return;
+        }
+
         if (!registry.TryGetConnection(agentId, out var connectionId))
         {
             response.StatusCode = StatusCodes.Status409Conflict;

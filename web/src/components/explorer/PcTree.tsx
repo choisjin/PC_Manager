@@ -1,23 +1,29 @@
 import { useMemo, useState } from 'react'
-import type { Agent, PcGroups } from '../../api'
+import type { Agent, PcGroups, SharedFolder } from '../../api'
+import { AddShareModal } from './AddShareModal'
 import { ContextMenu } from './ContextMenu'
+import { Icon } from './Icon'
 import { addFolder, AGENT_MIME, assignAgent, buildTree, deleteFolder, displayName, type FolderNode, renameFolder, setAlias } from './pcGroups'
 
 interface Props {
   agents: Agent[]
   groups: PcGroups
   saveGroups: (groups: PcGroups) => void
+  shares: SharedFolder[]
+  addShare: (name: string, path: string) => Promise<void>
+  removeShare: (id: string) => void
   collapsed: boolean
   onToggleCollapse: () => void
   onOpenAgent: (agentId: string) => void
 }
 
-export function PcTree({ agents, groups, saveGroups, collapsed, onToggleCollapse, onOpenAgent }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, collapsed, onToggleCollapse, onOpenAgent }: Props) {
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null) // folderId 또는 'root'
   const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null)
+  const [showAddShare, setShowAddShare] = useState(false)
 
   const onlineCount = agents.filter((a) => a.online).length
 
@@ -176,6 +182,9 @@ export function PcTree({ agents, groups, saveGroups, collapsed, onToggleCollapse
           <button type="button" className="small-btn" title="폴더 추가" onClick={() => createFolder(null)}>
             + 폴더
           </button>
+          <button type="button" className="small-btn" title="공유 폴더 등록" onClick={() => setShowAddShare(true)}>
+            + 서버
+          </button>
         </span>
       </div>
 
@@ -198,7 +207,36 @@ export function PcTree({ agents, groups, saveGroups, collapsed, onToggleCollapse
         {agents.length === 0 && <li className="placeholder small">등록된 PC가 없습니다</li>}
       </ul>
 
-      <p className="tree-hint small muted">PC를 오른쪽으로 드래그하면 창이 열립니다 · 폴더로 끌어 그룹 지정</p>
+      <div className="share-section">
+        <div className="share-head">
+          <span className="pane-side-title">공유 서버</span>
+          <button type="button" className="small-btn" title="공유 폴더 등록" onClick={() => setShowAddShare(true)}>＋</button>
+        </div>
+        <ul className="tree-root share-list">
+          {shares.length === 0 && <li className="placeholder small">등록된 공유 폴더가 없습니다</li>}
+          {shares.map((s) => (
+            <li key={s.id} className="tree-agent share-item" title={s.path} onDoubleClick={() => onOpenAgent(s.id)}>
+              <Icon name="drive" size={14} />
+              <span className="ellipsis">{s.name}</span>
+              <button type="button" className="tree-open" title="열기" onClick={() => onOpenAgent(s.id)}>＋</button>
+              <button
+                type="button"
+                className="icon-mini"
+                title="공유 폴더 삭제"
+                onClick={() => {
+                  if (window.confirm(`'${s.name}' 공유 폴더를 목록에서 제거할까요? (실제 파일은 지워지지 않습니다)`)) removeShare(s.id)
+                }}
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <p className="tree-hint small muted">PC·공유 폴더를 더블클릭하면 창이 열립니다 · 폴더로 끌어 그룹 지정</p>
+
+      {showAddShare && <AddShareModal onConfirm={addShare} onClose={() => setShowAddShare(false)} />}
 
       {menu && (
         <ContextMenu

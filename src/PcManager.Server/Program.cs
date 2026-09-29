@@ -34,6 +34,8 @@ builder.Services.AddSingleton<AgentRegistry>();
 builder.Services.AddSingleton<RunLogStore>();
 builder.Services.AddSingleton<PcGroupStore>();
 builder.Services.AddSingleton<PcFavoriteStore>();
+builder.Services.AddSingleton<SharedFolderStore>();
+builder.Services.AddSingleton<LocalShareFiles>();
 builder.Services.AddSingleton<RunService>();
 builder.Services.AddSingleton<ArtifactStore>();
 builder.Services.AddSingleton<CompletionNotifier>();
@@ -84,6 +86,7 @@ app.MapJobApi();
 app.MapUpdateApi();
 app.MapPcGroupApi();
 app.MapPcFavoriteApi();
+app.MapSharedFolderApi();
 app.MapInstallApi(serverOptions);
 
 // 설치 파일은 크므로 요청 크기 제한과 무관하게 스트리밍 (다운로드만, 업로드 아님)

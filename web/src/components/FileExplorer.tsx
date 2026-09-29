@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { Agent, PcFavorites, PcGroups } from '../api'
+import type { Agent, PcFavorites, PcGroups, SharedFolder } from '../api'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
 import { ExplorerToolbar } from './explorer/ExplorerToolbar'
@@ -14,6 +14,9 @@ interface Props {
   saveGroups: (groups: PcGroups) => void
   favorites: PcFavorites
   setAgentFavorites: (agentId: string, paths: string[]) => void
+  shares: SharedFolder[]
+  addShare: (name: string, path: string) => Promise<void>
+  removeShare: (id: string) => void
   subscribeTransfers: SubscribeTransfers
   watchRun: WatchRun
 }
@@ -38,8 +41,18 @@ function saveLocal(key: string, value: unknown) {
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
+  const shareById = useMemo(() => new Map(shares.map((s) => [s.id, s])), [shares])
+  // 창 제목·온라인 상태: 에이전트면 별칭, 공유 폴더면 공유 이름
+  const sourceName = (id: string) => {
+    const agent = agentById.get(id)
+    if (agent) return displayName(agent, pcGroups)
+    const share = shareById.get(id)
+    if (share) return share.name
+    return id.slice(0, 8)
+  }
+  const sourceOnline = (id: string) => agentById.get(id)?.online ?? shareById.has(id)
 
   const addFavorite = (agentId: string, path: string) => {
     const current = favorites.favorites[agentId] ?? []
@@ -103,6 +116,9 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         agents={agents}
         groups={pcGroups}
         saveGroups={saveGroups}
+        shares={shares}
+        addShare={addShare}
+        removeShare={removeShare}
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}
         onOpenAgent={addPane}
@@ -161,14 +177,13 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
             </div>
           )}
           {panes.map((pane) => {
-            const agent = agentById.get(pane.agentId)
             return (
               <ExplorerPane
                 key={pane.paneId}
                 paneId={pane.paneId}
                 agentId={pane.agentId}
-                machineName={agent ? displayName(agent, pcGroups) : pane.agentId.slice(0, 8)}
-                online={agent?.online ?? false}
+                machineName={sourceName(pane.agentId)}
+                online={sourceOnline(pane.agentId)}
                 active={pane.paneId === activePaneId}
                 onActivate={() => setActivePaneId(pane.paneId)}
                 onControllerChange={handleController}
