@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react'
 import type { Agent, PcFavorites, PcGroups } from '../api'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
+import { ExplorerToolbar } from './explorer/ExplorerToolbar'
+import type { PaneController } from './explorer/paneController'
 import { PcTree } from './explorer/PcTree'
 import { AGENT_MIME, displayName, type FileClipboard, newId } from './explorer/pcGroups'
 import { TransfersBar } from './explorer/TransfersBar'
@@ -49,11 +51,16 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
   const [dropActive, setDropActive] = useState(false)
+  const [activePaneId, setActivePaneId] = useState<string | null>(null)
+  const [activeController, setActiveController] = useState<PaneController | null>(null)
 
   const updatePanes = (next: Pane[]) => {
     setPanes(next)
     saveLocal(PANES_KEY, next)
   }
+
+  // 활성 창만 컨트롤러를 알려온다 → 툴바가 그 창을 조작
+  const handleController = (controller: PaneController) => setActiveController(controller)
 
   const toggleCollapse = () => {
     setCollapsed((v) => {
@@ -62,9 +69,20 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
     })
   }
 
-  const addPane = (agentId: string) => updatePanes([...panes, { paneId: newId(), agentId }])
+  const addPane = (agentId: string) => {
+    const paneId = newId()
+    updatePanes([...panes, { paneId, agentId }])
+    setActivePaneId(paneId)
+  }
 
-  const closePane = (paneId: string) => updatePanes(panes.filter((p) => p.paneId !== paneId))
+  const closePane = (paneId: string) => {
+    const next = panes.filter((p) => p.paneId !== paneId)
+    updatePanes(next)
+    if (paneId === activePaneId) {
+      setActivePaneId(next.length ? next[next.length - 1].paneId : null)
+      setActiveController(null)
+    }
+  }
 
   const resizePane = (paneId: string, w: number, h: number) =>
     updatePanes(panes.map((p) => (p.paneId === paneId ? { ...p, w, h } : p)))
@@ -91,6 +109,8 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       />
 
       <div className="explorer-main">
+        <ExplorerToolbar controller={activeController} />
+
         <div className="workspace-bar">
           <span className="workspace-left">
             <span className="muted small">열린 창 {panes.length}개</span>
@@ -104,9 +124,9 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
             )}
           </span>
           <span className="workspace-cols">
-            <span className="muted small">모서리를 끌어 창 크기 조절</span>
+            <span className="muted small">창을 클릭하면 위 툴바가 그 창에 적용됩니다 · 모서리를 끌어 크기 조절</span>
             {panes.length > 0 && (
-              <button type="button" className="link" onClick={() => updatePanes([])}>
+              <button type="button" className="link" onClick={() => { updatePanes([]); setActivePaneId(null); setActiveController(null) }}>
                 모두 닫기
               </button>
             )}
@@ -149,6 +169,9 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
                 agentId={pane.agentId}
                 machineName={agent ? displayName(agent, pcGroups) : pane.agentId.slice(0, 8)}
                 online={agent?.online ?? false}
+                active={pane.paneId === activePaneId}
+                onActivate={() => setActivePaneId(pane.paneId)}
+                onControllerChange={handleController}
                 width={pane.w}
                 height={pane.h}
                 clipboard={clipboard}

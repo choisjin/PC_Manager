@@ -1487,10 +1487,10 @@ tr.cut td {
 /* 개별 PC 패널 — 놓는 대로 흐르고, 모서리를 끌어 크기 조절 */
 .pane {
   flex: none;
-  width: 480px;
-  height: 440px;
-  min-width: 300px;
-  min-height: 220px;
+  width: 640px;
+  height: 460px;
+  min-width: 340px;
+  min-height: 240px;
   max-width: none;
   max-height: none;
   resize: both;
@@ -1535,7 +1535,7 @@ tr.cut td {
 
 .pane-side {
   flex: none;
-  width: 150px;
+  width: 138px;
   overflow: auto;
   padding: 6px 4px;
   border-right: 1px solid var(--border);
@@ -1677,6 +1677,51 @@ tr.video {
 
 .file-icon {
   margin-right: 8px;
+  vertical-align: -3px;
+}
+
+/* 인라인 아이콘 정렬 */
+.win-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.win-cmd svg,
+.win-icon svg {
+  flex: none;
+}
+
+.fav-btn {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+.fav-btn svg {
+  flex: none;
+}
+
+.win-search-ico {
+  flex: none;
+  color: var(--muted);
+}
+
+.pane-tab-x,
+.pane-tab-add,
+.pane-status-views button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pane-tab-ico {
+  flex: none;
+  display: inline-flex;
+}
+
+.icon-tile-ico {
+  display: block;
 }
 
 .transfer {
@@ -1719,4 +1764,396 @@ tr.video {
   .workspace {
     grid-template-rows: auto 300px 420px;
   }
+}
+
+/* ===== 윈도우 11 스타일 통합 툴바 (활성 창에 적용) ===== */
+.win-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.win-toolbar.toolbar-disabled {
+  opacity: 0.7;
+}
+
+.win-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.win-nav-btns {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+
+.win-icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 15px;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.win-icon:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.win-icon:disabled {
+  color: var(--muted);
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 주소 표시줄 (브레드크럼) */
+.win-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: text;
+}
+
+.win-crumb-pc {
+  flex: none;
+  margin-right: 4px;
+}
+
+.win-crumb-seg {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.win-crumb-sep {
+  color: var(--muted);
+  padding: 0 1px;
+}
+
+.win-crumb {
+  max-width: 180px;
+  padding: 3px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.win-crumb:hover {
+  background: var(--hover);
+}
+
+.win-addr-edit {
+  flex: 1;
+  min-width: 0;
+}
+
+.win-addr-edit input {
+  width: 100%;
+  height: 32px;
+}
+
+/* 검색창 */
+.win-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  width: 210px;
+  height: 32px;
+  padding: 0 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.win-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+}
+
+.win-search input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* 명령 바 */
+.win-cmd-row {
+  flex-wrap: wrap;
+}
+
+.win-cmd {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.win-cmd.icon-only {
+  padding: 0;
+  width: 30px;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.win-cmd:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.win-cmd:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.win-cmd-ico {
+  font-size: 15px;
+  color: var(--accent);
+}
+
+.win-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--border);
+}
+
+.win-spacer {
+  flex: 1;
+}
+
+/* ===== 창(pane): 탭 · 활성 하이라이트 · 상태바 ===== */
+.pane-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.pane-tabs {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 5px 6px;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.pane-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  min-width: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+}
+
+.pane-tab:hover {
+  background: var(--hover);
+}
+
+.pane-tab.active {
+  background: var(--selected);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.pane-tab-ico {
+  flex: none;
+}
+
+.pane-tab-x {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.pane-tab-x:hover {
+  background: var(--border-strong);
+  color: var(--text);
+}
+
+.pane-tab-add {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 15px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.pane-tab-add:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.pane-tabs-spacer {
+  flex: 1;
+}
+
+.pane-id {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  max-width: 160px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: grab;
+}
+
+.pane-close {
+  flex: none;
+}
+
+.pane-empty {
+  padding: 24px 12px;
+  text-align: center;
+}
+
+/* 상태 표시줄 */
+.pane-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 3px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.pane-status-views {
+  display: flex;
+  gap: 2px;
+}
+
+.pane-status-views button {
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.pane-status-views button:hover {
+  background: var(--hover);
+}
+
+.pane-status-views button.active {
+  color: var(--accent);
+  border-color: var(--border-strong);
+  background: var(--selected);
+}
+
+.col-date,
+.col-size {
+  white-space: nowrap;
+}
+
+/* 정렬 가능한 열 머리글 */
+th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+th.sortable:hover {
+  color: var(--accent);
+}
+
+/* 큰 아이콘 보기 */
+.icons-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  align-content: flex-start;
+}
+
+.icon-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 92px;
+  padding: 8px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.icon-tile:hover {
+  background: var(--hover);
+}
+
+.icon-tile.selected {
+  background: var(--selected);
+}
+
+.icon-tile.cut {
+  opacity: 0.5;
+}
+
+.icon-tile-ico {
+  font-size: 34px;
+  line-height: 1;
+}
+
+.icon-tile-name {
+  font-size: 12px;
+  text-align: center;
+  word-break: break-all;
+}
+
+.ellipsis-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

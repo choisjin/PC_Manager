@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type FileEntry } from '../../api'
+import { Icon } from './Icon'
 
 interface Props {
   agentId: string
@@ -64,8 +65,8 @@ export function DriveTree({ agentId, currentPath, onNavigate }: Props) {
           <button type="button" className="tree-caret" onClick={() => toggle(entry.fullPath)} aria-label={open ? '접기' : '펼치기'}>
             {open ? '▾' : '▸'}
           </button>
-          <button type="button" className="drive-name ellipsis" title={entry.fullPath} onClick={() => onNavigate(entry.fullPath)}>
-            {depth === 0 ? '💽' : '📁'} {entry.name}
+          <button type="button" className="drive-name ellipsis fav-btn" title={entry.fullPath} onClick={() => onNavigate(entry.fullPath)}>
+            <Icon name={depth === 0 ? 'drive' : 'folder'} size={14} /> {entry.name}
           </button>
         </div>
         {open && (

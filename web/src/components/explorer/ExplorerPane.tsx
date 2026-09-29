@@ -1,12 +1,14 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import { api, type DirectoryListing, type FileEntry, type Transfer } from '../../api'
 import { isVideoFile } from '../../fileTypes'
-import { formatBytes, formatTime } from '../../format'
+import { formatBytes } from '../../format'
 import type { SubscribeTransfers, WatchRun } from '../../useDashboard'
 import { VideoViewer } from '../VideoViewer'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DriveTree } from './DriveTree'
-import { copyText, type FileClipboard, PANE_MIME } from './pcGroups'
+import { Icon } from './Icon'
+import { copyText, type FileClipboard, newId, PANE_MIME } from './pcGroups'
+import { fileTypeLabel, type PaneController, sortEntries, type SortKey, type ViewMode } from './paneController'
 import { SplitCompressModal } from './SplitCompressModal'
 import { TerminalModal } from './TerminalModal'
 
@@ -22,6 +24,9 @@ interface Props {
   agentId: string
   machineName: string
   online: boolean
+  active: boolean
+  onActivate: () => void
+  onControllerChange: (controller: PaneController) => void
   width?: number
   height?: number
   clipboard: FileClipboard | null
@@ -36,11 +41,27 @@ interface Props {
   onResize: (w: number, h: number) => void
 }
 
+/** 창 안의 폴더 탭 (뒤로/앞으로용 방문 기록 포함) */
+interface FolderTab {
+  id: string
+  stack: string[]
+  idx: number
+}
+
 const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase()
 
 const favName = (p: string) => {
   const trimmed = p.replace(/[\\/]+$/, '')
   return trimmed.split(/[\\/]/).pop() || p
+}
+
+const tabLabel = (p: string) => (p ? p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p : '내 PC')
+
+// 윈도우 탐색기식 한 줄 날짜 (YYYY-MM-DD HH:mm)
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const formatFileDate = (iso: string) => {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
 const joinPath = (directory: string, name: string) =>
@@ -53,6 +74,9 @@ export function ExplorerPane({
   agentId,
   machineName,
   online,
+  active,
+  onActivate,
+  onControllerChange,
   width,
   height,
   clipboard,
@@ -66,21 +90,33 @@ export function ExplorerPane({
   onReorderDrop,
   onResize,
 }: Props) {
-  const [path, setPath] = useState('')
-  const [pathInput, setPathInput] = useState('')
+  const [tabs, setTabs] = useState<FolderTab[]>(() => [{ id: newId(), stack: [''], idx: 0 }])
+  const [activeTabId, setActiveTabId] = useState(() => tabs[0].id)
   const [listing, setListing] = useState<DirectoryListing | null>(null)
   const [loading, setLoading] = useState(online)
   const [error, setError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [view, setView] = useState<ViewMode>('details')
+  const [sortKey, setSortKey] = useState<SortKey>('name')
+  const [sortAsc, setSortAsc] = useState(true)
+  const [search, setSearch] = useState('')
   const [playing, setPlaying] = useState<{ path: string; name: string } | null>(null)
   const [terminal, setTerminal] = useState(false)
   const [splitTargets, setSplitTargets] = useState<FileEntry[] | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; targets: FileEntry[]; folder: string | null } | null>(null)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sectionRef = useRef<HTMLElement>(null)
   const requestRef = useRef(0)
   const anchorRef = useRef(-1)
+
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0]
+  const path = activeTab.stack[activeTab.idx] ?? ''
+  const activeTabIdRef = useRef(activeTabId)
+  activeTabIdRef.current = activeTabId
+
+  const setTab = (id: string, updater: (t: FolderTab) => FolderTab) =>
+    setTabs((ts) => ts.map((t) => (t.id === id ? updater(t) : t)))
 
   const showListing = (requestId: number, result: DirectoryListing) => {
     if (requestId !== requestRef.current) return
@@ -91,15 +127,21 @@ export function ExplorerPane({
     }
     setError(null)
     setListing(result)
-    setPath(result.path)
-    setPathInput(result.path)
     setSelected(new Set())
     anchorRef.current = -1
+    // 방문 기록의 현재 항목을 정규화된 경로로 갱신
+    setTab(activeTabIdRef.current, (t) => {
+      if (t.stack[t.idx] === result.path) return t
+      const stack = t.stack.slice()
+      stack[t.idx] = result.path
+      return { ...t, stack }
+    })
   }
 
   const load = (target: string) => {
     const requestId = ++requestRef.current
     setLoading(true)
+    setSearch('')
     api.listFiles(agentId, target).then(
       (result) => showListing(requestId, result),
       (err) => {
@@ -112,24 +154,57 @@ export function ExplorerPane({
   }
   const refresh = () => load(path)
 
-  const loadDrives = useEffectEvent(() => load(''))
+  // 새 경로로 이동 (방문 기록에 쌓는다)
+  const navigate = (target: string) => {
+    setTab(activeTabId, (t) => {
+      const stack = t.stack.slice(0, t.idx + 1)
+      if (stack[stack.length - 1] !== target) stack.push(target)
+      return { ...t, stack, idx: stack.length - 1 }
+    })
+    load(target)
+  }
+  const back = () => {
+    if (activeTab.idx <= 0) return
+    const target = activeTab.stack[activeTab.idx - 1]
+    setTab(activeTabId, (t) => ({ ...t, idx: t.idx - 1 }))
+    load(target)
+  }
+  const forward = () => {
+    if (activeTab.idx >= activeTab.stack.length - 1) return
+    const target = activeTab.stack[activeTab.idx + 1]
+    setTab(activeTabId, (t) => ({ ...t, idx: t.idx + 1 }))
+    load(target)
+  }
+
+  const addTab = () => {
+    const id = newId()
+    setTabs((ts) => [...ts, { id, stack: [path], idx: 0 }])
+    setActiveTabId(id)
+  }
+  const closeTab = (id: string) => {
+    setTabs((ts) => {
+      if (ts.length <= 1) return ts
+      const idx = ts.findIndex((t) => t.id === id)
+      const next = ts.filter((t) => t.id !== id)
+      if (id === activeTabId) setActiveTabId(next[Math.max(0, idx - 1)].id)
+      return next
+    })
+  }
+
+  // 활성 탭이 바뀌면 그 탭의 현재 폴더를 불러온다 (마운트 시 빈 경로 = 드라이브 목록)
+  const loadActiveTab = useEffectEvent(() => load(activeTab.stack[activeTab.idx] ?? ''))
+  useEffect(() => {
+    loadActiveTab()
+  }, [activeTabId])
 
   const onTransferUpdated = useEffectEvent((transfer: Transfer) => {
-    // 이 PC로의 올리기·압축이 끝나면 목록을 새로 고쳐 새 파일(zip 등)을 보여준다
     if (transfer.agentId === agentId && (transfer.kind === 'Push' || transfer.kind === 'Compress') && transfer.state === 'Succeeded' && path) load(path)
   })
-
-  useEffect(() => {
-    loadDrives()
-  }, [])
-
   useEffect(() => {
     const unsubscribe = subscribeTransfers((transfer) => onTransferUpdated(transfer))
     return () => unsubscribe()
   }, [subscribeTransfers])
 
-  // 모서리 드래그 리사이즈 후(마우스 뗄 때) 크기가 바뀌었으면 저장한다.
-  // (마운트 시점 관측이 저장된 크기를 덮어쓰지 않도록 ResizeObserver 대신 이 방식을 쓴다)
   const saveSizeIfChanged = () => {
     const el = sectionRef.current
     if (!el) return
@@ -144,21 +219,16 @@ export function ExplorerPane({
       .forEach((e) => void api.fetchFile(agentId, e.fullPath).catch((err) => setError(toMessage(err))))
   }
 
-  // 선택 항목을 하나의 zip으로 (이름은 서버가 정한다). 진행 상황은 하단 전송 기록에 표시된다.
   const compress = (targets: FileEntry[]) => {
     if (!path || targets.length === 0) return
     setError(null)
     void api.compressFiles(agentId, targets.map((t) => t.fullPath), path).catch((err) => setError(toMessage(err)))
   }
-
-  // 선택 항목을 각각 개별 zip으로
   const compressEach = (targets: FileEntry[]) => {
     if (!path || targets.length === 0) return
     setError(null)
     for (const t of targets) void api.compressFiles(agentId, [t.fullPath], path).catch((err) => setError(toMessage(err)))
   }
-
-  // 분할 압축: 하나의 zip으로 만든 뒤 지정 크기로 .zip.001, .002 … 볼륨 분할
   const compressSplit = (targets: FileEntry[], splitBytes: number) => {
     if (!path || targets.length === 0) return
     setError(null)
@@ -176,12 +246,18 @@ export function ExplorerPane({
     }
   }
 
-  // --- 선택 ---
-  const selectClick = (e: React.MouseEvent, entry: FileEntry, index: number) => {
+  // 검색·정렬을 적용한 화면 표시용 목록
+  const displayed = useMemo(() => {
     const entries = listing?.entries ?? []
+    const q = search.trim().toLowerCase()
+    const filtered = q ? entries.filter((e) => e.name.toLowerCase().includes(q)) : entries
+    return sortEntries(filtered, sortKey, sortAsc)
+  }, [listing, search, sortKey, sortAsc])
+
+  const selectClick = (e: React.MouseEvent, entry: FileEntry, index: number) => {
     if (e.shiftKey && anchorRef.current >= 0) {
       const [a, b] = [anchorRef.current, index].sort((x, y) => x - y)
-      setSelected(new Set(entries.slice(a, b + 1).map((en) => en.fullPath)))
+      setSelected(new Set(displayed.slice(a, b + 1).map((en) => en.fullPath)))
     } else if (e.ctrlKey || e.metaKey) {
       setSelected((prev) => {
         const next = new Set(prev)
@@ -197,12 +273,11 @@ export function ExplorerPane({
   }
 
   const openEntry = (entry: FileEntry) => {
-    if (entry.isDirectory) load(entry.fullPath)
+    if (entry.isDirectory) navigate(entry.fullPath)
     else if (isVideoFile(entry.name)) setPlaying({ path: entry.fullPath, name: entry.name })
     else fetchFiles([entry])
   }
 
-  // --- 파일 조작 ---
   const paste = async (targetFolder: string) => {
     if (!clipboard || !targetFolder) return
     setError(null)
@@ -284,6 +359,62 @@ export function ExplorerPane({
   const setClip = (targets: FileEntry[], mode: 'copy' | 'cut') =>
     setClipboard({ agentId, items: targets.map((t) => ({ path: t.fullPath, name: t.name, isDir: t.isDirectory })), mode })
 
+  const selectedEntries = () => (listing?.entries ?? []).filter((e) => selected.has(e.fullPath))
+
+  const applySort = (key: SortKey) => {
+    if (key === sortKey) setSortAsc((v) => !v)
+    else {
+      setSortKey(key)
+      setSortAsc(true)
+    }
+  }
+
+  // --- 상단 통합 툴바에 넘길 컨트롤러 ---
+  const controller: PaneController = {
+    paneId,
+    agentId,
+    machineName,
+    online,
+    path,
+    canUp: listing?.parentPath != null,
+    canBack: activeTab.idx > 0,
+    canForward: activeTab.idx < activeTab.stack.length - 1,
+    itemCount: listing?.entries.length ?? 0,
+    selectionCount: selected.size,
+    canPaste: !!clipboard && !!path,
+    view,
+    sortKey,
+    sortAsc,
+    search,
+    navigate,
+    up: () => listing?.parentPath != null && navigate(listing.parentPath),
+    back,
+    forward,
+    refresh,
+    newFolder: () => void createFolder(),
+    cut: () => setClip(selectedEntries(), 'cut'),
+    copy: () => setClip(selectedEntries(), 'copy'),
+    paste: () => void paste(path),
+    rename: () => {
+      const s = selectedEntries()
+      if (s.length === 1) void rename(s[0])
+    },
+    remove: () => void remove(selectedEntries()),
+    fetchSelected: () => fetchFiles(selectedEntries()),
+    setSort: applySort,
+    setView,
+    setSearch,
+    openTerminal: () => setTerminal(true),
+    upload: () => fileInputRef.current?.click(),
+  }
+  const controllerRef = useRef(controller)
+  controllerRef.current = controller
+
+  const notifyController = useEffectEvent(() => onControllerChange(controllerRef.current))
+  useEffect(() => {
+    if (active) notifyController()
+  }, [active, path, view, sortKey, sortAsc, search, selected, listing, clipboard, activeTab.idx, activeTab.stack.length, online])
+
   const buildMenu = (targets: FileEntry[], folder: string | null): MenuItem[] => {
     const pasteTarget = folder ?? path
     const files = targets.filter((t) => !t.isDirectory)
@@ -313,7 +444,6 @@ export function ExplorerPane({
     if (targets.length > 0) {
       items.push({ label: '경로 복사', onClick: () => void copyText(targets.map((t) => t.fullPath).join('\n')) })
     }
-    // 즐겨찾기: 폴더 대상 또는 현재 폴더
     const favPaths = targets.length ? targets.filter((t) => t.isDirectory).map((t) => t.fullPath) : path ? [path] : []
     if (favPaths.length > 0) {
       items.push({
@@ -335,14 +465,13 @@ export function ExplorerPane({
   const openRowMenu = (e: React.MouseEvent, entry: FileEntry, index: number) => {
     e.preventDefault()
     e.stopPropagation()
-    // 선택에 없는 항목을 우클릭하면 그 항목만 선택
     let targetSet = selected
     if (!selected.has(entry.fullPath)) {
       targetSet = new Set([entry.fullPath])
       setSelected(targetSet)
       anchorRef.current = index
     }
-    const targets = (listing?.entries ?? []).filter((en) => targetSet.has(en.fullPath))
+    const targets = displayed.filter((en) => targetSet.has(en.fullPath))
     setMenu({ x: e.clientX, y: e.clientY, targets: targets.length ? targets : [entry], folder: entry.isDirectory ? entry.fullPath : null })
   }
 
@@ -353,11 +482,50 @@ export function ExplorerPane({
 
   const style = width && height ? { width, height } : undefined
 
+  const rowClass = (entry: FileEntry, isSel: boolean, cut: boolean) =>
+    `${entry.isDirectory ? 'dir' : isVideoFile(entry.name) ? 'file video' : 'file'}${isSel ? ' selected' : ''}${cut ? ' cut' : ''}`
+  const iconFor = (entry: FileEntry) => (entry.isDirectory ? 'folder' : isVideoFile(entry.name) ? 'video' : 'file')
+  const isCut = (entry: FileEntry) =>
+    clipboard?.mode === 'cut' && clipboard.agentId === agentId && clipboard.items.some((i) => i.path === entry.fullPath)
+
   return (
-    <section ref={sectionRef} className="panel pane" style={style} onMouseUp={saveSizeIfChanged}>
-      <div className="panel-head pane-head">
+    <section
+      ref={sectionRef}
+      className={`panel pane${active ? ' pane-active' : ''}`}
+      style={style}
+      onMouseDownCapture={onActivate}
+      onMouseUp={saveSizeIfChanged}
+    >
+      {/* 폴더 탭 + PC 이름 */}
+      <div className="pane-tabs">
+        {tabs.map((t) => (
+          <div
+            key={t.id}
+            className={`pane-tab${t.id === activeTabId ? ' active' : ''}`}
+            title={tabLabel(t.stack[t.idx])}
+            onMouseDown={() => setActiveTabId(t.id)}
+          >
+            <Icon name="folder" size={14} className="pane-tab-ico" />
+            <span className="ellipsis">{tabLabel(t.stack[t.idx])}</span>
+            {tabs.length > 1 && (
+              <button
+                type="button"
+                className="pane-tab-x"
+                title="탭 닫기"
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  closeTab(t.id)
+                }}
+              >
+                <Icon name="close" size={11} />
+              </button>
+            )}
+          </div>
+        ))}
+        <button type="button" className="pane-tab-add" title="새 탭" onClick={addTab}><Icon name="plus" size={15} /></button>
+        <span className="pane-tabs-spacer" />
         <span
-          className="pane-title"
+          className="pane-id"
           draggable
           title="드래그해서 위치 이동"
           onDragStart={(e) => {
@@ -367,37 +535,9 @@ export function ExplorerPane({
         >
           <span className={`dot ${online ? 'on' : 'off'}`} />
           <span className="ellipsis">{machineName}</span>
-          {selected.size > 0 && <span className="muted small">· {selected.size}개 선택</span>}
         </span>
-        <span className="pane-head-actions">
-          <button type="button" className="icon" title="터미널 열기" onClick={() => setTerminal(true)}>
-            {'>_'}
-          </button>
-          <button type="button" className="icon" title="상위 폴더" disabled={loading || listing?.parentPath == null} onClick={() => listing?.parentPath != null && load(listing.parentPath)}>
-            ↑
-          </button>
-          <button type="button" className="icon" title="새로 고침" disabled={loading} onClick={refresh}>
-            ⟳
-          </button>
-          <button type="button" className="icon" title={path ? '올리기' : '폴더를 연 뒤 올리기'} disabled={!path} onClick={() => fileInputRef.current?.click()}>
-            ⬆
-          </button>
-          <button type="button" className="icon" title="닫기" onClick={onClose}>
-            ✕
-          </button>
-          <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => e.target.files && void pushFiles(e.target.files)} />
-        </span>
+        <button type="button" className="icon pane-close" title="창 닫기" onClick={onClose}>✕</button>
       </div>
-
-      <form
-        className="pane-path"
-        onSubmit={(e) => {
-          e.preventDefault()
-          load(pathInput.trim())
-        }}
-      >
-        <input className="mono" aria-label="경로" value={pathInput} placeholder="드라이브 목록 (경로 입력 후 Enter)" onChange={(e) => setPathInput(e.target.value)} />
-      </form>
 
       {error && <div className="output-error">{error}</div>}
 
@@ -409,8 +549,8 @@ export function ExplorerPane({
             <ul className="fav-list">
               {favorites.map((fp) => (
                 <li key={fp} className={`fav-item${samePath(fp, path) ? ' current' : ''}`}>
-                  <button type="button" className="drive-name ellipsis" title={fp} onClick={() => load(fp)}>
-                    ⭐ {favName(fp)}
+                  <button type="button" className="drive-name ellipsis fav-btn" title={fp} onClick={() => navigate(fp)}>
+                    <Icon name="star" size={13} /> {favName(fp)}
                   </button>
                   <button type="button" className="icon-mini" title="즐겨찾기 제거" onClick={() => onRemoveFavorite(fp)}>
                     ✕
@@ -419,82 +559,110 @@ export function ExplorerPane({
               ))}
             </ul>
           </div>
-          <DriveTree agentId={agentId} currentPath={path} onNavigate={load} />
+          <DriveTree agentId={agentId} currentPath={path} onNavigate={navigate} />
         </div>
 
         <div
           className={`table-wrap${dragOver ? ' drop-active' : ''}`}
           onContextMenu={openEmptyMenu}
-        onDragOver={(e) => {
-          if (e.dataTransfer.types.includes(PANE_MIME)) {
-            e.preventDefault()
-            setDragOver(true)
-          }
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          setDragOver(false)
-          const from = e.dataTransfer.getData(PANE_MIME)
-          if (from && from !== paneId) {
-            e.preventDefault()
-            onReorderDrop(from)
-          }
-        }}
-      >
-        <table className="noselect">
-          <colgroup>
-            <col />
-            <col style={{ width: 90 }} />
-            <col style={{ width: 130 }} />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>이름</th>
-              <th>크기</th>
-              <th>수정</th>
-            </tr>
-          </thead>
-          <tbody>
-            {!online && (
-              <tr>
-                <td colSpan={3} className="placeholder">
-                  오프라인 PC
-                </td>
-              </tr>
-            )}
-            {online && listing && listing.entries.length === 0 && (
-              <tr>
-                <td colSpan={3} className="placeholder">
-                  빈 폴더입니다 (우클릭으로 새 폴더·붙여넣기)
-                </td>
-              </tr>
-            )}
-            {listing?.entries.map((entry, index) => {
-              const isSel = selected.has(entry.fullPath)
-              const cut = clipboard?.mode === 'cut' && clipboard.agentId === agentId && clipboard.items.some((i) => i.path === entry.fullPath)
-              return (
-                <tr
-                  key={entry.fullPath}
-                  className={`${entry.isDirectory ? 'dir' : isVideoFile(entry.name) ? 'file video' : 'file'}${isSel ? ' selected' : ''}${cut ? ' cut' : ''}`}
-                  onClick={(e) => selectClick(e, entry, index)}
-                  onDoubleClick={() => openEntry(entry)}
-                  onContextMenu={(e) => openRowMenu(e, entry, index)}
-                >
-                  <td className="ellipsis">
-                    <span className="file-icon" aria-hidden="true">
-                      {entry.isDirectory ? '📁' : isVideoFile(entry.name) ? '🎬' : '📄'}
-                    </span>
-                    {entry.name}
-                  </td>
-                  <td>{entry.isDirectory ? '' : formatBytes(entry.size)}</td>
-                  <td>{entry.modifiedAt ? formatTime(entry.modifiedAt) : ''}</td>
+          onDragOver={(e) => {
+            if (e.dataTransfer.types.includes(PANE_MIME)) {
+              e.preventDefault()
+              setDragOver(true)
+            }
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            setDragOver(false)
+            const from = e.dataTransfer.getData(PANE_MIME)
+            if (from && from !== paneId) {
+              e.preventDefault()
+              onReorderDrop(from)
+            }
+          }}
+        >
+          {!online ? (
+            <div className="pane-empty placeholder">오프라인 PC</div>
+          ) : displayed.length === 0 ? (
+            <div className="pane-empty placeholder">
+              {search ? '검색 결과가 없습니다' : loading ? '불러오는 중…' : '빈 폴더입니다 (우클릭으로 새 폴더·붙여넣기)'}
+            </div>
+          ) : view === 'details' ? (
+            <table className="noselect">
+              <colgroup>
+                <col />
+                <col style={{ width: 132 }} />
+                <col style={{ width: 80 }} />
+                <col style={{ width: 62 }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th className="sortable" onClick={() => applySort('name')}>이름{sortKey === 'name' ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>
+                  <th className="sortable" onClick={() => applySort('modified')}>수정한 날짜{sortKey === 'modified' ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>
+                  <th className="sortable" onClick={() => applySort('type')}>유형{sortKey === 'type' ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>
+                  <th className="sortable" onClick={() => applySort('size')}>크기{sortKey === 'size' ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>
                 </tr>
-              )
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {displayed.map((entry, index) => {
+                  const isSel = selected.has(entry.fullPath)
+                  return (
+                    <tr
+                      key={entry.fullPath}
+                      className={rowClass(entry, isSel, isCut(entry))}
+                      onClick={(e) => selectClick(e, entry, index)}
+                      onDoubleClick={() => openEntry(entry)}
+                      onContextMenu={(e) => openRowMenu(e, entry, index)}
+                    >
+                      <td className="ellipsis">
+                        <Icon name={iconFor(entry)} className="file-icon" />
+                        {entry.name}
+                      </td>
+                      <td className="col-date">{entry.modifiedAt ? formatFileDate(entry.modifiedAt) : ''}</td>
+                      <td className="ellipsis">{fileTypeLabel(entry)}</td>
+                      <td className="col-size">{entry.isDirectory ? '' : formatBytes(entry.size)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          ) : (
+            <div className="icons-grid noselect">
+              {displayed.map((entry, index) => {
+                const isSel = selected.has(entry.fullPath)
+                return (
+                  <div
+                    key={entry.fullPath}
+                    className={`icon-tile ${rowClass(entry, isSel, isCut(entry))}`}
+                    title={entry.name}
+                    onClick={(e) => selectClick(e, entry, index)}
+                    onDoubleClick={() => openEntry(entry)}
+                    onContextMenu={(e) => openRowMenu(e, entry, index)}
+                  >
+                    <Icon name={iconFor(entry)} size={44} className="icon-tile-ico" />
+                    <span className="icon-tile-name ellipsis-2">{entry.name}</span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       </div>
+
+      {/* 상태 표시줄 */}
+      <div className="pane-status">
+        <span className="small muted">
+          {listing?.entries.length ?? 0}개 항목
+          {selected.size > 0 && ` · ${selected.size}개 선택함`}
+          {search && ` · 검색 "${search}" (${displayed.length})`}
+        </span>
+        <span className="pane-status-views">
+          <button type="button" className={view === 'details' ? 'active' : ''} title="자세히" onClick={() => setView('details')}><Icon name="view-details" size={15} /></button>
+          <button type="button" className={view === 'icons' ? 'active' : ''} title="큰 아이콘" onClick={() => setView('icons')}><Icon name="view-grid" size={15} /></button>
+        </span>
+      </div>
+
+      <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => e.target.files && void pushFiles(e.target.files)} />
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={buildMenu(menu.targets, menu.folder)} onClose={() => setMenu(null)} />}
 
