@@ -1218,6 +1218,12 @@ button.small-btn {
   color: var(--muted);
 }
 
+.tree-host {
+  flex: none;
+  font-size: 10px;
+  color: var(--muted);
+}
+
 .tree-open {
   display: none;
   width: 20px;
@@ -1479,6 +1485,83 @@ tr.cut td {
 .pane-path {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
+}
+
+/* 패널 본문: 왼쪽 사이드(즐겨찾기+드라이브) + 파일 목록 */
+.pane-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.pane-side {
+  flex: none;
+  width: 150px;
+  overflow: auto;
+  padding: 6px 4px;
+  border-right: 1px solid var(--border);
+}
+
+.pane-body .table-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.pane-side-section + .pane-side-section {
+  margin-top: 10px;
+}
+
+.pane-side-title {
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.fav-list,
+.drive-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fav-item {
+  display: flex;
+  align-items: center;
+}
+
+.fav-item .drive-name,
+.drive-name {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.fav-item .drive-name:hover,
+.drive-name:hover {
+  background: var(--hover);
+}
+
+.drive-node {
+  display: flex;
+  align-items: center;
+}
+
+.drive-node.current > .drive-name,
+.fav-item.current > .drive-name {
+  color: var(--accent);
+  font-weight: 600;
+  background: var(--selected);
+}
+
+.drive-hint {
+  padding: 3px 8px;
 }
 
 /* 하단 전송 바 */

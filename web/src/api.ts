@@ -192,6 +192,13 @@ export interface PcGroups {
   folders: PcGroupFolder[]
   /** agentId → folderId. 없는 PC는 미분류 */
   assignments: Record<string, string>
+  /** agentId → 별칭(표시 이름) */
+  aliases?: Record<string, string>
+}
+
+export interface PcFavorites {
+  /** agentId → 즐겨찾기 폴더 경로 목록 */
+  favorites: Record<string, string[]>
 }
 
 export interface InstallInfo {
@@ -267,6 +274,10 @@ export const api = {
   pcGroups: () => request<PcGroups>('/api/pc-groups'),
   savePcGroups: (groups: PcGroups) =>
     request<PcGroups>('/api/pc-groups', { method: 'PUT', body: JSON.stringify(groups) }),
+
+  pcFavorites: () => request<PcFavorites>('/api/pc-favorites'),
+  savePcFavorites: (favorites: PcFavorites) =>
+    request<PcFavorites>('/api/pc-favorites', { method: 'PUT', body: JSON.stringify(favorites) }),
 
   updateStatus: () => request<UpdateStatus>('/api/update'),
   checkUpdate: () => request<UpdateStatus>('/api/update/check', { method: 'POST' }),

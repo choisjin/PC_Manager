@@ -5,6 +5,7 @@ import { formatBytes, formatTime } from '../../format'
 import type { SubscribeTransfers, WatchRun } from '../../useDashboard'
 import { VideoViewer } from '../VideoViewer'
 import { ContextMenu, type MenuItem } from './ContextMenu'
+import { DriveTree } from './DriveTree'
 import { copyText, type FileClipboard, PANE_MIME } from './pcGroups'
 import { TerminalModal } from './TerminalModal'
 
@@ -24,11 +25,21 @@ interface Props {
   height?: number
   clipboard: FileClipboard | null
   setClipboard: (clipboard: FileClipboard | null) => void
+  favorites: string[]
+  onAddFavorite: (path: string) => void
+  onRemoveFavorite: (path: string) => void
   subscribeTransfers: SubscribeTransfers
   watchRun: WatchRun
   onClose: () => void
   onReorderDrop: (fromPaneId: string) => void
   onResize: (w: number, h: number) => void
+}
+
+const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase()
+
+const favName = (p: string) => {
+  const trimmed = p.replace(/[\\/]+$/, '')
+  return trimmed.split(/[\\/]/).pop() || p
 }
 
 const joinPath = (directory: string, name: string) =>
@@ -45,6 +56,9 @@ export function ExplorerPane({
   height,
   clipboard,
   setClipboard,
+  favorites,
+  onAddFavorite,
+  onRemoveFavorite,
   subscribeTransfers,
   watchRun,
   onClose,
@@ -267,6 +281,16 @@ export function ExplorerPane({
     }
     if (targets.length > 0) {
       items.push({ label: '경로 복사', onClick: () => void copyText(targets.map((t) => t.fullPath).join('\n')) })
+    }
+    // 즐겨찾기: 폴더 대상 또는 현재 폴더
+    const favPaths = targets.length ? targets.filter((t) => t.isDirectory).map((t) => t.fullPath) : path ? [path] : []
+    if (favPaths.length > 0) {
+      items.push({
+        label: `즐겨찾기에 추가${favPaths.length > 1 ? ` (${favPaths.length})` : ''}`,
+        onClick: () => favPaths.forEach(onAddFavorite),
+      })
+    }
+    if (targets.length > 0) {
       items.push({ separator: true })
       if (targets.length === 1) items.push({ label: '이름 바꾸기', onClick: () => void rename(targets[0]) })
       items.push({ label: `삭제${targets.length > 1 ? ` (${targets.length})` : ''}`, danger: true, onClick: () => void remove(targets) })
@@ -346,9 +370,30 @@ export function ExplorerPane({
 
       {error && <div className="output-error">{error}</div>}
 
-      <div
-        className={`table-wrap${dragOver ? ' drop-active' : ''}`}
-        onContextMenu={openEmptyMenu}
+      <div className="pane-body">
+        <div className="pane-side">
+          <div className="pane-side-section">
+            <div className="pane-side-title">즐겨찾기</div>
+            {favorites.length === 0 && <div className="drive-hint small muted">폴더 우클릭 → 즐겨찾기에 추가</div>}
+            <ul className="fav-list">
+              {favorites.map((fp) => (
+                <li key={fp} className={`fav-item${samePath(fp, path) ? ' current' : ''}`}>
+                  <button type="button" className="drive-name ellipsis" title={fp} onClick={() => load(fp)}>
+                    ⭐ {favName(fp)}
+                  </button>
+                  <button type="button" className="icon-mini" title="즐겨찾기 제거" onClick={() => onRemoveFavorite(fp)}>
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <DriveTree agentId={agentId} currentPath={path} onNavigate={load} />
+        </div>
+
+        <div
+          className={`table-wrap${dragOver ? ' drop-active' : ''}`}
+          onContextMenu={openEmptyMenu}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes(PANE_MIME)) {
             e.preventDefault()
@@ -417,6 +462,7 @@ export function ExplorerPane({
             })}
           </tbody>
         </table>
+        </div>
       </div>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={buildMenu(menu.targets, menu.folder)} onClose={() => setMenu(null)} />}

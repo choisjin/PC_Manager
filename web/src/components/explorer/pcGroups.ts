@@ -1,6 +1,19 @@
 import type { Agent, PcGroupFolder, PcGroups } from '../../api'
 
-export const EMPTY_GROUPS: PcGroups = { folders: [], assignments: {} }
+export const EMPTY_GROUPS: PcGroups = { folders: [], assignments: {}, aliases: {} }
+
+/** 표시 이름: 별칭이 있으면 별칭, 없으면 hostname */
+export function displayName(agent: Agent, groups: PcGroups): string {
+  return groups.aliases?.[agent.id]?.trim() || agent.machineName
+}
+
+export function setAlias(groups: PcGroups, agentId: string, alias: string): PcGroups {
+  const aliases = { ...(groups.aliases ?? {}) }
+  const trimmed = alias.trim()
+  if (trimmed) aliases[agentId] = trimmed
+  else delete aliases[agentId]
+  return { ...groups, aliases }
+}
 
 // 드래그앤드롭 식별용 MIME (dataTransfer)
 export const AGENT_MIME = 'application/x-pcm-agent'

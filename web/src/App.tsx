@@ -28,8 +28,19 @@ const TABS: { id: Tab; label: string }[] = [
 
 export default function App() {
   const dashboard = useDashboard()
-  const { agents, runs, connected, updateStatus, pcGroups, saveGroups, watchRun, upsertRuns, subscribeTransfers } =
-    dashboard
+  const {
+    agents,
+    runs,
+    connected,
+    updateStatus,
+    pcGroups,
+    saveGroups,
+    favorites,
+    setAgentFavorites,
+    watchRun,
+    upsertRuns,
+    subscribeTransfers,
+  } = dashboard
   const [tab, setTab] = useState<Tab>('commands')
   const [showUpdate, setShowUpdate] = useState(false)
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(() => new Set())
@@ -133,6 +144,8 @@ export default function App() {
             agents={agents}
             pcGroups={pcGroups}
             saveGroups={saveGroups}
+            favorites={favorites}
+            setAgentFavorites={setAgentFavorites}
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}
           />

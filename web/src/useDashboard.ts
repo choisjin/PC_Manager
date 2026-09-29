@@ -7,6 +7,7 @@ import {
   type JobState,
   type JobTarget,
   type OutputLine,
+  type PcFavorites,
   type PcGroups,
   type Run,
   type RunState,
@@ -89,6 +90,7 @@ export function useDashboard() {
   const [jobTargets, setJobTargets] = useState<Record<string, JobTarget[]>>({})
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [pcGroups, setPcGroups] = useState<PcGroups>(EMPTY_GROUPS)
+  const [favorites, setFavorites] = useState<PcFavorites>({ favorites: {} })
   const [connected, setConnected] = useState(false)
   const connectionRef = useRef<signalR.HubConnection | null>(null)
   const watchersRef = useRef(new Map<string, RunWatcher>())
@@ -138,6 +140,7 @@ export function useDashboard() {
     })
     connection.on('UpdateStatusChanged', (status: UpdateStatus) => setUpdateStatus(status))
     connection.on('PcGroupsChanged', (groups: PcGroups) => setPcGroups(groups))
+    connection.on('PcFavoritesChanged', (f: PcFavorites) => setFavorites(f))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
     const sync = async () => {
@@ -148,12 +151,14 @@ export function useDashboard() {
         api.updateStatus().catch(() => null),
         api.pcGroups().catch(() => null),
       ])
+      const favs = await api.pcFavorites().catch(() => null)
       if (disposed) return
       setAgents(agentList.sort(byMachineName))
       setRuns(runList)
       setJobs(jobList)
       if (update) setUpdateStatus(update)
       if (groups) setPcGroups(groups)
+      if (favs) setFavorites(favs)
       for (const jobRunId of loadedJobIds) {
         api
           .job(jobRunId)
@@ -247,6 +252,20 @@ export function useDashboard() {
     })
   }, [])
 
+  // 즐겨찾기 추가/삭제 (해당 PC 목록만 갱신 후 전체 저장)
+  const setAgentFavorites = useCallback((agentId: string, paths: string[]) => {
+    setFavorites((prev) => {
+      const next: PcFavorites = { favorites: { ...prev.favorites } }
+      if (paths.length > 0) next.favorites[agentId] = paths
+      else delete next.favorites[agentId]
+      api.savePcFavorites(next).then(setFavorites).catch((err) => {
+        console.error('즐겨찾기 저장 실패', err)
+        api.pcFavorites().then(setFavorites).catch(() => {})
+      })
+      return next
+    })
+  }, [])
+
   return {
     agents,
     runs,
@@ -255,6 +274,8 @@ export function useDashboard() {
     updateStatus,
     pcGroups,
     saveGroups,
+    favorites,
+    setAgentFavorites,
     connected,
     watchRun,
     upsertRuns,

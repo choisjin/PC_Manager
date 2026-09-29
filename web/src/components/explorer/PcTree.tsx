@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { Agent, PcGroups } from '../../api'
-import { addFolder, AGENT_MIME, assignAgent, buildTree, deleteFolder, type FolderNode, renameFolder } from './pcGroups'
+import { ContextMenu } from './ContextMenu'
+import { addFolder, AGENT_MIME, assignAgent, buildTree, deleteFolder, displayName, type FolderNode, renameFolder, setAlias } from './pcGroups'
 
 interface Props {
   agents: Agent[]
@@ -16,6 +17,7 @@ export function PcTree({ agents, groups, saveGroups, collapsed, onToggleCollapse
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null) // folderId 또는 'root'
+  const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null)
 
   const onlineCount = agents.filter((a) => a.online).length
 
@@ -61,25 +63,42 @@ export function PcTree({ agents, groups, saveGroups, collapsed, onToggleCollapse
     )
   }
 
-  const renderAgent = (agent: Agent) => (
-    <li
-      key={agent.id}
-      className={`tree-agent${agent.online ? '' : ' offline'}`}
-      draggable
-      title={`${agent.machineName} — 더블클릭 또는 드래그해서 열기`}
-      onDragStart={(e) => {
-        e.dataTransfer.setData(AGENT_MIME, agent.id)
-        e.dataTransfer.effectAllowed = 'copyMove'
-      }}
-      onDoubleClick={() => onOpenAgent(agent.id)}
-    >
-      <span className={`dot ${agent.online ? 'on' : 'off'}`} />
-      <span className="ellipsis">{agent.machineName}</span>
-      <button type="button" className="tree-open" title="열기" onClick={() => onOpenAgent(agent.id)}>
-        ＋
-      </button>
-    </li>
-  )
+  const openAgentMenu = (e: React.MouseEvent, agent: Agent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({ x: e.clientX, y: e.clientY, agent })
+  }
+
+  const editAlias = (agent: Agent) => {
+    const alias = window.prompt(`'${agent.machineName}'의 별칭`, groups.aliases?.[agent.id] ?? '')
+    if (alias === null) return
+    saveGroups(setAlias(groups, agent.id, alias))
+  }
+
+  const renderAgent = (agent: Agent) => {
+    const alias = groups.aliases?.[agent.id]?.trim()
+    return (
+      <li
+        key={agent.id}
+        className={`tree-agent${agent.online ? '' : ' offline'}`}
+        draggable
+        title={`${displayName(agent, groups)}${alias ? ` (${agent.machineName})` : ''} — 더블클릭·드래그해서 열기, 우클릭 메뉴`}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(AGENT_MIME, agent.id)
+          e.dataTransfer.effectAllowed = 'copyMove'
+        }}
+        onDoubleClick={() => onOpenAgent(agent.id)}
+        onContextMenu={(e) => openAgentMenu(e, agent)}
+      >
+        <span className={`dot ${agent.online ? 'on' : 'off'}`} />
+        <span className="ellipsis">{displayName(agent, groups)}</span>
+        {alias && <span className="tree-host mono">{agent.machineName}</span>}
+        <button type="button" className="tree-open" title="열기" onClick={() => onOpenAgent(agent.id)}>
+          ＋
+        </button>
+      </li>
+    )
+  }
 
   const renderFolder = (node: FolderNode, depth: number) => {
     const isOpen = expanded.has(node.folder.id)
@@ -180,6 +199,22 @@ export function PcTree({ agents, groups, saveGroups, collapsed, onToggleCollapse
       </ul>
 
       <p className="tree-hint small muted">PC를 오른쪽으로 드래그하면 창이 열립니다 · 폴더로 끌어 그룹 지정</p>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            { label: '열기', onClick: () => onOpenAgent(menu.agent.id) },
+            { separator: true },
+            { label: groups.aliases?.[menu.agent.id] ? '별칭 변경…' : '별칭 지정…', onClick: () => editAlias(menu.agent) },
+            ...(groups.aliases?.[menu.agent.id]
+              ? [{ label: '별칭 제거', onClick: () => saveGroups(setAlias(groups, menu.agent.id, '')) }]
+              : []),
+          ]}
+        />
+      )}
     </aside>
   )
 }

@@ -10,7 +10,7 @@ namespace PcManager.Server.Services;
 public class PcGroupStore(AppPaths paths)
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
-    private static readonly PcGroupsView Empty = new([], new Dictionary<string, string>());
+    private static readonly PcGroupsView Empty = new([], new Dictionary<string, string>(), new Dictionary<string, string>());
 
     private readonly Lock _lock = new();
     private readonly string _path = Path.Combine(paths.DataDirectory, "pc-groups.json");
@@ -65,6 +65,11 @@ public class PcGroupStore(AppPaths paths)
             .Where(kv => ids.Contains(kv.Value))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
 
-        return new PcGroupsView(folders, assignments);
+        // 별칭: 공백 제거, 길이 제한, 빈 값 버림
+        var aliases = (view.Aliases ?? new Dictionary<string, string>())
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+            .ToDictionary(kv => kv.Key, kv => kv.Value.Trim()[..Math.Min(kv.Value.Trim().Length, 60)]);
+
+        return new PcGroupsView(folders, assignments, aliases);
     }
 }

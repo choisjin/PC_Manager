@@ -1,15 +1,17 @@
 import { useMemo, useState } from 'react'
-import type { Agent, PcGroups } from '../api'
+import type { Agent, PcFavorites, PcGroups } from '../api'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
 import { PcTree } from './explorer/PcTree'
-import { AGENT_MIME, type FileClipboard, newId } from './explorer/pcGroups'
+import { AGENT_MIME, displayName, type FileClipboard, newId } from './explorer/pcGroups'
 import { TransfersBar } from './explorer/TransfersBar'
 
 interface Props {
   agents: Agent[]
   pcGroups: PcGroups
   saveGroups: (groups: PcGroups) => void
+  favorites: PcFavorites
+  setAgentFavorites: (agentId: string, paths: string[]) => void
   subscribeTransfers: SubscribeTransfers
   watchRun: WatchRun
 }
@@ -34,8 +36,15 @@ function saveLocal(key: string, value: unknown) {
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
+
+  const addFavorite = (agentId: string, path: string) => {
+    const current = favorites.favorites[agentId] ?? []
+    if (!current.some((p) => p.toLowerCase() === path.toLowerCase())) setAgentFavorites(agentId, [...current, path])
+  }
+  const removeFavorite = (agentId: string, path: string) =>
+    setAgentFavorites(agentId, (favorites.favorites[agentId] ?? []).filter((p) => p !== path))
   const [collapsed, setCollapsed] = useState(() => loadLocal(COLLAPSE_KEY, false))
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
@@ -138,12 +147,15 @@ export function FileExplorer({ agents, pcGroups, saveGroups, subscribeTransfers,
                 key={pane.paneId}
                 paneId={pane.paneId}
                 agentId={pane.agentId}
-                machineName={agent?.machineName ?? pane.agentId.slice(0, 8)}
+                machineName={agent ? displayName(agent, pcGroups) : pane.agentId.slice(0, 8)}
                 online={agent?.online ?? false}
                 width={pane.w}
                 height={pane.h}
                 clipboard={clipboard}
                 setClipboard={setClipboard}
+                favorites={favorites.favorites[pane.agentId] ?? []}
+                onAddFavorite={(p) => addFavorite(pane.agentId, p)}
+                onRemoveFavorite={(p) => removeFavorite(pane.agentId, p)}
                 subscribeTransfers={subscribeTransfers}
                 watchRun={watchRun}
                 onClose={() => closePane(pane.paneId)}
