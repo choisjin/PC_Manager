@@ -11,6 +11,15 @@ interface Props {
 
 const MAX = 40
 
+const kindLabel = (kind: Transfer['kind']) =>
+  kind === 'Fetch' ? '가져오기' : kind === 'Compress' ? '압축' : '올리기'
+
+/** 진행 중 상태 텍스트 (진행률이 있으면 표시) */
+const pendingText = (transfer: Transfer) => {
+  const verb = transfer.kind === 'Compress' ? '압축 중' : '전송 중'
+  return typeof transfer.percent === 'number' ? `${verb} ${transfer.percent}%` : `${verb}…`
+}
+
 function upsert(prev: Transfer[], transfer: Transfer) {
   const existing = prev.find((t) => t.id === transfer.id)
   if (existing && existing.state !== 'Pending' && transfer.state === 'Pending') return prev
@@ -73,13 +82,13 @@ export function TransfersBar({ agentById, subscribeTransfers }: Props) {
             return (
               <li key={transfer.id} className="transfer">
                 <StateBadge state={transfer.state} />
-                <span className="small">{transfer.kind === 'Fetch' ? '가져오기' : '올리기'}</span>
+                <span className="small">{kindLabel(transfer.kind)}</span>
                 <span className="small muted ellipsis">{machine}</span>
                 <span className="mono ellipsis" title={transfer.path ?? undefined}>
                   {transfer.path}
                 </span>
                 <span className={`small ellipsis ${transfer.state === 'Failed' ? 'error' : 'muted'}`} title={transfer.error ?? undefined}>
-                  {transfer.state === 'Succeeded' ? formatBytes(transfer.totalBytes) : transfer.state === 'Failed' ? transfer.error : '전송 중…'}
+                  {transfer.state === 'Succeeded' ? formatBytes(transfer.totalBytes) : transfer.state === 'Failed' ? transfer.error : pendingText(transfer)}
                 </span>
                 {artifact ? (
                   <a className="small" href={api.artifactUrl(artifact.id)} download>

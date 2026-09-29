@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO.Compression;
 using System.Net.Http.Headers;
 using Microsoft.Extensions.FileSystemGlobbing;
 using Microsoft.Extensions.Options;
@@ -161,6 +162,68 @@ public class FileTransferService(
         return dest;
     }
 
+    // --- PC 간 직접 전송(받는 쪽) 쓰기 세션 ---
+    // 서버가 보낸 PC의 조각을 서버 디스크를 거치지 않고 바로 이어붙인다.
+    private sealed class WriteSession
+    {
+        public required string TempPath { get; init; }
+        public required string FinalPath { get; init; }
+        public required FileStream Stream { get; init; }
+    }
+
+    private readonly ConcurrentDictionary<string, WriteSession> _writes = new();
+
+    /// <summary>받을 파일의 임시 파일을 열고 세션 ID를 돌려준다. 최종 경로는 이 시점에 정해진다(충돌 시 자동 번호).</summary>
+    public string BeginWrite(string destinationFolder, string fileName)
+    {
+        Directory.CreateDirectory(destinationFolder);
+        var finalPath = UniqueChildPath(destinationFolder, CleanName(fileName));
+        var tempPath = finalPath + ".pcm-recv";
+        var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+        var id = Guid.NewGuid().ToString("N");
+        _writes[id] = new WriteSession { TempPath = tempPath, FinalPath = finalPath, Stream = stream };
+        return id;
+    }
+
+    /// <summary>조각을 순서대로 이어붙인다(서버가 순차로 호출).</summary>
+    public async Task<int> WriteChunkAsync(string writeId, byte[] data)
+    {
+        if (!_writes.TryGetValue(writeId, out var session))
+            throw new InvalidOperationException("쓰기 세션이 없습니다.");
+        await session.Stream.WriteAsync(data);
+        return data.Length;
+    }
+
+    /// <summary>다 받은 뒤 임시 파일을 최종 경로로 확정한다.</summary>
+    public async Task<string> CommitWriteAsync(string writeId)
+    {
+        if (!_writes.TryRemove(writeId, out var session))
+            throw new InvalidOperationException("쓰기 세션이 없습니다.");
+        await session.Stream.FlushAsync();
+        await session.Stream.DisposeAsync();
+        File.Move(session.TempPath, session.FinalPath, overwrite: false);
+        return session.FinalPath;
+    }
+
+    /// <summary>실패·취소 시 임시 파일을 정리한다.</summary>
+    public async Task<bool> AbortWriteAsync(string writeId)
+    {
+        if (_writes.TryRemove(writeId, out var session))
+        {
+            await session.Stream.DisposeAsync();
+            try
+            {
+                if (File.Exists(session.TempPath))
+                    File.Delete(session.TempPath);
+            }
+            catch (IOException)
+            {
+                // 임시 파일 정리 실패는 무시
+            }
+        }
+        return true;
+    }
+
     private static string Require(string? value, string what) =>
         string.IsNullOrWhiteSpace(value) ? throw new ArgumentException($"{what}이(가) 필요합니다.") : value;
 
@@ -248,6 +311,9 @@ public class FileTransferService(
     public void StartDownload(DownloadFileRequest request) =>
         StartTransfer(request.TransferId, progress => DownloadAsync(request, progress));
 
+    public void StartCompress(CompressRequest request) =>
+        StartTransfer(request.TransferId, progress => CompressAsync(request, progress));
+
     /// <summary>TransferCompleted가 서버에 전달된 뒤 호출한다.</summary>
     public void MarkReported(string transferId) => _unreported.TryRemove(transferId, out _);
 
@@ -303,6 +369,111 @@ public class FileTransferService(
 
         progress.Bytes = await UploadAsync(request.TransferId, file.Name, file.FullName);
         progress.Files = 1;
+    }
+
+    /// <summary>선택 항목을 대상 폴더에 ZIP으로 압축한다. 진행 상황을 서버로 보고한다.</summary>
+    private async Task CompressAsync(CompressRequest request, TransferProgress progress)
+    {
+        if (request.Paths.Count == 0)
+            throw new ArgumentException("압축할 항목이 없습니다.");
+
+        Directory.CreateDirectory(request.DestinationFolder);
+        var finalPath = UniqueChildPath(request.DestinationFolder, EnsureZipName(request.ArchiveName));
+        var tempPath = finalPath + ".pcm-zip";
+
+        // 압축할 파일 목록과 zip 안에서의 경로를 모은다 (폴더는 하위까지)
+        var files = new List<(string Full, string Entry)>();
+        foreach (var raw in request.Paths)
+        {
+            var p = raw.TrimEnd('\\', '/');
+            if (Directory.Exists(p))
+            {
+                var baseName = Path.GetFileName(p);
+                foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
+                    files.Add((f, baseName + "/" + Path.GetRelativePath(p, f).Replace('\\', '/')));
+            }
+            else if (File.Exists(p))
+            {
+                files.Add((p, Path.GetFileName(p)));
+            }
+            else
+            {
+                throw new FileNotFoundException($"항목이 없습니다: {p}");
+            }
+        }
+
+        var totalBytes = files.Sum(f => SafeLength(f.Full));
+        long doneBytes = 0;
+        var lastPercent = -1;
+        var lastReport = DateTime.MinValue;
+
+        try
+        {
+            await using (var zipStream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            using (var zip = new ZipArchive(zipStream, ZipArchiveMode.Create))
+            {
+                var buffer = new byte[81920];
+                foreach (var (full, entryName) in files)
+                {
+                    var entry = zip.CreateEntry(entryName, CompressionLevel.Optimal);
+                    await using (var entryStream = entry.Open())
+                    // 테스트가 쓰고 있는 파일도 읽을 수 있게 공유 모드
+                    await using (var source = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, useAsync: true))
+                    {
+                        int read;
+                        while ((read = await source.ReadAsync(buffer)) > 0)
+                        {
+                            await entryStream.WriteAsync(buffer.AsMemory(0, read));
+                            doneBytes += read;
+                            var percent = totalBytes > 0 ? (int)(doneBytes * 100 / totalBytes) : 100;
+                            var now = DateTime.UtcNow;
+                            if (percent != lastPercent && (now - lastReport).TotalMilliseconds >= 250)
+                            {
+                                lastPercent = percent;
+                                lastReport = now;
+                                outbound.Enqueue(new TransferProgressReport(request.TransferId, progress.Files, doneBytes, percent));
+                            }
+                        }
+                    }
+                    progress.Files++;
+                }
+            }
+
+            File.Move(tempPath, finalPath, overwrite: false);
+            progress.Bytes = new FileInfo(finalPath).Length;
+            logger.LogInformation("압축 완료 {TransferId}: {File} ({Files}개, {Bytes} bytes)", request.TransferId, finalPath, progress.Files, progress.Bytes);
+        }
+        catch
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
+            catch (IOException)
+            {
+                // 임시 파일 정리 실패는 무시
+            }
+            throw;
+        }
+    }
+
+    private static string EnsureZipName(string name)
+    {
+        var clean = CleanName(name);
+        return clean.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? clean : clean + ".zip";
+    }
+
+    private static long SafeLength(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
     }
 
     private async Task DownloadAsync(DownloadFileRequest request, TransferProgress progress)

@@ -113,7 +113,8 @@ export function ExplorerPane({
   const loadDrives = useEffectEvent(() => load(''))
 
   const onTransferUpdated = useEffectEvent((transfer: Transfer) => {
-    if (transfer.agentId === agentId && transfer.kind === 'Push' && transfer.state === 'Succeeded' && path) load(path)
+    // 이 PC로의 올리기·압축이 끝나면 목록을 새로 고쳐 새 파일(zip 등)을 보여준다
+    if (transfer.agentId === agentId && (transfer.kind === 'Push' || transfer.kind === 'Compress') && transfer.state === 'Succeeded' && path) load(path)
   })
 
   useEffect(() => {
@@ -139,6 +140,13 @@ export function ExplorerPane({
     entries
       .filter((e) => !e.isDirectory)
       .forEach((e) => void api.fetchFile(agentId, e.fullPath).catch((err) => setError(toMessage(err))))
+  }
+
+  const compress = (targets: FileEntry[]) => {
+    if (!path || targets.length === 0) return
+    setError(null)
+    // 이름은 서버가 정한다(한 개면 "이름.zip", 여러 개면 "첫이름 외 N개.zip"). 진행 상황은 하단 전송 기록에 표시된다.
+    void api.compressFiles(agentId, targets.map((t) => t.fullPath), path).catch((err) => setError(toMessage(err)))
   }
 
   const pushFiles = async (files: FileList) => {
@@ -275,6 +283,9 @@ export function ExplorerPane({
     })
     if (files.length > 0) {
       items.push({ label: `가져오기${files.length > 1 ? ` (${files.length})` : ''}`, onClick: () => fetchFiles(files) })
+    }
+    if (targets.length > 0) {
+      items.push({ label: `압축 (ZIP)${targets.length > 1 ? ` (${targets.length})` : ''}`, disabled: !path, onClick: () => compress(targets) })
     }
     if (targets.length === 1 && isVideoFile(targets[0].name)) {
       items.push({ label: '재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })

@@ -109,6 +109,8 @@ public enum TransferKind
     Fetch,
     /// <summary>파일 탐색기에서 서버의 파일을 PC로 올리기</summary>
     Push,
+    /// <summary>PC 안에서 선택 항목을 ZIP으로 압축 (PC에서 직접 수행)</summary>
+    Compress,
 }
 
 /// <param name="SourceDirectory">null이면 ResultKey의 결과 폴더</param>
@@ -120,7 +122,15 @@ public record UploadFileRequest(string TransferId, string SourcePath);
 
 public record DownloadFileRequest(string TransferId, string DestinationPath);
 
+/// <param name="Paths">압축할 파일·폴더의 전체 경로 목록</param>
+/// <param name="DestinationFolder">.zip을 만들 폴더 (보통 원본과 같은 폴더)</param>
+/// <param name="ArchiveName">만들 zip 파일 이름 (충돌 시 자동 번호)</param>
+public record CompressRequest(string TransferId, IReadOnlyList<string> Paths, string DestinationFolder, string ArchiveName);
+
 public record TransferCompleted(string TransferId, bool Success, int FileCount, long TotalBytes, string? Error, DateTime FinishedAt);
+
+/// <summary>오래 걸리는 전송(압축 등)의 진행 상황 보고</summary>
+public record TransferProgressReport(string TransferId, int FileCount, long BytesDone, int Percent);
 
 public record FileEntry(string Name, string FullPath, bool IsDirectory, long Size, DateTime? ModifiedAt);
 
@@ -135,6 +145,7 @@ public interface IAgentClient
     Task CollectFiles(CollectFilesRequest request);
     Task UploadFile(UploadFileRequest request);
     Task DownloadFile(DownloadFileRequest request);
+    Task Compress(CompressRequest request);
 
     /// <param name="setupUrl">설치 파일 URL. null이면 에이전트가 자신의 서버 주소에서 받는다</param>
     Task UpdateAgent(string? setupUrl);
@@ -154,6 +165,18 @@ public static class AgentClientMethods
 
     /// <summary>FileOpRequest → FileOpResult. 같은 PC 안의 파일 조작(복사/이동/삭제/폴더 생성/이름 변경)</summary>
     public const string FileOp = "FileOp";
+
+    /// <summary>(string destFolder, string fileName) → string writeId. PC 간 직접 전송의 받는 쪽 쓰기 세션 시작</summary>
+    public const string BeginWrite = "BeginWrite";
+
+    /// <summary>(string writeId, byte[] data) → int. 이어받은 조각을 순서대로 기록</summary>
+    public const string WriteChunk = "WriteChunk";
+
+    /// <summary>string writeId → string finalPath. 임시 파일을 최종 경로로 확정</summary>
+    public const string CommitWrite = "CommitWrite";
+
+    /// <summary>string writeId → bool. 쓰기 세션 취소(임시 파일 삭제)</summary>
+    public const string AbortWrite = "AbortWrite";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<FileOpKind>))]
@@ -183,4 +206,5 @@ public static class AgentHubMethods
     public const string ReportOutput = "ReportOutput";
     public const string ReportCompleted = "ReportCompleted";
     public const string ReportTransferCompleted = "ReportTransferCompleted";
+    public const string ReportTransferProgress = "ReportTransferProgress";
 }

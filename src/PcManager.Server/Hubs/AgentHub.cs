@@ -58,6 +58,8 @@ public class AgentHub(
 
     public Task ReportTransferCompleted(TransferCompleted completed) => transfers.MarkCompletedAsync(GetAgentId(), completed);
 
+    public Task ReportTransferProgress(TransferProgressReport report) => transfers.MarkProgressAsync(GetAgentId(), report);
+
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         // 재접속으로 이미 새 연결이 등록된 경우에는 오프라인 처리하지 않는다

@@ -14,6 +14,13 @@ public static class FileEndpoints
 {
     private static readonly TimeSpan ListTimeout = TimeSpan.FromSeconds(15);
 
+    /// <summary>압축 파일 이름을 정한다: 한 개면 그 이름, 여러 개면 "첫이름 외 N개".</summary>
+    private static string DefaultArchiveName(IReadOnlyList<string> paths)
+    {
+        var first = Path.GetFileName(paths[0].TrimEnd('\\', '/'));
+        return paths.Count == 1 ? first + ".zip" : $"{first} 외 {paths.Count - 1}개.zip";
+    }
+
     public static void MapFileApi(this WebApplication app)
     {
         // 에이전트 전용: Program.cs 미들웨어가 /api/agent 경로의 토큰을 검사한다
@@ -100,7 +107,16 @@ public static class FileEndpoints
                 ? Results.BadRequest("가져올 파일 경로를 입력하세요.")
                 : Results.Ok(await transfers.FetchAsync(agentId, request.Path)));
 
-        // PC 간 붙여넣기 (원본 → 서버 → 대상). 단일 파일만.
+        // PC 안에서 선택 항목을 ZIP으로 압축 (PC에서 직접 수행, 진행 상황은 전송 기록에 표시)
+        api.MapPost("/agents/{agentId}/files/compress", async (string agentId, CompressFilesRequest request, TransferService transfers) =>
+        {
+            if (request.Paths is null or { Count: 0 } || string.IsNullOrWhiteSpace(request.DestinationFolder))
+                return Results.BadRequest("압축할 항목과 대상 폴더가 필요합니다.");
+            var name = string.IsNullOrWhiteSpace(request.ArchiveName) ? DefaultArchiveName(request.Paths) : request.ArchiveName!;
+            return Results.Ok(await transfers.CompressAsync(agentId, request.Paths, request.DestinationFolder!, name));
+        });
+
+        // PC 간 붙여넣기 (원본 → 서버 중계 → 대상, 디스크 미경유). 단일 파일만.
         api.MapPost("/files/cross-copy", async (CrossCopyRequest request, TransferService transfers, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(request.SourcePath) || string.IsNullOrWhiteSpace(request.DestFolder))

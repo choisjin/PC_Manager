@@ -53,7 +53,7 @@ export interface CreateRunsRequest {
 
 export type JobState = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Cancelled'
 export type JobStepKind = 'Command' | 'Collect'
-export type TransferKind = 'Collect' | 'Fetch' | 'Push'
+export type TransferKind = 'Collect' | 'Fetch' | 'Push' | 'Compress'
 export type TransferState = 'Pending' | 'Succeeded' | 'Failed'
 
 export interface JobStep {
@@ -119,6 +119,8 @@ export interface Transfer {
   error: string | null
   createdAt: string
   finishedAt: string | null
+  /** 진행률(0-100). 압축·PC 간 전송 중에만 채워진다 */
+  percent?: number | null
 }
 
 export interface Artifact {
@@ -310,7 +312,14 @@ export const api = {
       body: JSON.stringify({ op, path, target: target ?? null }),
     }),
 
-  /** PC 간 파일 붙여넣기 (원본 → 서버 → 대상, 단일 파일) */
+  /** PC 간 파일 붙여넣기 (원본 → 서버 중계 → 대상, 서버 디스크 미경유, 단일 파일) */
   crossCopy: (body: { sourceAgentId: string; sourcePath: string; destAgentId: string; destFolder: string; move: boolean }) =>
     request<FileOpResult>('/api/files/cross-copy', { method: 'POST', body: JSON.stringify(body) }),
+
+  /** PC 안에서 선택 항목을 ZIP으로 압축 (PC에서 직접 수행). 진행 상황은 전송 기록에 표시된다 */
+  compressFiles: (agentId: string, paths: string[], destinationFolder: string, archiveName?: string) =>
+    request<Transfer>(`/api/agents/${agentId}/files/compress`, {
+      method: 'POST',
+      body: JSON.stringify({ paths, destinationFolder, archiveName: archiveName ?? null }),
+    }),
 }

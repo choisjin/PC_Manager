@@ -123,6 +123,7 @@ public class AgentWorker(
         connection.On<CollectFilesRequest>(nameof(IAgentClient.CollectFiles), files.StartCollect);
         connection.On<UploadFileRequest>(nameof(IAgentClient.UploadFile), files.StartUpload);
         connection.On<DownloadFileRequest>(nameof(IAgentClient.DownloadFile), files.StartDownload);
+        connection.On<CompressRequest>(nameof(IAgentClient.Compress), files.StartCompress);
         // 응답을 기다리는 호출: 수신 루프를 막지 않도록 스레드 풀에서 처리
         connection.On<string?, DirectoryListing>(AgentClientMethods.ListDirectory,
             path => Task.Run(() => files.ListDirectory(path)));
@@ -132,6 +133,15 @@ public class AgentWorker(
             (path, offset, length) => Task.Run(() => files.ReadFileChunk(path, offset, length)));
         connection.On<FileOpRequest, FileOpResult>(AgentClientMethods.FileOp,
             request => Task.Run(() => files.PerformFileOp(request)));
+        // PC 간 직접 전송(받는 쪽) 쓰기 세션
+        connection.On<string, string, string>(AgentClientMethods.BeginWrite,
+            (folder, name) => Task.Run(() => files.BeginWrite(folder, name)));
+        connection.On<string, byte[], int>(AgentClientMethods.WriteChunk,
+            (writeId, data) => files.WriteChunkAsync(writeId, data));
+        connection.On<string, string>(AgentClientMethods.CommitWrite,
+            writeId => files.CommitWriteAsync(writeId));
+        connection.On<string, bool>(AgentClientMethods.AbortWrite,
+            writeId => files.AbortWriteAsync(writeId));
         connection.On<string?>(nameof(IAgentClient.UpdateAgent), updater.Start);
 
         connection.Reconnecting += error =>
@@ -215,6 +225,9 @@ public class AgentWorker(
                 case TransferCompleted transfer:
                     await SendAsync(AgentHubMethods.ReportTransferCompleted, transfer, ct);
                     files.MarkReported(transfer.TransferId);
+                    break;
+                case TransferProgressReport progress:
+                    await SendAsync(AgentHubMethods.ReportTransferProgress, progress, ct);
                     break;
                 case null when batch.Count > 0:
                     // 출력이 쏟아질 때 조금 모아서 보낸다

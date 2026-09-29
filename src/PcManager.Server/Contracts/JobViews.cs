@@ -5,7 +5,8 @@ namespace PcManager.Server.Contracts;
 
 public record TransferView(
     string Id, string AgentId, TransferKind Kind, string? JobRunId, int? StepIndex, string? Path,
-    TransferState State, int FileCount, long TotalBytes, string? Error, DateTime CreatedAt, DateTime? FinishedAt);
+    TransferState State, int FileCount, long TotalBytes, string? Error, DateTime CreatedAt, DateTime? FinishedAt,
+    int? Percent = null);
 
 public record ArtifactView(
     string Id, string TransferId, string AgentId, string? JobRunId, string RelativePath, long Size, DateTime CreatedAt,
@@ -31,6 +32,11 @@ public record CreateJobRequest(
 public record FetchFileRequest(string? Path);
 
 public record CrossCopyRequest(string SourceAgentId, string SourcePath, string DestAgentId, string DestFolder, bool Move);
+
+/// <param name="Paths">압축할 파일·폴더의 전체 경로</param>
+/// <param name="DestinationFolder">.zip을 만들 폴더</param>
+/// <param name="ArchiveName">만들 zip 이름. 비우면 서버가 기본 이름을 정한다</param>
+public record CompressFilesRequest(IReadOnlyList<string>? Paths, string? DestinationFolder, string? ArchiveName);
 
 public static class JobViewMappings
 {
