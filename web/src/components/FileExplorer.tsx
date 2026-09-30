@@ -207,21 +207,11 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         onOpenAgent={togglePane}
         selectedFolderId={selectedFolderId}
         onSelectFolder={setSelectedFolderId}
+        mode={mode}
+        onModeChange={switchMode}
       />
 
       <div className="explorer-main">
-        <div className="explorer-mode">
-          <span className="segmented" role="radiogroup" aria-label="모드">
-            <button type="button" role="radio" aria-checked={mode === 'browser'} className={mode === 'browser' ? 'active' : ''} onClick={() => switchMode('browser')}>
-              Browser
-            </button>
-            <button type="button" role="radio" aria-checked={mode === 'remote'} className={mode === 'remote' ? 'active' : ''} onClick={() => switchMode('remote')}>
-              Remote
-            </button>
-          </span>
-          {mode === 'remote' && <span className="small muted">왼쪽에서 폴더를 클릭하면 그 그룹의 PC만 표시됩니다</span>}
-        </div>
-
         {mode === 'remote' ? (
           <RemoteGrid
             agents={remoteTargets.agents}

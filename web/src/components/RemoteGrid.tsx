@@ -64,6 +64,7 @@ export function RemoteGrid({ agents, groupName, displayName, thumbnails, watchTh
       <div className="remote-grid-head">
         <span>
           <b>{groupName ?? '전체'}</b> <span className="muted small">· {agents.length}대 (온라인 {agents.filter((a) => a.online).length})</span>
+          {!groupName && <span className="muted small"> · 왼쪽에서 폴더를 클릭하면 그 그룹만 표시</span>}
         </span>
         {notice && <span className="remote-grid-notice small">{notice}</span>}
       </div>

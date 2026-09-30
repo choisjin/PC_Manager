@@ -27,9 +27,12 @@ interface Props {
   /** Remote 모드에서 그룹으로 쓸 폴더 (클릭으로 선택, 다시 클릭하면 해제) */
   selectedFolderId: string | null
   onSelectFolder: (folderId: string | null) => void
+  /** Browser(파일 탐색기) ↔ Remote(화면 미리보기) */
+  mode: 'browser' | 'remote'
+  onModeChange: (mode: 'browser' | 'remote') => void
 }
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange }: Props) {
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
@@ -228,18 +231,30 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
   return (
     <aside className="panel pc-tree">
       <div className="panel-head">
-        <button type="button" className="icon tree-collapse" title="접기" onClick={onToggleCollapse}>
-          ◂
-        </button>
-        <span className="head-actions">
+        <div className="tree-head-row">
+          <button type="button" className="icon tree-collapse" title="접기" onClick={onToggleCollapse}>
+            ◂
+          </button>
+          <span className="segmented" role="radiogroup" aria-label="모드">
+            <button type="button" role="radio" aria-checked={mode === 'browser'} className={mode === 'browser' ? 'active' : ''} onClick={() => onModeChange('browser')}>
+              Browser
+            </button>
+            <button type="button" role="radio" aria-checked={mode === 'remote'} className={mode === 'remote' ? 'active' : ''} onClick={() => onModeChange('remote')}>
+              Remote
+            </button>
+          </span>
+        </div>
+        <div className="tree-head-row">
           <span className="muted small">{onlineCount}/{agents.length}</span>
-          <button type="button" className="small-btn" title="폴더 추가" onClick={() => createFolder(null)}>
-            + 폴더
-          </button>
-          <button type="button" className="small-btn" title="공유 폴더 등록" onClick={() => setShowAddShare(true)}>
-            + 서버
-          </button>
-        </span>
+          <span className="head-actions">
+            <button type="button" className="small-btn" title="폴더 추가" onClick={() => createFolder(null)}>
+              + 폴더
+            </button>
+            <button type="button" className="small-btn" title="공유 폴더 등록" onClick={() => setShowAddShare(true)}>
+              + 서버
+            </button>
+          </span>
+        </div>
       </div>
 
       <ul className="tree-root">

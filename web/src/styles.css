@@ -20,7 +20,7 @@
   --term-sys: #86b3f7;
 
   font-family: 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.4;
   color: var(--text);
   background: var(--bg);
@@ -72,7 +72,7 @@ textarea {
 }
 
 .small {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .ellipsis {
@@ -82,7 +82,7 @@ textarea {
 }
 
 .placeholder {
-  padding: 24px 8px;
+  padding: 12px 4px;
   text-align: center;
   color: var(--muted);
 }
@@ -97,25 +97,25 @@ textarea {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: 6px;
+  padding: 5px 8px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 
 .topbar h1 {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .conn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 10px;
+  gap: 3px;
+  padding: 1px 5px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .conn::before {
@@ -141,8 +141,8 @@ textarea {
   min-height: 0;
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  gap: 12px;
-  padding: 12px;
+  gap: 6px;
+  padding: 6px;
 }
 
 .layout.full {
@@ -152,7 +152,7 @@ textarea {
 .workspace {
   display: grid;
   grid-template-rows: auto minmax(150px, 1fr) minmax(220px, 1.3fr);
-  gap: 12px;
+  gap: 6px;
   min-height: 0;
 }
 
@@ -170,15 +170,15 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-height: 42px;
-  padding: 6px 12px;
+  gap: 4px;
+  min-height: 30px;
+  padding: 3px 6px;
   border-bottom: 1px solid var(--border);
 }
 
 .panel-head h2 {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -193,7 +193,7 @@ input:not([type='checkbox']),
 select,
 textarea {
   width: 100%;
-  padding: 6px 8px;
+  padding: 3px 4px;
   background: var(--panel);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
@@ -213,7 +213,7 @@ input[type='checkbox'] {
 }
 
 button {
-  padding: 6px 12px;
+  padding: 3px 6px;
   white-space: nowrap;
   cursor: pointer;
   background: var(--panel);
@@ -247,7 +247,7 @@ button.danger {
 }
 
 button.link {
-  padding: 2px 6px;
+  padding: 1px 3px;
   color: var(--accent);
   background: none;
   border: 0;
@@ -256,8 +256,8 @@ button.link {
 .check {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: 3px;
+  font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
   cursor: pointer;
@@ -272,8 +272,8 @@ button.link {
 }
 
 .segmented button {
-  padding: 3px 12px;
-  font-size: 12px;
+  padding: 1px 6px;
+  font-size: 11px;
   border: 0;
   border-radius: 0;
 }
@@ -292,15 +292,15 @@ button.link {
 .agent-tools {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 5px;
+  padding: 4px 6px;
   border-bottom: 1px solid var(--border);
 }
 
 .agent-list {
   flex: 1;
   margin: 0;
-  padding: 4px;
+  padding: 2px;
   overflow: auto;
   list-style: none;
 }
@@ -308,8 +308,8 @@ button.link {
 .agent label {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 8px;
+  gap: 5px;
+  padding: 4px;
   border-radius: 6px;
   cursor: pointer;
 }
@@ -323,7 +323,7 @@ button.link {
 }
 
 .agent input {
-  margin-top: 3px;
+  margin-top: 1px;
 }
 
 .agent.offline .agent-name {
@@ -334,7 +334,7 @@ button.link {
   flex: none;
   width: 8px;
   height: 8px;
-  margin-top: 6px;
+  margin-top: 3px;
   border-radius: 50%;
 }
 
@@ -350,7 +350,7 @@ button.link {
 .agent-main {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 
@@ -359,20 +359,20 @@ button.link {
 }
 
 .agent-meta {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 
 .tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 2px;
+  margin-top: 1px;
 }
 
 .tag {
-  padding: 0 6px;
-  font-size: 11px;
+  padding: 0 3px;
+  font-size: 10px;
   color: var(--muted);
   background: var(--hover);
   border: 1px solid var(--border);
@@ -383,8 +383,8 @@ button.link {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px 6px 12px;
-  font-size: 12px;
+  padding: 3px 4px 3px 6px;
+  font-size: 11px;
   border-top: 1px solid var(--border);
 }
 
@@ -392,8 +392,8 @@ button.link {
 .command-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
+  gap: 5px;
+  padding: 6px;
 }
 
 .command textarea {
@@ -405,15 +405,15 @@ button.link {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 10px;
+  gap: 5px;
 }
 
 .form-row label {
   display: flex;
   flex: 1 1 220px;
   flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
+  gap: 2px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -428,7 +428,7 @@ button.link {
 .hint,
 .error {
   margin: 0;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .hint {
@@ -447,7 +447,7 @@ button.link {
 
 table {
   width: 100%;
-  font-size: 13px;
+  font-size: 12px;
   border-collapse: collapse;
   table-layout: fixed;
 }
@@ -455,10 +455,10 @@ table {
 th {
   position: sticky;
   top: 0;
-  padding: 6px 10px;
+  padding: 3px 5px;
   overflow: hidden;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   text-align: left;
   color: var(--muted);
@@ -467,7 +467,7 @@ th {
 }
 
 td {
-  padding: 6px 10px;
+  padding: 3px 5px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -502,8 +502,8 @@ tbody tr.selected {
 
 .badge {
   display: inline-block;
-  padding: 1px 8px;
-  font-size: 12px;
+  padding: 1px 4px;
+  font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
   color: var(--c);
@@ -536,12 +536,12 @@ tbody tr.selected {
 .output-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 5px;
   min-width: 0;
 }
 
 .output-title code {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 
@@ -549,13 +549,13 @@ tbody tr.selected {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 10px;
-  font-size: 12px;
+  gap: 5px;
+  font-size: 11px;
 }
 
 .output-error {
-  padding: 6px 12px;
-  font-size: 12px;
+  padding: 3px 6px;
+  font-size: 11px;
   color: var(--bad);
   background: color-mix(in srgb, var(--bad) 8%, transparent);
   border-bottom: 1px solid var(--border);
@@ -563,9 +563,9 @@ tbody tr.selected {
 
 .terminal {
   flex: 1;
-  padding: 8px 12px;
+  padding: 4px 6px;
   overflow: auto;
-  font-size: 12.5px;
+  font-size: 11.5px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -593,7 +593,7 @@ a:hover {
 }
 
 code {
-  padding: 0 4px;
+  padding: 0 2px;
   font-family: 'Cascadia Mono', 'D2Coding', Consolas, monospace;
   font-size: 0.92em;
   background: var(--hover);
@@ -615,18 +615,18 @@ code {
 
 button.icon {
   min-width: 30px;
-  padding: 3px 8px;
+  padding: 1px 4px;
 }
 
 .head-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 5px;
 }
 
 button.small-btn {
-  padding: 3px 10px;
-  font-size: 12px;
+  padding: 1px 5px;
+  font-size: 11px;
 }
 
 /* 대화 상자 */
@@ -648,36 +648,36 @@ button.small-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--border);
 }
 
 .dialog-head h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .dialog-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px;
+  gap: 6px;
+  padding: 8px;
 }
 
 .dialog-body label {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 12px;
+  gap: 2px;
+  font-size: 11px;
   color: var(--muted);
 }
 
 .install-steps {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   margin: 0;
-  padding-left: 20px;
+  padding-left: 10px;
 }
 
 .install-steps a[aria-disabled='true'] {
@@ -687,7 +687,7 @@ button.small-btn {
 
 .server-url-row {
   display: flex;
-  gap: 8px;
+  gap: 4px;
 }
 
 .server-url-row input {
@@ -698,13 +698,13 @@ button.small-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
 }
 
 .warning-box {
   margin: 0;
-  padding: 8px 10px;
-  font-size: 12px;
+  padding: 4px 5px;
+  font-size: 11px;
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 10%, transparent);
   border-radius: 6px;
@@ -716,33 +716,33 @@ button.small-btn {
 
 .split-size-row {
   display: flex;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 4px;
+  margin-top: 2px;
 }
 
 .split-size-row input {
   flex: 1;
   min-width: 0;
-  padding: 10px 12px;
-  font-size: 20px;
+  padding: 5px 6px;
+  font-size: 19px;
   font-weight: 600;
 }
 
 .split-size-row select {
   flex: none;
   width: 72px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 /* 탭 */
 .tabs {
   display: flex;
-  gap: 2px;
-  margin-left: 12px;
+  gap: 1px;
+  margin-left: 6px;
 }
 
 .tabs button {
-  padding: 5px 12px;
+  padding: 2px 6px;
   font-weight: 600;
   color: var(--muted);
   background: none;
@@ -758,13 +758,13 @@ button.small-btn {
 .topbar-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 5px;
   margin-left: auto;
 }
 
 .update-chip {
-  padding: 3px 10px;
-  font-size: 12px;
+  padding: 1px 5px;
+  font-size: 11px;
   color: var(--muted);
   border-radius: 999px;
 }
@@ -784,20 +784,20 @@ button.small-btn {
 .version-row {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
 }
 
 .version-value {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 16px;
+  gap: 4px;
+  font-size: 15px;
   font-weight: 600;
 }
 
 .version-arrow {
   color: var(--muted);
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .new-badge {
@@ -814,8 +814,8 @@ button.small-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 4px;
+  padding: 4px 6px;
   background: var(--hover);
   border-bottom: 1px solid var(--border);
 }
@@ -824,9 +824,9 @@ button.small-btn {
   margin: 0;
   max-height: 240px;
   overflow: auto;
-  padding: 12px;
+  padding: 6px;
   font-family: 'Cascadia Mono', 'D2Coding', Consolas, monospace;
-  font-size: 12px;
+  font-size: 11px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -834,21 +834,21 @@ button.small-btn {
 .update-actions {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 5px;
 }
 
 .update-action-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .update-action {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 6px;
+  padding: 5px 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
 }
@@ -861,19 +861,19 @@ button.small-btn {
 .jobs-layout {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
-  gap: 12px;
+  gap: 6px;
   min-height: 0;
 }
 
 .job-list .panel-head .primary {
-  padding: 3px 10px;
-  font-size: 12px;
+  padding: 1px 5px;
+  font-size: 11px;
 }
 
 .job-list ul {
   flex: 1;
   margin: 0;
-  padding: 4px;
+  padding: 2px;
   overflow: auto;
   list-style: none;
 }
@@ -881,9 +881,9 @@ button.small-btn {
 .job-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   width: 100%;
-  padding: 8px;
+  padding: 4px;
   text-align: left;
   background: none;
   border: 0;
@@ -897,7 +897,7 @@ button.small-btn {
 .job-item-top {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -912,30 +912,30 @@ button.small-btn {
 .job-form-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 12px;
+  gap: 6px;
+  padding: 6px;
 }
 
 .target-box {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   margin: 0;
-  padding: 8px 12px 10px;
+  padding: 4px 6px 5px;
   border: 1px solid var(--border);
   border-radius: 6px;
 }
 
 .target-box legend {
-  padding: 0 4px;
-  font-size: 12px;
+  padding: 0 2px;
+  font-size: 11px;
   color: var(--muted);
 }
 
 .target-modes {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 8px;
 }
 
 .check input[type='radio'] {
@@ -944,8 +944,8 @@ button.small-btn {
 }
 
 .tag-toggle {
-  padding: 1px 10px;
-  font-size: 12px;
+  padding: 1px 5px;
+  font-size: 11px;
   border-radius: 999px;
 }
 
@@ -959,7 +959,7 @@ button.small-btn {
 .steps {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 5px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -968,8 +968,8 @@ button.small-btn {
 .step {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 4px;
+  padding: 5px 6px;
   border: 1px solid var(--border);
   border-radius: 6px;
 }
@@ -977,7 +977,7 @@ button.small-btn {
 .step-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 
 .step-head select {
@@ -993,7 +993,7 @@ button.small-btn {
 .step-actions {
   display: flex;
   flex: none;
-  gap: 4px;
+  gap: 2px;
 }
 
 .step-no {
@@ -1002,7 +1002,7 @@ button.small-btn {
   place-items: center;
   width: 22px;
   height: 22px;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent);
   background: var(--selected);
@@ -1013,7 +1013,7 @@ button.small-btn {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
+  gap: 4px;
 }
 
 .step-body textarea,
@@ -1027,7 +1027,7 @@ button.small-btn {
 
 .step-add {
   display: flex;
-  gap: 8px;
+  gap: 4px;
 }
 
 .job-submit {
@@ -1035,13 +1035,13 @@ button.small-btn {
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
 }
 
 .job-detail {
   display: grid;
   grid-template-rows: minmax(140px, auto) auto minmax(260px, 1fr);
-  gap: 12px;
+  gap: 6px;
   min-height: 0;
 }
 
@@ -1050,13 +1050,13 @@ button.small-btn {
 }
 
 .job-summary h2 {
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .step-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -1065,8 +1065,8 @@ button.small-btn {
 .step-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 10px 3px 3px;
+  gap: 4px;
+  padding: 1px 5px 1px 1px;
   border-radius: 999px;
 }
 
@@ -1086,13 +1086,13 @@ button.small-btn {
 }
 
 .error-cell {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .job-bottom {
   display: grid;
   grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
-  gap: 12px;
+  gap: 6px;
   min-height: 0;
 }
 
@@ -1100,7 +1100,7 @@ button.small-btn {
 .transfer-list {
   flex: 1;
   margin: 0;
-  padding: 4px;
+  padding: 2px;
   overflow: auto;
   list-style: none;
 }
@@ -1108,8 +1108,8 @@ button.small-btn {
 .artifact {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
+  gap: 5px;
+  padding: 3px 4px;
   border-radius: 6px;
 }
 
@@ -1127,15 +1127,15 @@ button.small-btn {
 .artifact-actions {
   display: flex;
   flex: none;
-  gap: 10px;
-  font-size: 12px;
+  gap: 5px;
+  font-size: 11px;
 }
 
 /* 파일 탐색기 (트리 + 멀티패널) */
 .explorer-shell {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
-  gap: 12px;
+  gap: 6px;
   min-height: 0;
 }
 
@@ -1150,7 +1150,7 @@ button.small-btn {
 
 .pc-tree.collapsed {
   align-items: center;
-  padding-top: 8px;
+  padding-top: 4px;
 }
 
 .tree-collapse,
@@ -1167,15 +1167,15 @@ button.small-btn {
 
 .tree-root {
   flex: 1;
-  padding: 4px;
+  padding: 2px;
   overflow: auto;
 }
 
 .tree-folder {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
+  gap: 2px;
+  padding: 2px 3px;
   border-radius: 6px;
 }
 
@@ -1212,12 +1212,12 @@ button.small-btn {
 
 .tree-rename {
   flex: 1;
-  padding: 1px 4px;
+  padding: 1px 2px;
 }
 
 .tree-folder-actions {
   display: none;
-  gap: 2px;
+  gap: 1px;
 }
 
 .tree-folder:hover .tree-folder-actions {
@@ -1228,7 +1228,7 @@ button.small-btn {
   width: 20px;
   height: 20px;
   padding: 0;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1;
   color: var(--muted);
   background: none;
@@ -1241,14 +1241,14 @@ button.small-btn {
 }
 
 .tree-children {
-  padding-left: 22px;
+  padding-left: 11px;
 }
 
 .tree-agent {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
+  gap: 4px;
+  padding: 2px 3px;
   border-radius: 6px;
   cursor: grab;
 }
@@ -1272,7 +1272,7 @@ button.small-btn {
   width: 20px;
   height: 20px;
   padding: 0;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--accent);
   background: none;
   border: 0;
@@ -1284,22 +1284,22 @@ button.small-btn {
 }
 
 .tree-hint {
-  padding: 6px 10px;
+  padding: 3px 5px;
   border-top: 1px solid var(--border);
 }
 
 /* 작업 영역 */
 .explorer-main {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 5px;
   min-height: 0;
 }
 
 .explorer-mode {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
 }
 
 .tree-folder.selected {
@@ -1311,23 +1311,23 @@ button.small-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
 }
 
 .workspace-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
   min-width: 0;
 }
 
 .clip-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   max-width: 320px;
-  padding: 2px 6px 2px 10px;
-  font-size: 12px;
+  padding: 1px 3px 1px 5px;
+  font-size: 11px;
   color: var(--accent);
   background: var(--selected);
   border-radius: 999px;
@@ -1350,7 +1350,7 @@ tr.cut td {
   position: fixed;
   z-index: 1000;
   min-width: 168px;
-  padding: 4px;
+  padding: 2px;
   background: var(--panel);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -1360,8 +1360,8 @@ tr.cut td {
 .context-item {
   display: block;
   width: 100%;
-  padding: 6px 12px;
-  font-size: 13px;
+  padding: 3px 6px;
+  font-size: 12px;
   text-align: left;
   background: none;
   border: 0;
@@ -1384,7 +1384,7 @@ tr.cut td {
 
 .context-sep {
   height: 1px;
-  margin: 4px 6px;
+  margin: 2px 3px;
   background: var(--border);
 }
 
@@ -1429,8 +1429,8 @@ tr.cut td {
 .remote-keys {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 4px;
+  gap: 1px;
+  padding: 0 2px;
   border-right: 1px solid var(--border);
   border-left: 1px solid var(--border);
 }
@@ -1452,8 +1452,8 @@ tr.cut td {
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px;
+  gap: 1px;
+  padding: 2px;
   color: #fff;
   background: rgb(20 24 30 / 60%);
   border: 1px solid rgb(255 255 255 / 25%);
@@ -1483,8 +1483,8 @@ tr.cut td {
 .remote-pip-keys {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 0 4px;
+  gap: 1px;
+  padding: 0 2px;
   border-right: 1px solid rgb(255 255 255 / 25%);
   border-left: 1px solid rgb(255 255 255 / 25%);
 }
@@ -1496,8 +1496,8 @@ tr.cut td {
   left: 50%;
   z-index: 2;
   max-width: min(640px, calc(100% - 32px));
-  padding: 8px 14px;
-  font-size: 13px;
+  padding: 4px 7px;
+  font-size: 12px;
   color: #fff;
   background: rgb(0 0 0 / 70%);
   border-radius: 8px;
@@ -1507,14 +1507,14 @@ tr.cut td {
 
 .remote-head {
   flex: none;
-  gap: 12px;
-  padding: 8px 12px;
+  gap: 6px;
+  padding: 4px 6px;
 }
 
 .remote-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -1536,8 +1536,8 @@ tr.cut td {
 
 .remote-badge {
   flex: none;
-  padding: 1px 6px;
-  font-size: 11px;
+  padding: 1px 3px;
+  font-size: 10px;
   color: var(--warn);
   border: 1px solid currentColor;
   border-radius: 4px;
@@ -1547,14 +1547,14 @@ tr.cut td {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 
 .remote-toggle {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
+  gap: 2px;
+  font-size: 11px;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -1596,7 +1596,7 @@ tr.cut td {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 6px;
   color: #e2e6eb;
   background: rgb(0 0 0 / 55%);
   pointer-events: none;
@@ -1618,9 +1618,9 @@ tr.cut td {
   left: 50%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   width: min(480px, calc(100% - 24px));
-  padding: 12px;
+  padding: 6px;
   background: var(--panel);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -1635,7 +1635,7 @@ tr.cut td {
 .remote-text-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 4px;
 }
 
 /* 터미널 모달 */
@@ -1644,20 +1644,20 @@ tr.cut td {
 }
 
 .terminal-head {
-  gap: 10px;
+  gap: 5px;
 }
 
 .terminal-head-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
 }
 
 .terminal-body {
   height: 52vh;
   overflow: auto;
-  padding: 10px 12px;
-  font-size: 12.5px;
+  padding: 5px 6px;
+  font-size: 11.5px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1671,7 +1671,7 @@ tr.cut td {
 }
 
 .term-entry {
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 
 .term-command {
@@ -1686,8 +1686,8 @@ tr.cut td {
 .terminal-input {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  gap: 4px;
+  padding: 4px 6px;
   background: var(--term-bg);
   border-top: 1px solid #222;
   border-radius: 0 0 10px 10px;
@@ -1700,7 +1700,7 @@ tr.cut td {
 .terminal-input input {
   flex: 1;
   min-width: 0;
-  padding: 2px 0;
+  padding: 1px 0;
   color: var(--term-text);
   background: none;
   border: 0;
@@ -1714,13 +1714,13 @@ tr.cut td {
 .workspace-cols {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
 }
 
 .col-btn {
   width: 26px;
-  padding: 2px 0;
-  font-size: 12px;
+  padding: 1px 0;
+  font-size: 11px;
 }
 
 .col-btn.active {
@@ -1732,16 +1732,16 @@ tr.cut td {
 .workspace-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 5px;
   align-content: flex-start;
   overflow: auto;
-  padding: 2px;
+  padding: 1px;
   border-radius: 8px;
 }
 
 .workspace-empty {
   width: 100%;
-  padding: 48px 24px;
+  padding: 24px 12px;
   text-align: center;
   line-height: 1.8;
   color: var(--muted);
@@ -1767,13 +1767,13 @@ tr.cut td {
 }
 
 .pane-head {
-  gap: 6px;
+  gap: 3px;
 }
 
 .pane-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
   flex: 1;
   font-weight: 600;
@@ -1783,11 +1783,11 @@ tr.cut td {
 .pane-head-actions {
   display: flex;
   flex: none;
-  gap: 2px;
+  gap: 1px;
 }
 
 .pane-path {
-  padding: 6px 10px;
+  padding: 3px 5px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -1802,7 +1802,7 @@ tr.cut td {
   flex: none;
   width: 138px;
   overflow: auto;
-  padding: 6px 4px;
+  padding: 3px 2px;
   border-right: 1px solid var(--border);
 }
 
@@ -1812,12 +1812,12 @@ tr.cut td {
 }
 
 .pane-side-section + .pane-side-section {
-  margin-top: 10px;
+  margin-top: 5px;
 }
 
 .pane-side-title {
-  padding: 2px 6px;
-  font-size: 11px;
+  padding: 1px 3px;
+  font-size: 10px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -1838,8 +1838,8 @@ tr.cut td {
 .drive-name {
   flex: 1;
   min-width: 0;
-  padding: 3px 6px;
-  font-size: 12px;
+  padding: 1px 3px;
+  font-size: 11px;
   text-align: left;
   background: none;
   border: 0;
@@ -1865,7 +1865,7 @@ tr.cut td {
 }
 
 .drive-hint {
-  padding: 3px 8px;
+  padding: 1px 4px;
 }
 
 /* 하단 전송 바 */
@@ -1877,7 +1877,7 @@ tr.cut td {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 4px 6px;
   font-weight: 600;
   text-align: left;
   background: none;
@@ -1905,7 +1905,7 @@ tr.video {
 
 .row-actions {
   display: flex;
-  gap: 10px;
+  gap: 5px;
   justify-content: flex-end;
 }
 
@@ -1929,19 +1929,19 @@ tr.video {
 .video-fallback {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
   align-items: center;
-  padding: 40px 16px;
+  padding: 20px 8px;
   color: #fff;
   text-align: center;
 }
 
 .video-hint {
-  padding: 8px 16px;
+  padding: 4px 8px;
 }
 
 .file-icon {
-  margin-right: 8px;
+  margin-right: 4px;
   vertical-align: -3px;
 }
 
@@ -1960,7 +1960,7 @@ tr.video {
 .fav-btn {
   display: inline-flex !important;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
 }
 
 .fav-btn svg {
@@ -1993,9 +1993,9 @@ tr.video {
   display: grid;
   grid-template-columns: auto 56px minmax(80px, 120px) minmax(0, 1fr) minmax(0, 180px) 56px;
   align-items: center;
-  gap: 10px;
-  padding: 5px 8px;
-  font-size: 13px;
+  gap: 5px;
+  padding: 2px 4px;
+  font-size: 12px;
 }
 
 @media (max-width: 900px) {
@@ -2037,13 +2037,13 @@ tr.video {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding: 24px 16px;
+  padding: 12px 8px;
   background: var(--bg);
 }
 
 .gate-card {
   width: min(680px, 100%);
-  padding: 28px;
+  padding: 14px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -2052,30 +2052,30 @@ tr.video {
 
 .gate-title {
   margin: 0;
-  font-size: 22px;
+  font-size: 21px;
 }
 
 .gate-sub {
-  margin: 4px 0 20px;
+  margin: 2px 0 10px;
 }
 
 .gate-cols {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 8px;
 }
 
 .gate-col-title {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--muted);
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .gate-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2085,9 +2085,9 @@ tr.video {
 
 .gate-item {
   width: 100%;
-  padding: 10px 12px;
+  padding: 5px 6px;
   text-align: left;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -2106,22 +2106,22 @@ tr.video {
 }
 
 .gate-empty {
-  padding: 16px 8px;
+  padding: 8px 4px;
 }
 
 .gate-actions {
   display: flex;
   justify-content: space-between;
-  margin-top: 20px;
+  margin-top: 10px;
 }
 
 /* 헤더의 신원 칩 + 설정 톱니 */
 .identity-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  font-size: 13px;
+  gap: 2px;
+  padding: 2px 5px;
+  font-size: 12px;
   color: var(--text);
   background: var(--panel);
   border: 1px solid var(--border-strong);
@@ -2138,13 +2138,13 @@ tr.video {
 }
 
 .gear-btn {
-  font-size: 18px;
+  font-size: 17px;
 }
 
 /* PC 트리: 프로젝트 배지 · 사용 중 배지 · 프레즌스 팝오버 */
 .proj-badge {
   flex: none;
-  padding: 1px 6px;
+  padding: 1px 3px;
   font-size: 10px;
   color: var(--accent);
   background: var(--selected);
@@ -2163,8 +2163,8 @@ tr.video {
   z-index: 1200;
   min-width: 180px;
   max-width: 260px;
-  padding: 8px 10px;
-  font-size: 12px;
+  padding: 4px 5px;
+  font-size: 11px;
   background: var(--panel);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -2174,11 +2174,11 @@ tr.video {
 
 .presence-row {
   display: flex;
-  gap: 8px;
+  gap: 4px;
 }
 
 .presence-row + .presence-row {
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .presence-label {
@@ -2195,19 +2195,19 @@ tr.video {
 .settings-body {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  gap: 8px;
 }
 
 .settings-col {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
 }
 
 .settings-add {
   display: flex;
-  gap: 6px;
+  gap: 3px;
 }
 
 .settings-add input {
@@ -2218,7 +2218,7 @@ tr.video {
 .settings-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -2229,8 +2229,8 @@ tr.video {
 .settings-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
+  gap: 2px;
+  padding: 2px 3px;
   border-radius: 6px;
 }
 
@@ -2257,7 +2257,7 @@ tr.video {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   cursor: pointer;
 }
 
@@ -2283,9 +2283,9 @@ tr.drop-into > td,
 .pane-notice {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
-  font-size: 12px;
+  gap: 4px;
+  padding: 2px 5px;
+  font-size: 11px;
   color: var(--text);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-bottom: 1px solid var(--border);
@@ -2300,15 +2300,15 @@ tr.drop-into > td,
 .creds-toggle {
   flex-direction: row !important;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   color: var(--text) !important;
 }
 
 .creds-fields {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 5px;
+  padding: 4px 5px;
   background: var(--bg);
   border-radius: 8px;
 }
@@ -2320,7 +2320,7 @@ tr.drop-into > td,
 }
 
 .transfer-list.page {
-  padding: 6px;
+  padding: 3px;
 }
 
 .transfer.page-row {
@@ -2339,9 +2339,9 @@ tr.drop-into > td,
   justify-content: center;
   min-width: 16px;
   height: 16px;
-  margin-left: 6px;
-  padding: 0 4px;
-  font-size: 11px;
+  margin-left: 3px;
+  padding: 0 2px;
+  font-size: 10px;
   color: #fff;
   background: var(--accent);
   border-radius: 999px;
@@ -2367,7 +2367,7 @@ tr.drop-into > td,
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px 6px 10px;
+  padding: 3px 4px 3px 5px;
   background: var(--hover);
   border-bottom: 1px solid var(--border);
   cursor: move;
@@ -2381,14 +2381,14 @@ tr.drop-into > td,
 .pip-title {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 3px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .pip-grip {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .pip-count {
@@ -2397,8 +2397,8 @@ tr.drop-into > td,
   justify-content: center;
   min-width: 16px;
   height: 16px;
-  padding: 0 4px;
-  font-size: 11px;
+  padding: 0 2px;
+  font-size: 10px;
   color: #fff;
   background: var(--accent);
   border-radius: 999px;
@@ -2423,28 +2423,28 @@ tr.drop-into > td,
 .pip-body {
   max-height: 300px;
   overflow: auto;
-  padding: 8px;
+  padding: 4px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
 .pip-empty {
   text-align: center;
-  padding: 8px;
+  padding: 4px;
 }
 
 .pip-item {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .pip-item-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px;
 }
 
 .pip-flow {
@@ -2488,20 +2488,20 @@ tr.drop-into > td,
 
 .pip-recent {
   border-top: 1px solid var(--border);
-  padding-top: 6px;
+  padding-top: 3px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
 }
 
 .pip-recent-title {
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 
 .pip-note {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
 }
 
 .pip-note.error {
@@ -2534,7 +2534,7 @@ tr.drop-into > td,
   align-items: center;
   justify-content: space-between;
   flex: none;
-  padding: 3px 12px;
+  padding: 1px 6px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -2542,24 +2542,24 @@ tr.drop-into > td,
 
 /* PC 목록 컴팩트 (밀도 높임) */
 .tree-root {
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .pc-tree .tree-agent,
 .pc-tree .tree-folder {
-  padding-top: 2px;
-  padding-bottom: 2px;
+  padding-top: 1px;
+  padding-bottom: 1px;
 }
 
 .pc-tree .tree-children {
-  padding-left: 16px;
+  padding-left: 8px;
 }
 
 /* 왼쪽 경로 패널 폭 조절 손잡이 */
 .pane-side-resizer {
   flex: none;
   width: 5px;
-  margin: 0 -2px;
+  margin: 0 -1px;
   cursor: col-resize;
   background: transparent;
   z-index: 1;
@@ -2574,7 +2574,7 @@ tr.drop-into > td,
   flex: none;
   width: 12px;
   text-align: center;
-  font-size: 11px;
+  font-size: 10px;
   color: var(--muted);
   cursor: grab;
   opacity: 0;
@@ -2592,23 +2592,23 @@ tr.drop-into > td,
 .share-section {
   flex: none;
   border-top: 1px solid var(--border);
-  padding: 4px 4px 8px;
+  padding: 2px 2px 4px;
 }
 
 .share-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 6px;
+  padding: 1px 3px;
 }
 
 .share-list {
   flex: none;
-  padding: 2px 0;
+  padding: 1px 0;
 }
 
 .share-item {
-  gap: 6px;
+  gap: 3px;
   cursor: default;
 }
 
@@ -2621,8 +2621,8 @@ tr.drop-into > td,
 .win-toolbar {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 3px;
+  padding: 4px 5px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -2635,12 +2635,12 @@ tr.drop-into > td,
 .win-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
 }
 
 .win-nav-btns {
   display: flex;
-  gap: 2px;
+  gap: 1px;
   flex: none;
 }
 
@@ -2648,7 +2648,7 @@ tr.drop-into > td,
   width: 30px;
   height: 30px;
   padding: 0;
-  font-size: 15px;
+  font-size: 14px;
   color: var(--text);
   background: none;
   border: 1px solid transparent;
@@ -2670,11 +2670,11 @@ tr.drop-into > td,
 .win-crumbs {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   flex: 1;
   min-width: 0;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 4px;
   overflow: hidden;
   background: var(--bg);
   border: 1px solid var(--border);
@@ -2684,7 +2684,7 @@ tr.drop-into > td,
 
 .win-crumb-pc {
   flex: none;
-  margin-right: 4px;
+  margin-right: 2px;
 }
 
 .win-crumb-seg {
@@ -2700,7 +2700,7 @@ tr.drop-into > td,
 
 .win-crumb {
   max-width: 180px;
-  padding: 3px 6px;
+  padding: 1px 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2729,11 +2729,11 @@ tr.drop-into > td,
 .win-search {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   flex: none;
   width: 210px;
   height: 32px;
-  padding: 0 10px;
+  padding: 0 5px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -2760,10 +2760,10 @@ tr.drop-into > td,
 .win-cmd {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 2px;
   height: 30px;
-  padding: 0 10px;
-  font-size: 13px;
+  padding: 0 5px;
+  font-size: 12px;
   color: var(--text);
   background: none;
   border: 1px solid transparent;
@@ -2775,7 +2775,7 @@ tr.drop-into > td,
   padding: 0;
   width: 30px;
   justify-content: center;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .win-cmd:hover:not(:disabled) {
@@ -2788,14 +2788,14 @@ tr.drop-into > td,
 }
 
 .win-cmd-ico {
-  font-size: 15px;
+  font-size: 14px;
   color: var(--accent);
 }
 
 .win-sep {
   width: 1px;
   height: 20px;
-  margin: 0 4px;
+  margin: 0 2px;
   background: var(--border);
 }
 
@@ -2812,9 +2812,9 @@ tr.drop-into > td,
 .pane-tabs {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 1px;
   flex: none;
-  padding: 5px 6px;
+  padding: 2px 3px;
   border-bottom: 1px solid var(--border);
   overflow: hidden;
 }
@@ -2822,11 +2822,11 @@ tr.drop-into > td,
 .pane-tab {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 2px;
   max-width: 160px;
   min-width: 0;
-  padding: 4px 8px;
-  font-size: 12px;
+  padding: 2px 4px;
+  font-size: 11px;
   border-radius: 6px 6px 0 0;
   cursor: pointer;
 }
@@ -2869,7 +2869,7 @@ tr.drop-into > td,
   width: 24px;
   height: 24px;
   padding: 0;
-  font-size: 15px;
+  font-size: 14px;
   color: var(--muted);
   background: none;
   border: 0;
@@ -2889,11 +2889,11 @@ tr.drop-into > td,
 .pane-id {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   flex: none;
   max-width: 160px;
   min-width: 0;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
   cursor: grab;
 }
@@ -2903,7 +2903,7 @@ tr.drop-into > td,
 }
 
 .pane-empty {
-  padding: 24px 12px;
+  padding: 12px 6px;
   text-align: center;
 }
 
@@ -2913,20 +2913,20 @@ tr.drop-into > td,
   align-items: center;
   justify-content: space-between;
   flex: none;
-  padding: 3px 10px;
+  padding: 1px 5px;
   border-top: 1px solid var(--border);
 }
 
 .pane-status-views {
   display: flex;
-  gap: 2px;
+  gap: 1px;
 }
 
 .pane-status-views button {
   width: 24px;
   height: 22px;
   padding: 0;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted);
   background: none;
   border: 1px solid transparent;
@@ -2963,8 +2963,8 @@ th.sortable:hover {
 .icons-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  padding: 8px;
+  gap: 2px;
+  padding: 4px;
   align-content: flex-start;
 }
 
@@ -2972,9 +2972,9 @@ th.sortable:hover {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   width: 92px;
-  padding: 8px 4px;
+  padding: 4px 2px;
   border-radius: 6px;
   cursor: pointer;
 }
@@ -2992,12 +2992,12 @@ th.sortable:hover {
 }
 
 .icon-tile-ico {
-  font-size: 34px;
+  font-size: 33px;
   line-height: 1;
 }
 
 .icon-tile-name {
-  font-size: 12px;
+  font-size: 11px;
   text-align: center;
   word-break: break-all;
 }
@@ -3012,8 +3012,8 @@ th.sortable:hover {
 /* PC 상태 배지 (수동 설정) / 원격조작 중 */
 .status-badge {
   flex: none;
-  padding: 0 6px;
-  font-size: 11px;
+  padding: 0 3px;
+  font-size: 10px;
   line-height: 16px;
   border-radius: 8px;
   color: #fff;
@@ -3033,8 +3033,8 @@ th.sortable:hover {
 
 .remote-badge-tree {
   flex: none;
-  padding: 0 6px;
-  font-size: 11px;
+  padding: 0 3px;
+  font-size: 10px;
   line-height: 16px;
   color: var(--accent);
   border: 1px solid var(--accent);
@@ -3044,12 +3044,12 @@ th.sortable:hover {
 /* PiP 탭 (파일 전송 / 채팅) */
 .pip-tabs {
   display: inline-flex;
-  gap: 2px;
+  gap: 1px;
 }
 
 .pip-tabs button {
-  padding: 2px 8px;
-  font-size: 12px;
+  padding: 1px 4px;
+  font-size: 11px;
   color: var(--muted);
   background: transparent;
   border: 0;
@@ -3076,10 +3076,10 @@ th.sortable:hover {
 .pip-chat-list {
   flex: 1;
   overflow: auto;
-  padding: 8px 10px;
+  padding: 4px 5px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 3px;
 }
 
 .chat-msg {
@@ -3094,8 +3094,8 @@ th.sortable:hover {
 
 .chat-text {
   display: inline-block;
-  padding: 5px 9px;
-  font-size: 13px;
+  padding: 2px 4px;
+  font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   text-align: left;
@@ -3110,8 +3110,8 @@ th.sortable:hover {
 
 .pip-chat-input {
   display: flex;
-  gap: 6px;
-  padding: 8px;
+  gap: 3px;
+  padding: 4px;
   border-top: 1px solid var(--border);
 }
 
@@ -3124,10 +3124,10 @@ th.sortable:hover {
 .remote-grid-wrap {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 5px;
   min-height: 0;
   overflow: auto;
-  padding: 12px;
+  padding: 6px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -3137,7 +3137,7 @@ th.sortable:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 6px;
 }
 
 .remote-grid-notice {
@@ -3145,14 +3145,14 @@ th.sortable:hover {
 }
 
 .remote-grid-empty {
-  padding: 24px;
+  padding: 12px;
   text-align: center;
 }
 
 .remote-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  gap: 6px;
 }
 
 .remote-card {
@@ -3203,8 +3203,8 @@ th.sortable:hover {
 .remote-card-overlay {
   position: absolute;
   inset: auto 0 0 0;
-  padding: 4px 8px;
-  font-size: 12px;
+  padding: 2px 4px;
+  font-size: 11px;
   font-weight: 600;
   color: #fff;
   text-align: center;
@@ -3216,17 +3216,36 @@ th.sortable:hover {
 }
 
 .remote-card-body {
-  padding: 8px 10px;
+  padding: 4px 5px;
 }
 
 .remote-card-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
   min-width: 0;
   font-weight: 600;
 }
 
 .remote-card-sub {
-  margin-top: 2px;
+  margin-top: 1px;
+}
+
+/* PC 트리 헤더 두 줄: [접기][Browser|Remote] / [3/3][+ 폴더][+ 서버] */
+.pc-tree .panel-head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.tree-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.tree-head-row .segmented button {
+  padding: 2px 8px;
+  font-size: 11px;
 }
