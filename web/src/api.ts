@@ -234,6 +234,42 @@ export interface Org {
   projectUsers: Record<string, string[]>
   /** agentId → projectId (없으면 미배정) */
   agentProjects: Record<string, string>
+  /** PC 목록 폴더 id → projectId. 배정된 폴더는 그 프로젝트 사용자에게만 보인다 */
+  folderProjects?: Record<string, string>
+}
+
+/** 사용자가 수동으로 지정하는 PC 상태 */
+export type PcStatusValue = 'available' | 'testing' | 'forbidden' | 'maintenance'
+
+export const PC_STATUS_LABEL: Record<PcStatusValue, string> = {
+  available: '사용 가능',
+  testing: '테스트 중',
+  forbidden: '사용 금지',
+  maintenance: '점검 중',
+}
+
+export interface PcStatus {
+  agentId: string
+  status: PcStatusValue
+  note: string | null
+  setByUserId: string | null
+  setAt: string
+}
+
+export interface PcStatuses {
+  statuses: Record<string, PcStatus>
+}
+
+export interface RemoteUsage {
+  /** agentId → 원격조작 중인 사용자 */
+  inUseBy: Record<string, { userId: string; since: string }>
+}
+
+export interface ChatMessage {
+  id: number
+  userId: string
+  text: string
+  at: string
 }
 
 export interface InstallInfo {
@@ -354,6 +390,14 @@ export const api = {
   deleteUser: (id: string) => request<Org>(`/api/users/${id}`, { method: 'DELETE' }),
   setAgentProject: (agentId: string, projectId: string | null) =>
     request<Org>(`/api/agents/${agentId}/project`, { method: 'PUT', body: JSON.stringify({ projectId }) }),
+  setFolderProject: (folderId: string, projectId: string | null) =>
+    request<Org>(`/api/folders/${folderId}/project`, { method: 'PUT', body: JSON.stringify({ projectId }) }),
+
+  pcStatuses: () => request<PcStatuses>('/api/pc-status'),
+  setPcStatus: (agentId: string, status: PcStatusValue, note: string | null) =>
+    request<PcStatuses>(`/api/agents/${agentId}/status`, { method: 'PUT', body: JSON.stringify({ status, note }) }),
+  remoteUsage: () => request<RemoteUsage>('/api/remote-usage'),
+  chat: (take = 100) => request<ChatMessage[]>(`/api/chat?take=${take}`),
 
   updateStatus: () => request<UpdateStatus>('/api/update'),
   checkUpdate: () => request<UpdateStatus>('/api/update/check', { method: 'POST' }),
@@ -370,9 +414,9 @@ export const api = {
   mediaUrl: (agentId: string, path: string) =>
     `/api/agents/${agentId}/media?${query({ path })}`,
 
-  /** 원격조작 화면/입력 WebSocket 주소 */
-  remoteUrl: (agentId: string) =>
-    `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/agents/${agentId}/remote`,
+  /** 원격조작 화면/입력 WebSocket 주소 (사용자 id는 '사용 중' 표시·차단에 쓴다) */
+  remoteUrl: (agentId: string, userId: string | null) =>
+    `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/agents/${agentId}/remote${userId ? `?user=${encodeURIComponent(userId)}` : ''}`,
   /** Ctrl+Alt+Del 보내기 (에이전트 서비스가 SAS 전송) */
   sendCtrlAltDel: (agentId: string) => request<void>(`/api/agents/${agentId}/remote/cad`, { method: 'POST' }),
 

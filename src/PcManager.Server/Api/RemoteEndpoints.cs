@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using Microsoft.AspNetCore.SignalR;
+using PcManager.Server.Contracts;
 using PcManager.Server.Hubs;
 using PcManager.Server.Services;
 using PcManager.Shared;
@@ -28,7 +29,8 @@ public static class RemoteEndpoints
     }
 
     private static async Task HandleViewerAsync(
-        string agentId, HttpContext context, AgentRegistry registry, IHubContext<AgentHub> agentHub, ILoggerFactory loggers)
+        string agentId, HttpContext context, AgentRegistry registry, IHubContext<AgentHub> agentHub, ILoggerFactory loggers,
+        PcStatusStore statuses, RemoteUsageRegistry usage, OrgStore org, IHubContext<DashboardHub, IDashboardClient> dashboard)
     {
         if (!context.WebSockets.IsWebSocketRequest)
         {
@@ -45,6 +47,25 @@ public static class RemoteEndpoints
             await CloseAsync(viewer, WebSocketCloseStatus.EndpointUnavailable, "PC가 오프라인입니다.");
             return;
         }
+
+        // 브라우저 WebSocket은 헤더를 못 보내므로 사용자 id는 쿼리로 받는다
+        var userId = context.Request.Query["user"].ToString();
+        if (string.IsNullOrWhiteSpace(userId))
+            userId = "anonymous";
+
+        // 수동 상태가 '사용 금지'면 차단, 다른 사용자가 원격조작 중이면 차단
+        if (statuses.Get(agentId) is { Status: PcStatusValues.Forbidden } forbidden)
+        {
+            await CloseAsync(viewer, WebSocketCloseStatus.PolicyViolation, $"사용 금지 상태입니다.{(forbidden.Note is null ? "" : $" ({forbidden.Note})")}");
+            return;
+        }
+        if (usage.TryAcquire(agentId, userId) is { } otherUser)
+        {
+            var name = org.Load().Users.FirstOrDefault(u => u.Id == otherUser)?.Name ?? "다른 사용자";
+            await CloseAsync(viewer, WebSocketCloseStatus.PolicyViolation, $"{name}님이 원격조작 중입니다.");
+            return;
+        }
+        await dashboard.Clients.All.RemoteUsageChanged(usage.Snapshot());
 
         var sessionId = Guid.NewGuid().ToString("N");
         var pending = new PendingSession();
@@ -109,6 +130,8 @@ public static class RemoteEndpoints
         {
             Pending.TryRemove(sessionId, out _);
             pending.Done.TrySetResult();
+            usage.Release(agentId, userId);
+            await dashboard.Clients.All.RemoteUsageChanged(usage.Snapshot());
         }
     }
 

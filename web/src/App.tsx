@@ -48,6 +48,11 @@ export default function App() {
     orgActions,
     presence,
     announcePresence,
+    pcStatuses,
+    setPcStatus,
+    remoteUsage,
+    chat,
+    sendChat,
     watchRun,
     subscribeTransfers,
   } = dashboard
@@ -107,13 +112,13 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>PC Manager</h1>
+        <h1>Don't Move</h1>
         <nav className="tabs" role="tablist">
           <button type="button" role="tab" aria-selected={page === 'files'} className={page === 'files' ? 'active' : ''} onClick={() => setPage('files')}>
-            파일 탐색기
+            PC Manager
           </button>
           <button type="button" role="tab" aria-selected={page === 'transfers'} className={page === 'transfers' ? 'active' : ''} onClick={() => setPage('transfers')}>
-            전송 기록
+            History
             {transfers.some((t) => t.state === 'Pending') && <span className="tab-badge">{transfers.filter((t) => t.state === 'Pending').length}</span>}
           </button>
         </nav>
@@ -160,6 +165,10 @@ export default function App() {
             presence={presence}
             filterProjectId={identity.projectId}
             selfUserId={identity.userId}
+            pcStatuses={pcStatuses}
+            setPcStatus={setPcStatus}
+            remoteUsage={remoteUsage}
+            setFolderProject={orgActions.setFolderProject}
             announcePresence={announcePresence}
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}
@@ -170,7 +179,7 @@ export default function App() {
       </main>
 
       {/* 어디서든 보이는 전송 진행률·알림 위젯 */}
-      <TransfersPip transfers={transfers} machineName={machineName} userName={userName} />
+      <TransfersPip transfers={transfers} machineName={machineName} userName={userName} chat={chat} selfUserId={identity.userId} onSendChat={sendChat} />
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Agent, Org, PcFavorites, PcGroups, SharedFolder } from '../api'
+import type { Agent, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder } from '../api'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
 import { ExplorerToolbar } from './explorer/ExplorerToolbar'
@@ -20,6 +20,10 @@ interface Props {
   org: Org
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
   presence: Record<string, string[]>
+  pcStatuses: Record<string, PcStatus>
+  setPcStatus: (agentId: string, status: PcStatusValue, note: string | null) => Promise<void>
+  remoteUsage: RemoteUsage['inUseBy']
+  setFolderProject: (folderId: string, projectId: string | null) => Promise<void>
   filterProjectId: string | null
   selfUserId: string | null
   announcePresence: (userId: string, agentIds: string[]) => void
@@ -47,7 +51,7 @@ function saveLocal(key: string, value: unknown) {
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   // 선택한 프로젝트의 에이전트 + 아직 미배정 에이전트를 노출 (다른 프로젝트 전용은 숨김). 전체 보기면 모두.
   const visibleAgents = useMemo(
@@ -160,6 +164,11 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         org={org}
         setAgentProject={setAgentProject}
         presence={presence}
+        pcStatuses={pcStatuses}
+        setPcStatus={setPcStatus}
+        remoteUsage={remoteUsage}
+        setFolderProject={setFolderProject}
+        selfUserId={selfUserId}
         filterProjectId={filterProjectId}
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}
@@ -218,6 +227,10 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
                 onReorderFavorites={(paths) => setAgentFavorites(pane.agentId, paths)}
                 subscribeTransfers={subscribeTransfers}
                 watchRun={watchRun}
+                selfUserId={selfUserId}
+                pcStatus={pcStatuses[pane.agentId] ?? null}
+                remoteUser={remoteUsage[pane.agentId]?.userId ?? null}
+                userName={(id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자'}
                 onClose={() => closePane(pane.paneId)}
                 onReorderDrop={(fromPaneId) => reorder(fromPaneId, pane.paneId)}
                 onResize={(w, h) => resizePane(pane.paneId, w, h)}

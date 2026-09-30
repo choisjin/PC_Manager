@@ -3,6 +3,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   api,
   type Agent,
+  type ChatMessage,
+  type PcStatus,
+  type PcStatuses,
+  type PcStatusValue,
+  type RemoteUsage,
   type JobRun,
   type JobState,
   type JobTarget,
@@ -27,6 +32,7 @@ export interface OrgActions {
   createUser: (name: string) => Promise<void>
   deleteUser: (id: string) => Promise<void>
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
+  setFolderProject: (folderId: string, projectId: string | null) => Promise<void>
 }
 
 export interface RunWatcher {
@@ -107,6 +113,9 @@ export function useDashboard() {
   const [shares, setShares] = useState<SharedFolder[]>([])
   const [org, setOrg] = useState<Org>({ projects: [], users: [], projectUsers: {}, agentProjects: {} })
   const [presence, setPresence] = useState<Record<string, string[]>>({})
+  const [pcStatuses, setPcStatuses] = useState<Record<string, PcStatus>>({})
+  const [remoteUsage, setRemoteUsage] = useState<RemoteUsage['inUseBy']>({})
+  const [chat, setChat] = useState<ChatMessage[]>([])
   const [connected, setConnected] = useState(false)
   const connectionRef = useRef<signalR.HubConnection | null>(null)
   // 재연결 시 다시 알리기 위한 마지막 프레즌스
@@ -162,6 +171,9 @@ export function useDashboard() {
     connection.on('SharesChanged', (s: SharedFolders) => setShares(s.shares))
     connection.on('OrgChanged', (o: Org) => setOrg(o))
     connection.on('PresenceChanged', (viewers: Record<string, string[]>) => setPresence(viewers))
+    connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
+    connection.on('RemoteUsageChanged', (v: RemoteUsage) => setRemoteUsage(v.inUseBy))
+    connection.on('ChatMessage', (m: ChatMessage) => setChat((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m].slice(-500))))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
     const sync = async () => {
@@ -175,7 +187,13 @@ export function useDashboard() {
       const favs = await api.pcFavorites().catch(() => null)
       const shareList = await api.shares().catch(() => null)
       const orgData = await api.org().catch(() => null)
+      const statuses = await api.pcStatuses().catch(() => null)
+      const usage = await api.remoteUsage().catch(() => null)
+      const chatList = await api.chat().catch(() => null)
       if (disposed) return
+      if (statuses) setPcStatuses(statuses.statuses)
+      if (usage) setRemoteUsage(usage.inUseBy)
+      if (chatList) setChat(chatList)
       setAgents(agentList.sort(byMachineName))
       setRuns(runList)
       setJobs(jobList)
@@ -313,7 +331,15 @@ export function useDashboard() {
     createUser: (name: string) => api.createUser(name).then(setOrg),
     deleteUser: (id: string) => api.deleteUser(id).then(setOrg),
     setAgentProject: (agentId: string, projectId: string | null) => api.setAgentProject(agentId, projectId).then(setOrg),
+    setFolderProject: (folderId: string, projectId: string | null) => api.setFolderProject(folderId, projectId).then(setOrg),
   }
+
+  const setPcStatus = useCallback((agentId: string, status: PcStatusValue, note: string | null) =>
+    api.setPcStatus(agentId, status, note).then((v) => setPcStatuses(v.statuses)), [])
+
+  const sendChat = useCallback((userId: string, text: string) => {
+    connectionRef.current?.invoke('SendChat', userId, text).catch((err) => console.error('채팅 전송 실패', err))
+  }, [])
 
   // 지금 보고 있는 PC를 서버에 알린다 (실시간 프레즌스)
   const announcePresence = useCallback((userId: string, agentIds: string[]) => {
@@ -338,6 +364,11 @@ export function useDashboard() {
     orgActions,
     presence,
     announcePresence,
+    pcStatuses,
+    setPcStatus,
+    remoteUsage,
+    chat,
+    sendChat,
     connected,
     watchRun,
     upsertRuns,

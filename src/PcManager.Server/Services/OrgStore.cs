@@ -78,6 +78,8 @@ public class OrgStore(AppPaths paths)
         m.ProjectUsers.Remove(id);
         foreach (var agentId in m.AgentProjects.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList())
             m.AgentProjects.Remove(agentId);
+        foreach (var folderId in m.FolderProjects.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList())
+            m.FolderProjects.Remove(folderId);
         return m;
     });
 
@@ -109,6 +111,15 @@ public class OrgStore(AppPaths paths)
         return m;
     });
 
+    public OrgView SetFolderProject(string folderId, string? projectId) => Mutate(m =>
+    {
+        if (string.IsNullOrWhiteSpace(projectId) || !m.Projects.Any(p => p.Id == projectId))
+            m.FolderProjects.Remove(folderId);
+        else
+            m.FolderProjects[folderId] = projectId;
+        return m;
+    });
+
     public OrgView SetAgentProject(string agentId, string? projectId) => Mutate(m =>
     {
         if (string.IsNullOrWhiteSpace(projectId) || !m.Projects.Any(p => p.Id == projectId))
@@ -132,6 +143,7 @@ public class OrgStore(AppPaths paths)
         public required List<OrgUser> Users { get; init; }
         public required Dictionary<string, List<string>> ProjectUsers { get; init; }
         public required Dictionary<string, string> AgentProjects { get; init; }
+        public required Dictionary<string, string> FolderProjects { get; init; }
 
         public static Model From(OrgView v) => new()
         {
@@ -141,12 +153,15 @@ public class OrgStore(AppPaths paths)
                 .ToDictionary(kv => kv.Key, kv => kv.Value.ToList()),
             AgentProjects = (v.AgentProjects ?? new Dictionary<string, string>())
                 .ToDictionary(kv => kv.Key, kv => kv.Value),
+            FolderProjects = (v.FolderProjects ?? new Dictionary<string, string>())
+                .ToDictionary(kv => kv.Key, kv => kv.Value),
         };
 
         public OrgView ToView() => new(
             Projects,
             Users,
             ProjectUsers.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value),
-            AgentProjects);
+            AgentProjects,
+            FolderProjects);
     }
 }

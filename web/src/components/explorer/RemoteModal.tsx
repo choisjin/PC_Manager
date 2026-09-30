@@ -6,6 +6,7 @@ import { Icon, type IconName } from './Icon'
 interface Props {
   agentId: string
   machineName: string
+  userId: string | null
   onClose: () => void
 }
 
@@ -71,7 +72,7 @@ const keyboardLockAvailable = () => typeof window !== 'undefined' && window.isSe
 type KeyLock = 'off' | 'locked' | 'unavailable'
 
 /** 원격 PC 화면 보기 + 마우스/키보드 조작 (H.264 스트리밍) */
-export function RemoteModal({ agentId, machineName, onClose }: Props) {
+export function RemoteModal({ agentId, machineName, userId, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -169,7 +170,7 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
 
     setPhase('connecting')
     setMessage('연결 중…')
-    const ws = new WebSocket(api.remoteUrl(agentId))
+    const ws = new WebSocket(api.remoteUrl(agentId, userId))
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 
@@ -285,7 +286,7 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
       setFormat(null)
       formatRef.current = null
     }
-  }, [agentId, attempt, useWebCodecs])
+  }, [agentId, userId, attempt, useWebCodecs])
 
   const send = (msg: object) => {
     const ws = wsRef.current

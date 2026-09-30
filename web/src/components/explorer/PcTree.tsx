@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { Agent, Org, PcGroups, SharedFolder } from '../../api'
+import { type Agent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type SharedFolder } from '../../api'
 import { AddShareModal } from './AddShareModal'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { Icon } from './Icon'
@@ -15,18 +15,32 @@ interface Props {
   org: Org
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
   presence: Record<string, string[]>
+  pcStatuses: Record<string, PcStatus>
+  setPcStatus: (agentId: string, status: PcStatusValue, note: string | null) => Promise<void>
+  remoteUsage: RemoteUsage['inUseBy']
+  setFolderProject: (folderId: string, projectId: string | null) => Promise<void>
+  selfUserId: string | null
   filterProjectId: string | null
   collapsed: boolean
   onToggleCollapse: () => void
   onOpenAgent: (agentId: string) => void
 }
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, org, setAgentProject, presence, filterProjectId, collapsed, onToggleCollapse, onOpenAgent }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent }: Props) {
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null) // folderId 또는 'root'
   const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null)
+  const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; folderId: string; name: string } | null>(null)
+
+  // 폴더에 프로젝트가 배정돼 있으면 그 프로젝트 사용자(또는 그 프로젝트로 들어온 사람)에게만 보인다
+  const folderVisible = (folderId: string) => {
+    const pid = org.folderProjects?.[folderId]
+    if (!pid) return true
+    if (filterProjectId) return pid === filterProjectId
+    return selfUserId ? (org.projectUsers[pid] ?? []).includes(selfUserId) : true
+  }
   const [showAddShare, setShowAddShare] = useState(false)
   const [hover, setHover] = useState<{ agentId: string; x: number; y: number } | null>(null)
 
@@ -102,6 +116,8 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
   const renderAgent = (agent: Agent) => {
     const alias = groups.aliases?.[agent.id]?.trim()
     const viewers = viewersOf(agent.id)
+    const status = pcStatuses[agent.id]
+    const remoteBy = remoteUsage[agent.id]?.userId ?? null
     const proj = filterProjectId ? undefined : projectName(agent.id)
     return (
       <li
@@ -122,19 +138,32 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         <span className="ellipsis">{displayName(agent, groups)}</span>
         {proj && <span className="proj-badge">{proj}</span>}
         {alias && <span className="tree-host mono">{agent.machineName}</span>}
+        {status && status.status !== 'available' && (
+          <span className={`status-badge ${status.status}`} title={`${PC_STATUS_LABEL[status.status]}${status.note ? ` · ${status.note}` : ''}`}>
+            {PC_STATUS_LABEL[status.status]}
+          </span>
+        )}
+        {remoteBy && <span className="remote-badge-tree" title={`원격조작 중: ${userName(remoteBy)}`}>원격 {userName(remoteBy)}</span>}
         {viewers.length > 0 && <span className="using-badge" title={`사용 중: ${viewers.join(', ')}`}>● {viewers.length}</span>}
       </li>
     )
   }
 
   const renderFolder = (node: FolderNode, depth: number) => {
+    if (!folderVisible(node.folder.id)) return null
     const isOpen = expanded.has(node.folder.id)
     const isDrop = dropTarget === node.folder.id
+    const folderProj = org.folderProjects?.[node.folder.id]
+    const folderProjName = folderProj ? org.projects.find((p) => p.id === folderProj)?.name : undefined
     return (
       <li key={node.folder.id}>
         <div
           className={`tree-folder${isDrop ? ' drop-active' : ''}`}
           style={{ paddingLeft: 8 + depth * 14 }}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            setFolderMenu({ x: e.clientX, y: e.clientY, folderId: node.folder.id, name: node.folder.name })
+          }}
           onDragOver={(e) => allowAgentDrop(e, node.folder.id)}
           onDragLeave={() => setDropTarget((t) => (t === node.folder.id ? null : t))}
           onDrop={(e) => handleDropAgent(e, node.folder.id)}
@@ -164,6 +193,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
               {node.folder.name}
             </span>
           )}
+          {folderProjName && !filterProjectId && <span className="proj-badge">{folderProjName}</span>}
           <span className="tree-folder-actions">
             <button type="button" className="icon-mini" title="하위 폴더" onClick={() => createFolder(node.folder.id)}>
               ＋
@@ -270,8 +300,23 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
               label: `${currentPid === p.id ? '● ' : ''}${p.name}`,
               onClick: () => void setAgentProject(a.id, p.id),
             }))
+            const current = pcStatuses[a.id]?.status ?? 'available'
+            const statusItems: MenuItem[] = (['available', 'testing', 'forbidden', 'maintenance'] as PcStatusValue[]).map((v) => ({
+              label: `${current === v ? '● ' : ''}상태: ${PC_STATUS_LABEL[v]}`,
+              onClick: () => {
+                if (v === 'available') {
+                  void setPcStatus(a.id, v, null)
+                  return
+                }
+                const note = window.prompt(`'${displayName(a, groups)}' → ${PC_STATUS_LABEL[v]}\n메모 (선택, 예: 담당자·테스트 내용)`, pcStatuses[a.id]?.note ?? '')
+                if (note === null) return
+                void setPcStatus(a.id, v, note.trim() || null)
+              },
+            }))
             return [
               { label: '열기', onClick: () => onOpenAgent(a.id) },
+              { separator: true },
+              ...statusItems,
               { separator: true },
               { label: groups.aliases?.[a.id] ? '별칭 변경…' : '별칭 지정…', onClick: () => editAlias(a) },
               ...(groups.aliases?.[a.id]
@@ -282,6 +327,31 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
                 ? projectItems
                 : [{ label: '프로젝트 없음 (설정에서 추가)', disabled: true, onClick: () => {} }]),
               ...(currentPid ? [{ label: '프로젝트 해제', onClick: () => void setAgentProject(a.id, null) }] : []),
+            ]
+          })()}
+        />
+      )}
+
+      {folderMenu && (
+        <ContextMenu
+          x={folderMenu.x}
+          y={folderMenu.y}
+          onClose={() => setFolderMenu(null)}
+          items={((): MenuItem[] => {
+            const currentPid = org.folderProjects?.[folderMenu.folderId]
+            return [
+              { label: '하위 폴더 만들기', onClick: () => createFolder(folderMenu.folderId) },
+              { label: '이름 바꾸기', onClick: () => setEditing(folderMenu.folderId) },
+              { separator: true },
+              ...(org.projects.length > 0
+                ? org.projects.map((p) => ({
+                    label: `${currentPid === p.id ? '● ' : ''}프로젝트: ${p.name}`,
+                    onClick: () => void setFolderProject(folderMenu.folderId, p.id),
+                  }))
+                : [{ label: '프로젝트 없음 (설정에서 추가)', disabled: true, onClick: () => {} }]),
+              ...(currentPid ? [{ label: '프로젝트 해제 (모두에게 보임)', onClick: () => void setFolderProject(folderMenu.folderId, null) }] : []),
+              { separator: true },
+              { label: '폴더 삭제 (PC는 미분류로)', danger: true, onClick: () => saveGroups(deleteFolder(groups, folderMenu.folderId)) },
             ]
           })()}
         />

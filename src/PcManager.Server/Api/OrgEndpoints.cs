@@ -34,6 +34,10 @@ public static class OrgEndpoints
 
         api.MapPut("/agents/{agentId}/project", (string agentId, AssignAgentProjectRequest req, OrgStore store, IHubContext<DashboardHub, IDashboardClient> hub) =>
             Run(hub, () => store.SetAgentProject(agentId, req.ProjectId)));
+
+        // PC 목록 폴더에 프로젝트 배정 (그 프로젝트 사용자에게만 보임)
+        api.MapPut("/folders/{folderId}/project", (string folderId, AssignAgentProjectRequest req, OrgStore store, IHubContext<DashboardHub, IDashboardClient> hub) =>
+            Run(hub, () => store.SetFolderProject(folderId, req.ProjectId)));
     }
 
     private static async Task<IResult> Run(IHubContext<DashboardHub, IDashboardClient> hub, Func<OrgView> action)

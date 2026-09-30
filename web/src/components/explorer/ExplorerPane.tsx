@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
-import { api, type DirectoryListing, type FileEntry, type Transfer } from '../../api'
+import { api, type DirectoryListing, type FileEntry, type PcStatus, type Transfer } from '../../api'
 import { isVideoFile } from '../../fileTypes'
 import { formatBytes } from '../../format'
 import type { SubscribeTransfers, WatchRun } from '../../useDashboard'
@@ -35,6 +35,12 @@ interface Props {
   clipboard: FileClipboard | null
   setClipboard: (clipboard: FileClipboard | null) => void
   favorites: string[]
+  selfUserId: string | null
+  /** 수동 상태 (테스트 중이면 원격 전 확인, 사용 금지면 차단) */
+  pcStatus: PcStatus | null
+  /** 지금 원격조작 중인 사용자 id */
+  remoteUser: string | null
+  userName: (userId: string) => string
   onAddFavorite: (path: string) => void
   onRemoveFavorite: (path: string) => void
   onReorderFavorites: (paths: string[]) => void
@@ -94,6 +100,10 @@ export function ExplorerPane({
   clipboard,
   setClipboard,
   favorites,
+  selfUserId,
+  pcStatus,
+  remoteUser,
+  userName,
   onAddFavorite,
   onRemoveFavorite,
   onReorderFavorites,
@@ -117,6 +127,8 @@ export function ExplorerPane({
   const [playing, setPlaying] = useState<{ path: string; name: string } | null>(null)
   const [terminal, setTerminal] = useState(false)
   const [remote, setRemote] = useState(false)
+  const accessRef = useRef({ pcStatus, remoteUser })
+  accessRef.current = { pcStatus, remoteUser }
   const [splitTargets, setSplitTargets] = useState<FileEntry[] | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; targets: FileEntry[]; folder: string | null; items?: MenuItem[] } | null>(null)
   // 자세히 보기 열 너비 (px). 이름은 지정 전까지 남는 폭을 차지한다
@@ -577,7 +589,21 @@ export function ExplorerPane({
     setView,
     setSearch,
     openTerminal: () => setTerminal(true),
-    openRemote: () => setRemote(true),
+    openRemote: () => {
+      // 툴바가 이전 렌더의 컨트롤러를 들고 있을 수 있으므로 상태는 ref에서 읽는다
+      const { pcStatus: st, remoteUser: by } = accessRef.current
+      if (st?.status === 'forbidden') {
+        setError(`사용 금지 상태라 원격조작할 수 없습니다.${st.note ? ` (${st.note})` : ''}`)
+        return
+      }
+      if (by && by !== selfUserId) {
+        setError(`${userName(by)}님이 원격조작 중입니다.`)
+        return
+      }
+      if (st?.status === 'testing' && !window.confirm(`이 PC는 '테스트 중' 상태입니다.${st.note ? ` (${st.note})` : ''}\n그래도 원격조작할까요?`)) return
+      setError(null)
+      setRemote(true)
+    },
     upload: () => fileInputRef.current?.click(),
   }
   const controllerRef = useRef(controller)
@@ -1043,7 +1069,7 @@ export function ExplorerPane({
         <TerminalModal agentId={agentId} machineName={machineName} path={path} watchRun={watchRun} onClose={() => setTerminal(false)} />
       )}
 
-      {remote && <RemoteModal agentId={agentId} machineName={machineName} onClose={() => setRemote(false)} />}
+      {remote && <RemoteModal agentId={agentId} machineName={machineName} userId={selfUserId} onClose={() => setRemote(false)} />}
 
       {splitTargets && (
         <SplitCompressModal

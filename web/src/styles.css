@@ -2997,3 +2997,114 @@ th.sortable:hover {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* PC 상태 배지 (수동 설정) / 원격조작 중 */
+.status-badge {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+  border-radius: 8px;
+  color: #fff;
+}
+
+.status-badge.testing {
+  background: var(--warn);
+}
+
+.status-badge.forbidden {
+  background: var(--bad);
+}
+
+.status-badge.maintenance {
+  background: var(--idle);
+}
+
+.remote-badge-tree {
+  flex: none;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+/* PiP 탭 (파일 전송 / 채팅) */
+.pip-tabs {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.pip-tabs button {
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.pip-tabs button.active {
+  color: var(--text);
+  background: var(--hover);
+  font-weight: 600;
+}
+
+.pip-count.chat {
+  background: var(--accent);
+}
+
+.pip-chat {
+  display: flex;
+  flex-direction: column;
+  height: 260px;
+  padding: 0;
+}
+
+.pip-chat-list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-msg {
+  max-width: 85%;
+  align-self: flex-start;
+}
+
+.chat-msg.mine {
+  align-self: flex-end;
+  text-align: right;
+}
+
+.chat-text {
+  display: inline-block;
+  padding: 5px 9px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: left;
+  background: var(--hover);
+  border-radius: 10px;
+}
+
+.chat-msg.mine .chat-text {
+  color: #fff;
+  background: var(--accent);
+}
+
+.pip-chat-input {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.pip-chat-input input {
+  flex: 1;
+  min-width: 0;
+}
