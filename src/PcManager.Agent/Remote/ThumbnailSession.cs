@@ -71,6 +71,16 @@ internal sealed class ThumbnailSession(ClientWebSocket socket) : IDisposable
 
         try
         {
+            // 모니터가 없는 PC는 화면이 그려지지 않아 검게 나온다 → 가상 모니터를 켠다 (원격조작과 같은 처리, 켠 뒤 유지)
+            try
+            {
+                VirtualDisplay.EnsureForHeadless(m => Trace.WriteLine(m));
+            }
+            catch (Exception ex)
+            {
+                Send(JsonSerializer.SerializeToUtf8Bytes(new { type = "error", message = $"가상 모니터 준비 실패: {ex.Message}" }, Json), WebSocketMessageType.Text);
+            }
+
             while (!ct.IsCancellationRequested)
             {
                 var desktopChanged = DesktopSwitcher.SyncThreadToInputDesktop();

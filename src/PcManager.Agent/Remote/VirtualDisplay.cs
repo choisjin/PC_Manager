@@ -77,6 +77,28 @@ internal static class VirtualDisplay
     /// <summary>드라이버(장치 노드)가 설치돼 있는지</summary>
     public static bool IsInstalled() => FindDevice(out _, out _);
 
+    /// <summary>
+    /// 모니터가 없는 PC면 가상 모니터를 준비한다: 설치(최초) → 켜기 → 데스크톱에 붙을 때까지 대기 → 주 모니터로.
+    /// 한 번 켠 가상 모니터는 끄지 않는다 (헤드리스 테스트 PC는 항상 화면이 있어야 썸네일·GUI 테스트가 된다).
+    /// </summary>
+    /// <returns>가상 모니터 어댑터 이름. 모니터가 있는 PC면 null</returns>
+    public static string? EnsureForHeadless(Action<string>? log = null)
+    {
+        if (!IsHeadless())
+            return null;
+        EnsureInstalled(log);
+        if (!IsEnabled())
+            SetEnabled(true);
+        string? device = null;
+        for (var i = 0; i < 40 && (device = FindAdapterDeviceName()) is null; i++)
+            Thread.Sleep(250);
+        if (device is null)
+            throw new InvalidOperationException("가상 모니터가 켜지지 않았습니다.");
+        if (!DisplayModes.TrySetPrimary(device))
+            log?.Invoke("가상 모니터를 주 모니터로 만들지 못했습니다");
+        return device;
+    }
+
     /// <summary>내장 파일을 풀고 드라이버를 설치한다. 이미 설치돼 있으면 설정만 갱신한다</summary>
     public static void EnsureInstalled(Action<string>? log = null)
     {

@@ -46,6 +46,7 @@
 - 스트림은 그 위에서 대시보드 화면 영역 크기(`view`)에 맞춰 줄여 인코딩 (가로세로 비 유지, 원본보다 크게는 안 함). 창 크기가 바뀌면 다시 맞춘다
 - 세션 선택: 활성(WTSActive) 세션 우선(로그인 전이면 콘솔=로그인 화면). 대상이 RDP면 tscon으로 콘솔에 붙여 원격조작이 RDP보다 우선하도록 한다
 - 로그인·잠금·UAC 등 데스크톱 전환 중 캡처 예외가 나도 세션을 끊지 않고 캡처 장치만 다시 만든다
+- 헤드리스 PC: 가상 모니터는 원격조작·썸네일 모두 `VirtualDisplay.EnsureForHeadless`로 준비하며, 한 번 켜면 끄지 않는다 (화면이 없으면 캡처가 검게 나오고 GUI 테스트도 안 됨)
 - 인코딩: Media Foundation H.264 소프트웨어 MFT (Baseline, 저지연, B 프레임 없음, CBR). BGRA→NV12(BT.709)는 CPU 병렬 변환, 폭 2560 초과면 1/2 축소
 - 디코딩: 보안 컨텍스트(HTTPS/localhost)면 WebCodecs → canvas, 아니면(http://서버IP) 브라우저에서 fMP4로 감싸 MSE → video
 - 입력: 브라우저 KeyboardEvent.code → 스캔 코드 `SendInput` (원격 PC의 배열/IME 적용), 마우스는 모니터 기준 0~1 좌표. Ctrl+Alt+Del은 서비스가 `SendSAS` (SoftwareSASGeneration 정책을 켬)
