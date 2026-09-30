@@ -84,6 +84,15 @@ internal static class ServiceInstaller
     public static void Uninstall(bool removeData, Action<string> log)
     {
         StopServiceIfRunning(log);
+        // 원격조작이 설치했을 수 있는 가상 모니터 드라이버도 함께 제거 (best-effort)
+        try
+        {
+            Remote.VirtualDisplay.Uninstall(log);
+        }
+        catch (Exception ex)
+        {
+            log($"가상 모니터 드라이버 제거 실패 (무시): {ex.Message}");
+        }
         if (ServiceExists())
         {
             log("서비스 삭제");

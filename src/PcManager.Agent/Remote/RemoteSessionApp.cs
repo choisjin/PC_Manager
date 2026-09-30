@@ -293,9 +293,41 @@ internal static class RemoteSessionApp
             var captureStarted = TimeSpan.Zero;
             // 마지막으로 디스플레이 모드 맞춤을 시도한 (모니터, 대시보드 해상도, 켜짐). 바뀌면 다시 시도한다
             var appliedMatch = (Monitor: int.MinValue, Width: 0, Height: 0, On: false);
+            // 모니터가 없는 PC: 가상 모니터를 켜서 화면을 만든다 (세션이 끝나면 끈다)
+            var virtualMonitorOn = false;
 
             try
             {
+                try
+                {
+                    if (VirtualDisplay.IsHeadless())
+                    {
+                        _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "headless" }, ct);
+                        VirtualDisplay.EnsureInstalled(m => Trace.WriteLine(m));
+                        if (!VirtualDisplay.IsEnabled())
+                            VirtualDisplay.SetEnabled(true);
+                        virtualMonitorOn = true;
+                        // 가상 모니터가 데스크톱에 붙을 때까지 기다린다
+                        string? virtualDevice = null;
+                        for (var i = 0; i < 40 && (virtualDevice = VirtualDisplay.FindAdapterDeviceName()) is null; i++)
+                            Thread.Sleep(250);
+                        if (virtualDevice is null)
+                            throw new InvalidOperationException("가상 모니터가 켜지지 않았습니다.");
+
+                        // 자리표시 모니터(1024×768)가 남아 있어도 창이 가상 모니터에 열리도록 주 모니터로 만들고, 캡처 대상도 가상 모니터로
+                        if (!DisplayModes.TrySetPrimary(virtualDevice))
+                            Trace.WriteLine("가상 모니터를 주 모니터로 만들지 못했습니다");
+                        var index = DisplayModes.Enumerate().FindIndex(d => d.DeviceName == virtualDevice);
+                        if (index >= 0)
+                            _monitorIndex = index;
+                        _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "virtual-monitor" }, ct);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _ = SendJsonAsync(new { type = "error", message = $"가상 모니터를 준비하지 못했습니다: {ex.Message}" }, ct);
+                }
+
                 while (!ct.IsCancellationRequested)
                 {
                     // 데스크톱 전환(UAC, 잠금 화면, 로그인)이나 모니터 변경 시 캡처 장치를 다시 만든다
@@ -458,6 +490,18 @@ internal static class RemoteSessionApp
                 catch (Exception ex)
                 {
                     Trace.WriteLine($"해상도 복원 실패: {ex.Message}");
+                }
+                // 세션용으로 켰던 가상 모니터는 끈다
+                if (virtualMonitorOn)
+                {
+                    try
+                    {
+                        VirtualDisplay.SetEnabled(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Trace.WriteLine($"가상 모니터 끄기 실패: {ex.Message}");
+                    }
                 }
             }
         }

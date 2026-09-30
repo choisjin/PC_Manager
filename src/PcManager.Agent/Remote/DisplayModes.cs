@@ -88,6 +88,34 @@ internal static class DisplayModes
         return true;
     }
 
+    /// <summary>
+    /// 지정한 모니터를 주 모니터(0,0)로 만든다. 다른 모니터는 상대 위치를 유지한 채 옮긴다.
+    /// 헤드리스 PC에서 가상 모니터를 켰을 때 창들이 거기에 열리게 하기 위한 것.
+    /// </summary>
+    public static bool TrySetPrimary(string deviceName)
+    {
+        if (!TryGetCurrentMode(deviceName, out var target))
+            return false;
+        var dx = -target.dmPositionX;
+        var dy = -target.dmPositionY;
+        if (dx == 0 && dy == 0)
+            return true;
+
+        foreach (var display in Enumerate())
+        {
+            if (!TryGetCurrentMode(display.DeviceName, out var mode))
+                continue;
+            mode.dmPositionX += dx;
+            mode.dmPositionY += dy;
+            mode.dmFields = DM_POSITION;
+            var flags = CDS_UPDATEREGISTRY | CDS_NORESET | (display.DeviceName == deviceName ? CDS_SET_PRIMARY : 0);
+            if (ChangeDisplaySettingsEx(display.DeviceName, ref mode, IntPtr.Zero, (uint)flags, IntPtr.Zero) != DISP_CHANGE_SUCCESSFUL)
+                return false;
+        }
+        // 모아 둔 변경을 한 번에 적용
+        return ChangeDisplaySettingsEx(null, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero) == DISP_CHANGE_SUCCESSFUL;
+    }
+
     /// <summary>바꿨던 모든 모니터를 원래 모드로 되돌린다 (세션 종료 시)</summary>
     public static void RestoreAll()
     {
@@ -122,7 +150,11 @@ internal static class DisplayModes
     private const int ENUM_CURRENT_SETTINGS = -1;
     private const int DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x1;
     private const int DISPLAY_DEVICE_PRIMARY_DEVICE = 0x4;
+    private const int DM_POSITION = 0x20;
     private const int DM_BITSPERPEL = 0x40000;
+    private const int CDS_UPDATEREGISTRY = 0x1;
+    private const int CDS_NORESET = 0x10000000;
+    private const int CDS_SET_PRIMARY = 0x10;
     private const int DM_PELSWIDTH = 0x80000;
     private const int DM_PELSHEIGHT = 0x100000;
     private const int DM_DISPLAYFREQUENCY = 0x400000;
@@ -182,4 +214,8 @@ internal static class DisplayModes
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int ChangeDisplaySettingsEx(string deviceName, ref DEVMODE devMode, IntPtr hwnd, uint flags, IntPtr param);
+
+    // devMode = NULL: 모아 둔(CDS_NORESET) 변경을 적용
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int ChangeDisplaySettingsEx(string? deviceName, IntPtr devMode, IntPtr hwnd, uint flags, IntPtr param);
 }

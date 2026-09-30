@@ -42,6 +42,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- 헤드리스 PC용 가상 모니터: Virtual Display Driver(MIT, SignPath 서명) + nefcon(MIT). 처음 쓸 때 ProgramData로 풀어 설치 -->
+    <EmbeddedResource Include="Resources\vdd\*" LogicalName="vdd/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- 로그 수준 등 개발용 설정. 배포는 exe 하나만 쓰므로 게시 폴더에 넣지 않는다 (기본값은 코드에 있음) -->
     <None Update="appsettings*.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
   </ItemGroup>

@@ -229,6 +229,8 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
             setDesktop(msg.desktop ?? null)
             if (msg.note === 'resolution-changed') showHint(`원격 해상도를 ${msg.width}×${msg.height}(으)로 맞췄습니다.`)
             else if (msg.note === 'resolution-failed') showHint(`해상도 맞춤 실패: ${msg.message ?? '지원하지 않는 모드'}`)
+            else if (msg.note === 'headless') showHint('원격 PC에 모니터가 없어 가상 모니터를 준비합니다… (처음이면 드라이버 설치로 몇 초 걸립니다)')
+            else if (msg.note === 'virtual-monitor') showHint('가상 모니터를 켰습니다. 세션이 끝나면 자동으로 꺼집니다.')
             break
           case 'cursor':
             setCursor({ x: msg.x, y: msg.y, visible: msg.visible })
