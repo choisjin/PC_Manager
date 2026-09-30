@@ -4,12 +4,13 @@ import { FileExplorer } from './components/FileExplorer'
 import { useTransfers } from './components/explorer/useTransfers'
 import { type Identity, SelectGate } from './components/SelectGate'
 import { SettingsModal } from './components/SettingsModal'
+import { SettingsPage } from './components/SettingsPage'
 import { TransfersPage } from './components/TransfersPage'
 import { TransfersPip } from './components/TransfersPip'
 import { UpdateDialog } from './components/UpdateDialog'
 import { useDashboard } from './useDashboard'
 
-type Page = 'files' | 'transfers'
+type Page = 'files' | 'transfers' | 'settings'
 
 function cmpVersion(a: string, b: string) {
   const pa = a.split('.').map(Number)
@@ -123,14 +124,14 @@ export default function App() {
             History
             {transfers.some((t) => t.state === 'Pending') && <span className="tab-badge">{transfers.filter((t) => t.state === 'Pending').length}</span>}
           </button>
+          <button type="button" role="tab" aria-selected={page === 'settings'} className={page === 'settings' ? 'active' : ''} onClick={() => setPage('settings')}>
+            Setting
+          </button>
         </nav>
         <span className="topbar-right">
           <button type="button" className="identity-chip" onClick={() => setShowGate(true)} title="프로젝트·사용자 변경">
             <span className="identity-project">{project?.name ?? '전체 보기'}</span>
             {selfUser && <span className="identity-user">· {selfUser.name}</span>}
-          </button>
-          <button type="button" className="icon gear-btn" title="설정 (프로젝트·사용자 관리)" onClick={() => setShowSettings(true)}>
-            ⚙
           </button>
           <button
             type="button"
@@ -149,7 +150,6 @@ export default function App() {
       {showUpdate && (
         <UpdateDialog status={updateStatus} agents={agents} onClose={() => setShowUpdate(false)} />
       )}
-      {showSettings && <SettingsModal org={org} actions={orgActions} onClose={() => setShowSettings(false)} />}
 
       <main className="layout full">
         {page === 'files' ? (
@@ -177,6 +177,8 @@ export default function App() {
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}
           />
+        ) : page === 'settings' ? (
+          <SettingsPage org={org} actions={orgActions} agents={agents} pcGroups={pcGroups} />
         ) : (
           <TransfersPage transfers={transfers} artifactByTransfer={artifactByTransfer} machineName={machineName} userName={userName} />
         )}

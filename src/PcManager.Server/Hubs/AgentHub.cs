@@ -14,6 +14,7 @@ public class AgentHub(
     TransferService transfers,
     IDbContextFactory<AppDbContext> dbFactory,
     IHubContext<DashboardHub, IDashboardClient> dashboard,
+    ThumbnailService thumbnails,
     ILogger<AgentHub> logger) : Hub<IAgentClient>
 {
     private const string AgentIdKey = "AgentId";
@@ -47,6 +48,8 @@ public class AgentHub(
         Context.Items[AgentIdKey] = info.AgentId;
         registry.Set(info.AgentId, Context.ConnectionId);
         await dashboard.Clients.All.AgentUpdated(agent.ToView(online: true));
+        // Remote 화면을 보는 사람이 있으면 바로 썸네일 시작
+        thumbnails.AgentOnline(info.AgentId);
         logger.LogInformation("에이전트 등록: {MachineName} ({AgentId})", info.MachineName, info.AgentId);
     }
 
@@ -67,6 +70,7 @@ public class AgentHub(
             && value is string agentId
             && registry.Remove(agentId, Context.ConnectionId))
         {
+            thumbnails.AgentOffline(agentId);
             await using var db = await dbFactory.CreateDbContextAsync();
             if (await db.Agents.FindAsync(agentId) is { } agent)
             {

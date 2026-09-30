@@ -28,7 +28,7 @@ public class ThumbnailService(
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan AttachTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan IdleStop = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(5);
 
     private readonly Lock _lock = new();
     // 대시보드 연결 → 보고 싶은 agentId
@@ -63,8 +63,18 @@ public class ThumbnailService(
         }
     }
 
-    /// <summary>에이전트가 끊기면 썸네일도 지운다</summary>
+    /// <summary>에이전트가 끊기면 마지막 썸네일을 지운다 (카드는 오프라인으로 표시됨)</summary>
     public void AgentOffline(string agentId) => _latest.TryRemove(agentId, out _);
+
+    /// <summary>에이전트가 (재)접속하면, 보고 있는 대시보드가 있을 때 기다리지 않고 바로 썸네일 세션을 시작한다</summary>
+    public void AgentOnline(string agentId)
+    {
+        lock (_lock)
+        {
+            if (_wants.Values.Any(s => s.Contains(agentId)))
+                Reconcile();
+        }
+    }
 
     private void Reconcile()
     {

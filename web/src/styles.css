@@ -3295,3 +3295,126 @@ th.sortable:hover {
 .chat-msg.to-me .chat-text {
   background: color-mix(in srgb, var(--warn) 18%, var(--hover));
 }
+
+/* Setting 페이지 */
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.settings-section {
+  padding: 10px 12px;
+}
+
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.settings-section-head h2 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.project-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.project-card {
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.project-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.project-card-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.project-card-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.project-card-label {
+  flex: none;
+  width: 56px;
+  color: var(--muted);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.chip {
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 18px;
+  background: var(--selected);
+  border-radius: 9px;
+}
+
+.chip.off {
+  color: var(--muted);
+  background: var(--hover);
+}
+
+.chip.folder {
+  background: var(--hover);
+}
+
+.matrix-wrap {
+  overflow: auto;
+}
+
+.matrix {
+  width: auto;
+  min-width: 320px;
+  table-layout: auto;
+}
+
+.matrix th,
+.matrix td {
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.matrix th.matrix-proj {
+  max-width: 120px;
+  text-align: center;
+}
+
+.matrix th.matrix-proj span {
+  display: block;
+  max-width: 120px;
+}
+
+.matrix td.matrix-cell {
+  text-align: center;
+}
+
+.matrix .matrix-summary {
+  max-width: 320px;
+  white-space: normal;
+}
