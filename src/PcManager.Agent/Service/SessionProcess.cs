@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace PcManager.Agent.Service;
@@ -31,6 +32,50 @@ internal static class SessionProcess
             WTSFreeMemory(buffer);
         }
         return result;
+    }
+
+    /// <summary>이 세션이 원격 데스크톱(RDP)으로 연결돼 있는지. 물리 콘솔·직접 로그인은 false</summary>
+    public static bool IsRemoteSession(int sessionId)
+    {
+        if (!WTSQuerySessionInformation(IntPtr.Zero, sessionId, WTSClientProtocolType, out var buffer, out var bytes))
+            return false;
+        try
+        {
+            // 0: 콘솔, 2: RDP
+            return bytes >= 2 && Marshal.ReadInt16(buffer) == 2;
+        }
+        finally
+        {
+            WTSFreeMemory(buffer);
+        }
+    }
+
+    /// <summary>
+    /// RDP로 연결된 세션을 물리 콘솔로 옮긴다. RDP 클라이언트 연결은 끊기고, 그 세션이 콘솔에 표시된다
+    /// (앱·로그인 상태 유지). 원격조작이 RDP보다 우선하도록, SYSTEM 서비스에서 tscon으로 수행한다.
+    /// </summary>
+    /// <returns>성공 여부</returns>
+    public static bool ConnectSessionToConsole(int sessionId)
+    {
+        var tscon = Path.Combine(Environment.SystemDirectory, "tscon.exe");
+        if (!File.Exists(tscon))
+            return false;
+
+        var start = new ProcessStartInfo(tscon)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        start.ArgumentList.Add(sessionId.ToString());
+        start.ArgumentList.Add("/dest:console");
+
+        using var process = Process.Start(start);
+        if (process is null)
+            return false;
+        process.WaitForExit(5000);
+        return process.HasExited && process.ExitCode == 0;
     }
 
     /// <summary>세션의 로그인 사용자 권한으로 프로세스를 시작한다. SYSTEM 계정에서만 동작한다.</summary>
@@ -196,6 +241,11 @@ internal static class SessionProcess
 
     [DllImport("wtsapi32.dll", SetLastError = true)]
     private static extern bool WTSQueryUserToken(int sessionId, out IntPtr phToken);
+
+    private const int WTSClientProtocolType = 16;
+
+    [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool WTSQuerySessionInformation(IntPtr hServer, int sessionId, int infoClass, out IntPtr ppBuffer, out int pBytesReturned);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool DuplicateTokenEx(IntPtr hExistingToken, uint dwDesiredAccess, IntPtr lpTokenAttributes,

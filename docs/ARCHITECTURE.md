@@ -40,7 +40,10 @@
 ### 원격조작 (구현: `src/PcManager.Agent/Remote`, `Api/RemoteEndpoints.cs`, `web/src/components/remote`)
 - 흐름: 브라우저 WS `/api/agents/{id}/remote` → 서버가 세션 ID 발급 후 에이전트에 `StartRemote` → 서비스가 콘솔 세션에 원격조작 프로세스 실행 → 그 프로세스가 WS `/api/agent/remote/{sessionId}`로 접속 → 서버가 두 소켓을 그대로 중계
 - 원격조작 프로세스는 서비스의 SYSTEM 토큰을 복제해 세션만 바꿔 실행 → 입력 데스크톱(Default/Winlogon)을 따라가며 UAC 확인 창·잠금/로그인 화면도 캡처/조작
-- 캡처: DXGI Desktop Duplication (실패 시 GDI BitBlt). 바뀐 화면만 인코딩, 최대 30fps
+- 캡처: DXGI Desktop Duplication (실패 시, 또는 3초간 프레임이 없으면 GDI BitBlt). 바뀐 화면만 인코딩, 최대 30fps
+- 해상도: 대시보드가 보내는 화면 크기(`view`)에 맞춰 원본을 줄여 인코딩 (가로세로 비 유지, 원본보다 크게는 안 함). 창 크기가 바뀌면 다시 맞춘다
+- 세션 선택: 활성(WTSActive) 세션 우선(로그인 전이면 콘솔=로그인 화면). 대상이 RDP면 tscon으로 콘솔에 붙여 원격조작이 RDP보다 우선하도록 한다
+- 로그인·잠금·UAC 등 데스크톱 전환 중 캡처 예외가 나도 세션을 끊지 않고 캡처 장치만 다시 만든다
 - 인코딩: Media Foundation H.264 소프트웨어 MFT (Baseline, 저지연, B 프레임 없음, CBR). BGRA→NV12(BT.709)는 CPU 병렬 변환, 폭 2560 초과면 1/2 축소
 - 디코딩: 보안 컨텍스트(HTTPS/localhost)면 WebCodecs → canvas, 아니면(http://서버IP) 브라우저에서 fMP4로 감싸 MSE → video
 - 입력: 브라우저 KeyboardEvent.code → 스캔 코드 `SendInput` (원격 PC의 배열/IME 적용), 마우스는 모니터 기준 0~1 좌표. Ctrl+Alt+Del은 서비스가 `SendSAS` (SoftwareSASGeneration 정책을 켬)

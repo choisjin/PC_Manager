@@ -177,6 +177,16 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
       bytes = 0
     }, 1000)
 
+    // 대시보드 화면(스테이지)의 실제 픽셀 크기를 알려, 원격이 그 해상도에 맞춰 인코딩하게 한다
+    const sendViewSize = () => {
+      const stage = stageRef.current
+      if (!stage || ws.readyState !== WebSocket.OPEN) return
+      const dpr = window.devicePixelRatio || 1
+      const width = Math.round(stage.clientWidth * dpr)
+      const height = Math.round(stage.clientHeight * dpr)
+      if (width > 0 && height > 0) ws.send(JSON.stringify({ t: 'view', width, height }))
+    }
+
     ws.onmessage = (e) => {
       if (typeof e.data === 'string') {
         const msg = JSON.parse(e.data)
@@ -186,6 +196,7 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
             const primary = (msg.monitors as Monitor[]).find((m) => m.primary)
             setMonitor(primary?.index ?? 0)
             setDesktop(msg.desktop ?? null)
+            sendViewSize()
             break
           }
           case 'format':
@@ -233,8 +244,20 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
       setMessage(e.reason || '연결이 끊어졌습니다.')
     }
 
+    // 창 크기가 바뀌면 해상도를 다시 맞춘다 (너무 자주 보내지 않게 약간 지연)
+    let resizeTimer = 0
+    const onResize = () => {
+      clearTimeout(resizeTimer)
+      resizeTimer = window.setTimeout(sendViewSize, 300)
+    }
+    const stage = stageRef.current
+    const observer = stage ? new ResizeObserver(onResize) : null
+    if (stage && observer) observer.observe(stage)
+
     return () => {
       clearInterval(statsTimer)
+      clearTimeout(resizeTimer)
+      observer?.disconnect()
       ws.onmessage = null
       ws.onclose = null
       ws.close()

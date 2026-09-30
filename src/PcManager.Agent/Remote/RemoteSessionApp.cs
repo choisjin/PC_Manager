@@ -87,6 +87,9 @@ internal static class RemoteSessionApp
         private volatile int _monitorIndex = -1; // -1: 주 모니터
         private volatile bool _keyFrameRequested = true;
         private volatile int _bitrate = 6_000_000;
+        // 대시보드(보는 쪽) 화면 크기. 스트림을 이 크기에 맞춰 줄인다. 0이면 아직 모름 → 원본 기준
+        private volatile int _viewWidth;
+        private volatile int _viewHeight;
         private Rectangle _monitorBounds;
         private readonly Lock _boundsLock = new();
 
@@ -212,6 +215,11 @@ internal static class RemoteSessionApp
                 case "monitor":
                     _monitorIndex = root.GetProperty("index").GetInt32();
                     break;
+                case "view":
+                    // 대시보드 화면(픽셀) 크기. 스트림 해상도를 여기에 맞춘다
+                    _viewWidth = Math.Clamp(root.GetProperty("width").GetInt32(), 0, 8192);
+                    _viewHeight = Math.Clamp(root.GetProperty("height").GetInt32(), 0, 8192);
+                    break;
                 case "keyframe":
                     _keyFrameRequested = true;
                     break;
@@ -262,7 +270,6 @@ internal static class RemoteSessionApp
             byte[] bgra = [];
             byte[] nv12 = [];
             var hasFrame = false;
-            var scale = 1;
             var currentMonitor = int.MinValue;
             var currentBitrate = _bitrate;
             var clock = Stopwatch.StartNew();
@@ -278,35 +285,42 @@ internal static class RemoteSessionApp
             {
                 while (!ct.IsCancellationRequested)
                 {
-                    // 데스크톱 전환(UAC, 잠금 화면)이나 모니터 변경 시 캡처 장치를 다시 만든다
+                    // 데스크톱 전환(UAC, 잠금 화면, 로그인)이나 모니터 변경 시 캡처 장치를 다시 만든다
                     var desktopChanged = DesktopSwitcher.SyncThreadToInputDesktop();
                     if (desktopChanged && currentMonitor != int.MinValue)
                         _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName }, ct);
 
-                    if (desktopChanged || capturer is null || currentMonitor != _monitorIndex)
+                    // 대시보드 화면 크기가 바뀌면(창 크기 조절 등) 인코더 해상도를 다시 맞춘다
+                    var monitorChanged = currentMonitor != _monitorIndex;
+                    var viewChanged = capturer is not null && TargetSize(capturer.Bounds) != (encoder?.Width ?? 0, encoder?.Height ?? 0);
+
+                    if (desktopChanged || capturer is null || monitorChanged || viewChanged)
                     {
-                        capturer?.Dispose();
-                        capturer = null;
                         currentMonitor = _monitorIndex;
-                        var bounds = ResolveMonitor(currentMonitor);
-                        try
+                        if (desktopChanged || capturer is null || monitorChanged)
                         {
-                            capturer = CreateCapturer(bounds, preferGdi);
-                            captureStarted = clock.Elapsed;
-                        }
-                        catch (Exception ex)
-                        {
-                            if (++failures % 20 == 1)
-                                _ = SendJsonAsync(new { type = "error", message = $"화면 캡처를 시작하지 못했습니다: {ex.Message}" }, ct);
-                            Thread.Sleep(500);
-                            continue;
+                            capturer?.Dispose();
+                            capturer = null;
+                            var bounds = ResolveMonitor(currentMonitor);
+                            try
+                            {
+                                capturer = CreateCapturer(bounds, preferGdi);
+                                captureStarted = clock.Elapsed;
+                            }
+                            catch (Exception ex)
+                            {
+                                if (++failures % 20 == 1)
+                                    _ = SendJsonAsync(new { type = "error", message = $"화면 캡처를 시작하지 못했습니다: {ex.Message}" }, ct);
+                                Thread.Sleep(500);
+                                continue;
+                            }
+                            MonitorBounds = capturer.Bounds;
+                            if (bgra.Length != capturer.Bounds.Width * capturer.Bounds.Height * 4)
+                                bgra = new byte[capturer.Bounds.Width * capturer.Bounds.Height * 4];
                         }
 
-                        MonitorBounds = capturer.Bounds;
                         var b = capturer.Bounds;
-                        scale = b.Width > MaxEncodeWidth ? 2 : 1;
-                        var width = (b.Width / scale) & ~1;
-                        var height = (b.Height / scale) & ~1;
+                        var (width, height) = TargetSize(b);
                         if (encoder is null || encoder.Width != width || encoder.Height != height)
                         {
                             encoder?.Dispose();
@@ -314,8 +328,6 @@ internal static class RemoteSessionApp
                             currentBitrate = _bitrate;
                             nv12 = new byte[width * height * 3 / 2];
                         }
-                        if (bgra.Length != b.Width * b.Height * 4)
-                            bgra = new byte[b.Width * b.Height * 4];
                         hasFrame = false;
                         _keyFrameRequested = true;
                         _ = SendJsonAsync(new
@@ -334,7 +346,20 @@ internal static class RemoteSessionApp
                     if (wait > TimeSpan.Zero)
                         Thread.Sleep(wait);
 
-                    var status = capturer.Capture(bgra, hasFrame ? 100 : 500);
+                    CaptureStatus status;
+                    try
+                    {
+                        status = capturer.Capture(bgra, hasFrame ? 100 : 500);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // 로그인·데스크톱 전환 중 캡처 장치가 잠깐 무효가 될 수 있다. 세션을 끊지 말고 다시 만든다
+                        Trace.WriteLine($"캡처 예외, 재생성: {ex.Message}");
+                        capturer.Dispose();
+                        capturer = null;
+                        Thread.Sleep(200);
+                        continue;
+                    }
                     if (status == CaptureStatus.Lost)
                     {
                         capturer.Dispose();
@@ -357,7 +382,7 @@ internal static class RemoteSessionApp
 
                     if (status == CaptureStatus.NewFrame)
                     {
-                        Nv12Converter.Convert(bgra, capturer.Bounds.Width, nv12, encoder!.Width, encoder.Height, scale);
+                        Nv12Converter.Convert(bgra, capturer.Bounds.Width, capturer.Bounds.Height, nv12, encoder!.Width, encoder.Height);
                         hasFrame = true;
                     }
                     else if (!_keyFrameRequested || !hasFrame)
@@ -401,6 +426,28 @@ internal static class RemoteSessionApp
                 capturer?.Dispose();
                 encoder?.Dispose();
             }
+        }
+
+        /// <summary>대시보드 화면 크기에 맞춘 인코딩 해상도 (가로세로 비 유지, 원본보다 크게 늘리지 않음, 짝수)</summary>
+        private (int Width, int Height) TargetSize(Rectangle native)
+        {
+            var vw = _viewWidth;
+            var vh = _viewHeight;
+            int tw, th;
+            if (vw <= 0 || vh <= 0)
+            {
+                // 아직 대시보드 크기를 모른다: 너무 크면 절반으로 줄인다
+                var half = native.Width > MaxEncodeWidth;
+                tw = half ? native.Width / 2 : native.Width;
+                th = half ? native.Height / 2 : native.Height;
+            }
+            else
+            {
+                var s = Math.Min(1.0, Math.Min((double)vw / native.Width, (double)vh / native.Height));
+                tw = (int)Math.Round(native.Width * s);
+                th = (int)Math.Round(native.Height * s);
+            }
+            return (Math.Max(2, tw & ~1), Math.Max(2, th & ~1));
         }
 
         private static IScreenCapturer CreateCapturer(Rectangle bounds, bool preferGdi)

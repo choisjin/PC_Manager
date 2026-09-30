@@ -47,6 +47,14 @@ public class RemoteControlService(AgentSettingsStore settings, ILogger<RemoteCon
                 if (sessionIdToUse is not { } target)
                     return "화면이 있는 세션을 찾지 못했습니다.";
 
+                // 원격조작을 RDP보다 우선한다: 대상 세션이 RDP로 연결돼 있으면 물리 콘솔로 옮긴다
+                // (RDP 클라이언트 연결은 끊기고, 세션은 앱 상태를 유지한 채 콘솔에 표시돼 여기서 캡처된다)
+                if (SessionProcess.IsRemoteSession(target))
+                {
+                    var moved = SessionProcess.ConnectSessionToConsole(target);
+                    logger.LogInformation("세션 {SessionId}이(가) RDP 연결 중 → 콘솔로 전환 {Result}", target, moved ? "성공" : "실패");
+                }
+
                 var pid = SessionProcess.StartAsSystemInSession(target, exePath, $"{SessionArgument} \"{url}\"");
                 logger.LogInformation("원격조작 시작: 세션 {SessionId}, PID {Pid}", target, pid);
             }
