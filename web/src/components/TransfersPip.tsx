@@ -158,7 +158,24 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
   }, [])
   // 채팅 탭을 안 보고 있을 때 새로 온 메시지 수
   const [unread, setUnread] = useState(0)
-  const seenRef = useRef<number>(chat[chat.length - 1]?.id ?? 0)
+  // 마지막으로 본/알린 메시지 번호는 사용자별로 브라우저에 기억한다 (새로 열 때 옛 메시지를 다시 알리지 않도록)
+  const markKey = (kind: 'seen' | 'notified') => `pcm.chat.${kind}.${selfUserId ?? 'anon'}`
+  const loadMark = (kind: 'seen' | 'notified') => {
+    try {
+      return Number(localStorage.getItem(markKey(kind))) || 0
+    } catch {
+      return 0
+    }
+  }
+  const saveMark = (kind: 'seen' | 'notified', id: number) => {
+    try {
+      localStorage.setItem(markKey(kind), String(id))
+    } catch {
+      // 무시
+    }
+  }
+  const seenRef = useRef<number>(loadMark('seen'))
+  const marksForRef = useRef<string | null>(selfUserId)
   const chatBodyRef = useRef<HTMLDivElement>(null)
 
   const switchTab = (next: PipTab) => {
@@ -180,12 +197,31 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
   const activeList = transfers.filter((t) => t.state === 'Pending')
   const recent = transfers.filter((t) => t.state !== 'Pending').slice(0, 5)
 
-  const notifiedRef = useRef<number>(chat[chat.length - 1]?.id ?? 0)
+  const notifiedRef = useRef<number>(loadMark('notified'))
   useEffect(() => {
+    if (chat.length === 0) return
+    // 사용자가 바뀌면 그 사용자의 기록으로 다시 읽는다
+    if (marksForRef.current !== selfUserId) {
+      marksForRef.current = selfUserId
+      seenRef.current = loadMark('seen')
+      notifiedRef.current = loadMark('notified')
+    }
     const last = chat[chat.length - 1]?.id ?? 0
+    // 이 브라우저에서 처음 보는 기록(저장된 기준 없음)은 이미 지난 대화로 보고 알리지 않는다
+    if (notifiedRef.current === 0) {
+      notifiedRef.current = last
+      saveMark('notified', last)
+      if (seenRef.current === 0) {
+        seenRef.current = last
+        saveMark('seen', last)
+      }
+    }
     // 새로 온 남의 메시지: 창이 뒤에 있거나(포커스 없음/숨김) 채팅 탭이 안 보이면 알린다. 나를 호출했으면 항상
     const fresh = chat.filter((m) => m.id > notifiedRef.current && m.userId !== selfUserId)
-    notifiedRef.current = Math.max(notifiedRef.current, last)
+    if (last > notifiedRef.current) {
+      notifiedRef.current = last
+      saveMark('notified', last)
+    }
     const away = document.hidden || !document.hasFocus()
     const chatVisible = tab === 'chat' && !collapsed
     for (const m of fresh) {
@@ -195,6 +231,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
     if (last <= seenRef.current) return
     if (chatVisible && !away) {
       seenRef.current = last
+      saveMark('seen', last)
       setUnread(0)
     } else {
       setUnread(chat.filter((m) => m.id > seenRef.current && m.userId !== selfUserId).length)
