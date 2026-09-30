@@ -121,6 +121,8 @@ export interface Transfer {
   finishedAt: string | null
   /** 진행률(0-100). 압축·PC 간 전송 중에만 채워진다 */
   percent?: number | null
+  /** 이 전송을 실행한 사용자 id */
+  startedByUserId?: string | null
 }
 
 export interface Artifact {
@@ -260,10 +262,20 @@ function errorMessage(status: number, body: string) {
   return body
 }
 
+// 현재 로그인(선택)한 사용자 id. 전송 기록에 "누가 실행했는지" 남기기 위해 헤더로 보낸다.
+let currentUserId: string | null = null
+export function setCurrentUser(userId: string | null) {
+  currentUserId = userId
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(currentUserId ? { 'X-User-Id': currentUserId } : {}),
+      ...init?.headers,
+    },
   })
   if (!res.ok) throw new Error(errorMessage(res.status, await res.text()))
   const text = await res.text()

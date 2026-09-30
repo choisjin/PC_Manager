@@ -6,7 +6,7 @@ namespace PcManager.Server.Contracts;
 public record TransferView(
     string Id, string AgentId, TransferKind Kind, string? JobRunId, int? StepIndex, string? Path,
     TransferState State, int FileCount, long TotalBytes, string? Error, DateTime CreatedAt, DateTime? FinishedAt,
-    int? Percent = null);
+    int? Percent = null, string? StartedByUserId = null);
 
 public record ArtifactView(
     string Id, string TransferId, string AgentId, string? JobRunId, string RelativePath, long Size, DateTime CreatedAt,
@@ -43,7 +43,7 @@ public static class JobViewMappings
 {
     public static TransferView ToView(this TransferEntity t) => new(
         t.Id, t.AgentId, t.Kind, t.JobRunId, t.StepIndex, t.Path,
-        t.State, t.FileCount, t.TotalBytes, t.Error, t.CreatedAt, t.FinishedAt);
+        t.State, t.FileCount, t.TotalBytes, t.Error, t.CreatedAt, t.FinishedAt, null, t.StartedByUserId);
 
     public static ArtifactView ToView(this ArtifactEntity a) => new(
         a.Id, a.TransferId, a.AgentId, a.JobRunId, a.RelativePath, a.Size, a.CreatedAt,

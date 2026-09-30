@@ -7,7 +7,6 @@ import { Icon } from './explorer/Icon'
 import type { PaneController } from './explorer/paneController'
 import { PcTree } from './explorer/PcTree'
 import { AGENT_MIME, displayName, type FileClipboard, newId } from './explorer/pcGroups'
-import { TransfersBar } from './explorer/TransfersBar'
 
 interface Props {
   agents: Agent[]
@@ -226,8 +225,6 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
             )
           })}
         </div>
-
-        <TransfersBar agentById={agentById} subscribeTransfers={subscribeTransfers} />
 
         {/* 공용 하단 상태 표시줄 (활성 창 기준) */}
         <div className="explorer-status">

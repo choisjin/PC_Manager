@@ -1,9 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { setCurrentUser } from './api'
 import { FileExplorer } from './components/FileExplorer'
+import { useTransfers } from './components/explorer/useTransfers'
 import { type Identity, SelectGate } from './components/SelectGate'
 import { SettingsModal } from './components/SettingsModal'
+import { TransfersPage } from './components/TransfersPage'
+import { TransfersPip } from './components/TransfersPip'
 import { UpdateDialog } from './components/UpdateDialog'
 import { useDashboard } from './useDashboard'
+
+type Page = 'files' | 'transfers'
 
 function cmpVersion(a: string, b: string) {
   const pa = a.split('.').map(Number)
@@ -50,6 +56,25 @@ export default function App() {
   const [showUpdate, setShowUpdate] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showGate, setShowGate] = useState(false)
+  const [page, setPage] = useState<Page>('files')
+
+  // 전송 기록/PiP 공용 데이터 (한 번만 구독)
+  const { transfers, artifactByTransfer } = useTransfers(subscribeTransfers)
+
+  // 전송 요청 헤더에 현재 사용자 id를 실어 "누가 실행했는지" 기록
+  useEffect(() => {
+    setCurrentUser(identity?.userId ?? null)
+  }, [identity?.userId])
+
+  // id → 이름 해석 (PC/공유, 사용자)
+  const nameById = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const a of agents) m.set(a.id, a.machineName)
+    for (const s of shares) m.set(s.id, s.name)
+    return m
+  }, [agents, shares])
+  const machineName = (id: string) => nameById.get(id) ?? id.slice(0, 8)
+  const userName = (id: string | null | undefined) => (id ? org.users.find((u) => u.id === id)?.name ?? '(삭제된 사용자)' : null)
 
   const outdatedAgentCount = updateStatus
     ? agents.filter((a) => a.online && cmpVersion(a.agentVersion, updateStatus.currentVersion) < 0).length
@@ -83,6 +108,15 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <h1>PC Manager</h1>
+        <nav className="tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={page === 'files'} className={page === 'files' ? 'active' : ''} onClick={() => setPage('files')}>
+            파일 탐색기
+          </button>
+          <button type="button" role="tab" aria-selected={page === 'transfers'} className={page === 'transfers' ? 'active' : ''} onClick={() => setPage('transfers')}>
+            전송 기록
+            {transfers.some((t) => t.state === 'Pending') && <span className="tab-badge">{transfers.filter((t) => t.state === 'Pending').length}</span>}
+          </button>
+        </nav>
         <span className="topbar-right">
           <button type="button" className="identity-chip" onClick={() => setShowGate(true)} title="프로젝트·사용자 변경">
             <span className="identity-project">{project?.name ?? '전체 보기'}</span>
@@ -111,25 +145,32 @@ export default function App() {
       {showSettings && <SettingsModal org={org} actions={orgActions} onClose={() => setShowSettings(false)} />}
 
       <main className="layout full">
-        <FileExplorer
-          agents={agents}
-          pcGroups={pcGroups}
-          saveGroups={saveGroups}
-          favorites={favorites}
-          setAgentFavorites={setAgentFavorites}
-          shares={shares}
-          addShare={addShare}
-          removeShare={removeShare}
-          org={org}
-          setAgentProject={orgActions.setAgentProject}
-          presence={presence}
-          filterProjectId={identity.projectId}
-          selfUserId={identity.userId}
-          announcePresence={announcePresence}
-          subscribeTransfers={subscribeTransfers}
-          watchRun={watchRun}
-        />
+        {page === 'files' ? (
+          <FileExplorer
+            agents={agents}
+            pcGroups={pcGroups}
+            saveGroups={saveGroups}
+            favorites={favorites}
+            setAgentFavorites={setAgentFavorites}
+            shares={shares}
+            addShare={addShare}
+            removeShare={removeShare}
+            org={org}
+            setAgentProject={orgActions.setAgentProject}
+            presence={presence}
+            filterProjectId={identity.projectId}
+            selfUserId={identity.userId}
+            announcePresence={announcePresence}
+            subscribeTransfers={subscribeTransfers}
+            watchRun={watchRun}
+          />
+        ) : (
+          <TransfersPage transfers={transfers} artifactByTransfer={artifactByTransfer} machineName={machineName} userName={userName} />
+        )}
       </main>
+
+      {/* 어디서든 보이는 전송 진행률·알림 위젯 */}
+      <TransfersPip transfers={transfers} machineName={machineName} userName={userName} />
     </div>
   )
 }

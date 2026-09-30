@@ -16,6 +16,7 @@ public class TransferService(
     IHubContext<AgentHub, IAgentClient> agentHub,
     IHubContext<AgentHub> agentHubRaw,
     IHubContext<DashboardHub, IDashboardClient> dashboard,
+    IHttpContextAccessor httpContext,
     ILogger<TransferService> logger)
 {
     // PC 간 직접 전송 시 한 번에 옮기는 조각 크기 (서버 디스크를 거치지 않고 원본→대상으로 중계)
@@ -338,7 +339,7 @@ public class TransferService(
         return await db.Transfers.AsNoTracking().FirstOrDefaultAsync(t => t.Id == transferId);
     }
 
-    private static TransferEntity NewTransfer(string agentId, TransferKind kind, string? path) => new()
+    private TransferEntity NewTransfer(string agentId, TransferKind kind, string? path) => new()
     {
         Id = Guid.NewGuid().ToString("N"),
         AgentId = agentId,
@@ -346,7 +347,15 @@ public class TransferService(
         Path = path,
         State = TransferState.Pending,
         CreatedAt = DateTime.UtcNow,
+        StartedByUserId = CurrentUserId(),
     };
+
+    /// <summary>현재 HTTP 요청 헤더(X-User-Id)에서 실행 사용자 id를 읽는다. 없으면 null.</summary>
+    private string? CurrentUserId()
+    {
+        var value = httpContext.HttpContext?.Request.Headers["X-User-Id"].ToString();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
 
     private async Task DispatchAsync(TransferEntity transfer, Func<IAgentClient, Task> send)
     {

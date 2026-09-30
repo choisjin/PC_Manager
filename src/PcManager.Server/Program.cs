@@ -38,6 +38,7 @@ builder.Services.AddSingleton<SharedFolderStore>();
 builder.Services.AddSingleton<LocalShareFiles>();
 builder.Services.AddSingleton<OrgStore>();
 builder.Services.AddSingleton<PresenceRegistry>();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<RunService>();
 builder.Services.AddSingleton<ArtifactStore>();
 builder.Services.AddSingleton<CompletionNotifier>();
@@ -52,6 +53,15 @@ var app = builder.Build();
 await using (var db = await app.Services.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContextAsync())
 {
     await db.Database.EnsureCreatedAsync();
+    // EnsureCreated는 기존 DB에 새 컬럼을 추가하지 않으므로, 없으면 안전하게 추가한다.
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Transfers ADD COLUMN StartedByUserId TEXT");
+    }
+    catch (Microsoft.Data.Sqlite.SqliteException)
+    {
+        // 이미 컬럼이 있으면 무시
+    }
 }
 await app.Services.GetRequiredService<JobService>().RecoverInterruptedAsync();
 

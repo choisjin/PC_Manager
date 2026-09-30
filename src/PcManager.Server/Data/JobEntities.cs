@@ -111,6 +111,9 @@ public class TransferEntity
     public string? Error { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? FinishedAt { get; set; }
+
+    /// <summary>이 전송을 실행한 사용자 id (파일 탐색기에서 선택한 사용자). 없으면 null</summary>
+    public string? StartedByUserId { get; set; }
 }
 
 /// <summary>서버에 저장된 결과 파일</summary>
