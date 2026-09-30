@@ -356,7 +356,7 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
       }
       showHint(
         https
-          ? `Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: ${https}  (지금은 위 아이콘으로 보낼 수 있습니다)`
+          ? `Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: ${https}  (인증서 경고가 뜨면 'PC 추가' 창의 인증서 설치 도구를 한 번 실행). 지금은 위 아이콘으로 보낼 수 있습니다.`
           : 'Alt+Tab·Win 키를 직접 누르려면 HTTPS(또는 localhost)로 접속해야 합니다. 지금은 위 아이콘으로 보낼 수 있습니다.',
       )
     } else {

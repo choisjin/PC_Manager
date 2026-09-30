@@ -48,7 +48,8 @@
 - 로컬에서 가로채는 특수 키(Ctrl+Alt+Del, Win, Alt+Tab…)는 아이콘 버튼으로 전송. 창 모드는 상단바, 전체 화면은 반투명 PiP
 - 전체 화면 + Keyboard Lock API(HTTPS 필요)면 Ctrl+Alt+Del을 뺀 특수 키를 직접 눌러도 원격으로 간다
 - HTTPS: 설치 스크립트가 자체 서명 인증서(SAN: 호스트명·IPv4·localhost)를 LocalMachine\My에 만들고 Kestrel HTTPS 포트(기본 5064)를 연다.
-  공개 인증서는 `/api/install/PcManager-Server.cer`로 배포. 에이전트는 HTTP로 접속하므로 테스트 PC에는 인증서가 필요 없다
+  신뢰는 자동: 서버는 시작 시(`Program.cs`), 에이전트는 등록 시(`ServerCertificateTrust`) `CertificateTrust.EnsureTrustedRoot`로 LocalMachine\Root에 넣는다.
+  에이전트 없는 PC는 `/api/install/PcManager-인증서-설치.cmd`(자체 승격 배치)로 한 번 설치. 에이전트 통신 자체는 HTTP 그대로
 - 메시지 형식은 `RemoteSessionApp.cs` 주석 참고
 - 추후: 하드웨어 인코더(비동기 MFT), 커서 모양, 클립보드 동기화, 오디오, WebRTC P2P
 

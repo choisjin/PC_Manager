@@ -64,6 +64,22 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Ap
         // 이미 컬럼이 있으면 무시
     }
 }
+// HTTPS 자체 서명 인증서를 이 PC의 신뢰 저장소에 넣는다 (서비스 = LocalSystem 권한). 서버 PC에서 대시보드를 열 때 경고 방지
+if (WindowsServiceHelpers.IsWindowsService()
+    && builder.Configuration["Kestrel:Endpoints:Https:Certificate:Subject"] is { Length: > 0 } certSubject)
+{
+    try
+    {
+        using var cert = CertificateTrust.FindServerCertificate(certSubject);
+        if (cert is not null && CertificateTrust.EnsureTrustedRoot(cert))
+            app.Logger.LogInformation("HTTPS 인증서를 신뢰 저장소에 추가했습니다 ({Thumbprint})", cert.Thumbprint);
+    }
+    catch (Exception ex) when (ex is System.Security.Cryptography.CryptographicException or UnauthorizedAccessException)
+    {
+        app.Logger.LogWarning("HTTPS 인증서 신뢰 설정 실패: {Message}", ex.Message);
+    }
+}
+
 // 자격증명이 있는 공유 서버에 다시 로그온한다 (best-effort)
 app.Services.GetRequiredService<SharedFolderStore>().ReconnectAll();
 

@@ -15,6 +15,7 @@ public class AgentWorker(
     FileTransferService files,
     AgentUpdater updater,
     Remote.RemoteControlService remote,
+    ServerCertificateTrust certificateTrust,
     OutboundQueue outbound,
     ILogger<AgentWorker> logger) : BackgroundService
 {
@@ -191,6 +192,9 @@ public class AgentWorker(
         var (version, _) = await ServerInfoClient.ProbeAsync(settings.ServerUrl, ct);
         if (version is not null)
             status.SetServerVersion(version);
+
+        // 이 PC에서 대시보드를 HTTPS로 열 때 경고가 없도록 서버 인증서를 신뢰 저장소에 넣는다 (best-effort)
+        await certificateTrust.EnsureAsync(settings.ServerUrl, ct);
     }
 
     private async Task PumpOutboundAsync(CancellationToken ct)

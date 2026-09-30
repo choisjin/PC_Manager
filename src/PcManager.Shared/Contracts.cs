@@ -88,6 +88,12 @@ public static class InstallPaths
 
     /// <summary>서버가 제공하는 에이전트 설치 파일 다운로드 경로</summary>
     public static string AgentSetup => "/api/install/" + AgentSetupFile;
+
+    /// <summary>서버 HTTPS 공개 인증서 파일 (설치 스크립트가 내보냄, /api/install/ 아래로 배포)</summary>
+    public const string ServerCertificateFile = "PcManager-Server.cer";
+
+    /// <summary>대시보드 PC용 인증서 신뢰 설치 도구 (더블클릭, UAC 승인 한 번)</summary>
+    public const string CertificateInstallerFile = "PcManager-인증서-설치.cmd";
 }
 
 /// <summary>파일 전송용 HTTP 경로 (에이전트 토큰 필요)</summary>

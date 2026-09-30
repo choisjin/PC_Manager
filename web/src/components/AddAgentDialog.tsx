@@ -88,6 +88,29 @@ export function AddAgentDialog({ onClose }: Props) {
           설치 파일은 관리자 권한을 요청합니다(서비스 등록). 이미 설치된 PC에서 다시 실행하면 업그레이드됩니다. 서버 주소는
           런처 창에서 언제든 바꿀 수 있습니다.
         </p>
+
+        {info?.httpsUrl && (
+          <>
+            <label>
+              대시보드 HTTPS 주소 (원격조작 키보드 잠금·저지연 화면)
+              <div className="server-url-row">
+                <input className="mono" readOnly value={info.httpsUrl} onFocus={(e) => e.currentTarget.select()} />
+                <a className="button" href={info.httpsUrl}>열기</a>
+              </div>
+            </label>
+            <p className="hint">
+              서버 PC와 에이전트가 설치된 PC는 인증서가 자동으로 신뢰됩니다. 그 밖의 PC에서 경고 없이 열려면{' '}
+              {info.certificateInstallerUrl ? (
+                <a href={info.certificateInstallerUrl} download>
+                  인증서 설치 도구
+                </a>
+              ) : (
+                '인증서 설치 도구'
+              )}
+              를 받아 더블클릭하세요 (관리자 승인 한 번).
+            </p>
+          </>
+        )}
       </div>
     </dialog>
   )

@@ -17,8 +17,8 @@
 .NOTES
   HTTPS: 자체 서명 인증서를 만들어 HTTPS 포트(기본 = HTTP 포트 + 1)도 함께 엽니다.
   원격조작의 키보드 잠금(Alt+Tab·Win 키 전달)과 저지연 디코딩은 브라우저 정책상 HTTPS에서만 동작합니다.
-  대시보드를 여는 PC에서 인증서 파일(PcManager-Server.cer)을 '신뢰할 수 있는 루트 인증 기관'에 한 번 설치하면 경고 없이 열립니다.
-  에이전트는 계속 HTTP 주소로 접속하므로 테스트 PC에는 인증서를 설치할 필요가 없습니다.
+  인증서 신뢰는 자동입니다: 서버는 시작할 때, 에이전트는 서버에 등록될 때 각자 PC의 '신뢰할 수 있는 루트 인증 기관'에 넣습니다.
+  에이전트가 없는 PC(관리자 워크스테이션)는 대시보드 'PC 추가' 창의 인증서 설치 도구(.cmd)를 한 번 실행하면 됩니다.
 #>
 param(
     [int] $Port = 5063,
@@ -244,9 +244,7 @@ Write-Host "대시보드 주소 : $DashboardHttpsUrl  (원격조작 권장)"
 Write-Host "                $PublicUrl  (HTTP)"
 Write-Host "에이전트 주소 : $PublicUrl  (테스트 PC 런처에 입력, HTTP 그대로)"
 Write-Host "에이전트 설치 : 대시보드 왼쪽 'PC 추가' > 설치 파일 다운로드 > 테스트 PC에서 더블클릭 > 서버 주소 입력"
-Write-Host "HTTPS 인증서  : $CertExportPath"
-Write-Host "                대시보드를 여는 PC에서 이 파일을 더블클릭 > 인증서 설치 > 로컬 컴퓨터 > '신뢰할 수 있는 루트 인증 기관'"
-Write-Host "                (또는 $PublicUrl/api/install/PcManager-Server.cer 에서 다운로드)"
+Write-Host "HTTPS 인증서  : 이 PC와 에이전트 PC는 자동 신뢰. 그 밖의 PC는 $PublicUrl/api/install/PcManager-인증서-설치.cmd 를 받아 더블클릭"
 Write-Host "설정 파일     : $ConfigPath (변경 후 'Restart-Service $ServiceName')"
 Write-Host ''
 Write-Warning '현재 버전은 대시보드 로그인이 없습니다. 신뢰할 수 있는 내부망에서만 사용하세요.'

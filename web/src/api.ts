@@ -246,6 +246,8 @@ export interface InstallInfo {
   httpsUrl: string | null
   /** 자체 서명 인증서(.cer) 다운로드 경로. 없으면 null */
   certificateDownloadUrl: string | null
+  /** 대시보드 PC용 인증서 신뢰 설치 도구(.cmd) 경로. 없으면 null */
+  certificateInstallerUrl: string | null
 }
 
 export const isActiveRun = (state: RunState) => state === 'Pending' || state === 'Running'
