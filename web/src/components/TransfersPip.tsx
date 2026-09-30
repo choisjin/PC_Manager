@@ -11,6 +11,20 @@ interface Props {
   users: OrgUser[]
   selfUserId: string | null
   onSendChat: (userId: string, text: string, mentions: string[]) => void
+  onMarkRead: (userId: string, messageId: number) => void
+}
+
+const SIZE_KEY = 'pcm.pip.size'
+const MIN_W = 240
+const MIN_H = 180
+
+function loadSize(): { w: number; h: number } | null {
+  try {
+    const raw = localStorage.getItem(SIZE_KEY)
+    return raw ? (JSON.parse(raw) as { w: number; h: number }) : null
+  } catch {
+    return null
+  }
 }
 
 /** 커서 앞의 "@이름" 입력 조각 (드롭다운 표시용) */
@@ -92,8 +106,54 @@ function loadPos(): { x: number; y: number } {
 }
 
 /** 전송 진행률·알림을 띄우는 떠 있는 위젯 (드래그 이동 + 펴고 접기) */
-export function TransfersPip({ transfers, machineName, userName, chat, users, selfUserId, onSendChat }: Props) {
+export function TransfersPip({ transfers, machineName, userName, chat, users, selfUserId, onSendChat, onMarkRead }: Props) {
   const [pos, setPos] = useState(loadPos)
+  // 위젯 크기 (오른쪽 아래 모서리를 끌어 조절). null이면 기본
+  const [size, setSize] = useState<{ w: number; h: number } | null>(loadSize)
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const el = (e.currentTarget as HTMLElement).parentElement as HTMLElement
+    const startX = e.clientX
+    const startY = e.clientY
+    const startW = el.offsetWidth
+    const startH = el.offsetHeight
+    const startPos = pos
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.max(MIN_W, Math.min(window.innerWidth - 8, startW + ev.clientX - startX))
+      const h = Math.max(MIN_H, Math.min(window.innerHeight - 8, startH + ev.clientY - startY))
+      setSize({ w, h })
+      // 화면 가장자리에 붙어 있으면 키우는 만큼 왼쪽/위로 밀어 준다
+      setPos({
+        x: Math.min(startPos.x, Math.max(4, window.innerWidth - 4 - w)),
+        y: Math.min(startPos.y, Math.max(4, window.innerHeight - 4 - h)),
+      })
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setSize((s) => {
+        try {
+          if (s) localStorage.setItem(SIZE_KEY, JSON.stringify(s))
+        } catch {
+          // 무시
+        }
+        return s
+      })
+      setPos((p) => {
+        try {
+          localStorage.setItem(POS_KEY, JSON.stringify(p))
+        } catch {
+          // 무시
+        }
+        return p
+      })
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+  const HEAD_H = 30
+  const bodyStyle = size ? { height: size.h - HEAD_H, maxHeight: 'none' as const } : undefined
   const [tab, setTab] = useState<PipTab>(() => {
     try {
       return localStorage.getItem(TAB_KEY) === 'chat' ? 'chat' : 'transfers'
@@ -197,6 +257,24 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
   const activeList = transfers.filter((t) => t.state === 'Pending')
   const recent = transfers.filter((t) => t.state !== 'Pending').slice(0, 5)
 
+  const isMentionToMe = (m: ChatMessage) => !!selfUserId && m.userId !== selfUserId && (m.mentions ?? []).includes(selfUserId)
+  const isUnreadMention = (m: ChatMessage) => isMentionToMe(m) && !(m.readBy ?? []).includes(selfUserId!)
+  const unreadMentions = chat.filter(isUnreadMention)
+  // 읽음 처리 전까지 탭 제목에 표시 (깜빡임이 끝나도 남는다)
+  useEffect(() => {
+    baseTitleRef.current = unreadMentions.length > 0 ? `(📣${unreadMentions.length}) Don't Move` : "Don't Move"
+    if (!titleTimerRef.current) document.title = baseTitleRef.current
+  }, [unreadMentions.length])
+  // 새로 열었을 때 읽지 않은 호출이 있으면 다시 알린다 (읽음 처리해야 멈춘다)
+  const remindedRef = useRef(false)
+  useEffect(() => {
+    if (remindedRef.current || chat.length === 0) return
+    remindedRef.current = true
+    const pending = chat.filter(isUnreadMention)
+    if (pending.length > 0) notify(pending[pending.length - 1], true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chat.length])
+
   const notifiedRef = useRef<number>(loadMark('notified'))
   useEffect(() => {
     if (chat.length === 0) return
@@ -228,14 +306,12 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
       const mentioned = !!selfUserId && (m.mentions ?? []).includes(selfUserId)
       if (mentioned || away || !chatVisible) notify(m, mentioned)
     }
-    if (last <= seenRef.current) return
-    if (chatVisible && !away) {
+    if (chatVisible && !away && last > seenRef.current) {
       seenRef.current = last
       saveMark('seen', last)
-      setUnread(0)
-    } else {
-      setUnread(chat.filter((m) => m.id > seenRef.current && m.userId !== selfUserId).length)
     }
+    // 배지 = 아직 안 본 남의 메시지 + 읽음 처리 안 한 호출
+    setUnread(chat.filter((m) => m.userId !== selfUserId && (m.id > seenRef.current || isUnreadMention(m))).length)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat, tab, collapsed, selfUserId])
 
@@ -306,7 +382,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
   }
 
   return (
-    <div className={`pip${collapsed ? ' collapsed' : ''}`} style={{ left: pos.x, top: pos.y }}>
+    <div className={`pip${collapsed ? ' collapsed' : ''}`} style={{ left: pos.x, top: pos.y, ...(size && !collapsed ? { width: size.w } : {}) }}>
       <div className="pip-head" onMouseDown={startDrag}>
         <span className="pip-title">
           <span className="pip-grip" aria-hidden="true">⠿</span>
@@ -327,17 +403,37 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
       </div>
 
       {!collapsed && tab === 'chat' && (
-        <div className="pip-body pip-chat">
+        <div className="pip-body pip-chat" style={bodyStyle}>
           <div className="pip-chat-list" ref={chatBodyRef}>
             {chat.length === 0 && <div className="pip-empty muted small">아직 메시지가 없습니다</div>}
             {chat.map((m) => {
               const mine = m.userId === selfUserId
               return (
-                <div key={m.id} className={`chat-msg${mine ? ' mine' : ''}${!mine && selfUserId && (m.mentions ?? []).includes(selfUserId) ? ' to-me' : ''}`}>
+                <div key={m.id} className={`chat-msg${mine ? ' mine' : ''}${isMentionToMe(m) ? (isUnreadMention(m) ? ' to-me unread' : ' to-me') : ''}`}>
                   <div className="chat-meta small muted">
                     {mine ? '나' : userName(m.userId) ?? '알 수 없음'} · {timeText(m.at)}
                   </div>
                   <div className="chat-text">{renderText(m.text, users)}</div>
+                  {isMentionToMe(m) && (
+                    <div className="chat-read small">
+                      {isUnreadMention(m) ? (
+                        <button type="button" className="chat-read-btn" onClick={() => selfUserId && onMarkRead(selfUserId, m.id)}>
+                          읽음 처리
+                        </button>
+                      ) : (
+                        <span className="muted">✓ 읽음</span>
+                      )}
+                    </div>
+                  )}
+                  {mine && (m.mentions ?? []).length > 0 && (
+                    <div className="chat-read small muted">
+                      {(() => {
+                        const read = (m.mentions ?? []).filter((id) => (m.readBy ?? []).includes(id)).map((id) => userName(id) ?? '?')
+                        const wait = (m.mentions ?? []).filter((id) => !(m.readBy ?? []).includes(id)).map((id) => userName(id) ?? '?')
+                        return `${read.length ? `✓ 읽음: ${read.join(', ')}` : ''}${read.length && wait.length ? ' · ' : ''}${wait.length ? `안 읽음: ${wait.join(', ')}` : ''}`
+                      })()}
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -410,7 +506,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
       )}
 
       {!collapsed && tab === 'transfers' && (
-        <div className="pip-body">
+        <div className="pip-body" style={bodyStyle}>
           {activeList.length === 0 && recent.length === 0 && <div className="pip-empty muted small">전송 없음</div>}
 
           {activeList.map((t) => {
@@ -447,6 +543,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
           )}
         </div>
       )}
-    </div>
+          {!collapsed && <div className="pip-resize" title="드래그해서 크기 조절" onMouseDown={startResize} />}
+</div>
   )
 }

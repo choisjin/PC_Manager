@@ -114,7 +114,9 @@ public class ChatStore(AppPaths paths)
 
     private readonly Lock _lock = new();
     private readonly string _path = Path.Combine(paths.DataDirectory, "chat.jsonl");
+    private readonly string _readsPath = Path.Combine(paths.DataDirectory, "chat-reads.json");
     private List<ChatMessageView>? _messages;
+    private Dictionary<long, HashSet<string>>? _reads;
     private long _nextId;
 
     public IReadOnlyList<ChatMessageView> Recent(int take)
@@ -122,8 +124,54 @@ public class ChatStore(AppPaths paths)
         lock (_lock)
         {
             var list = Messages();
-            return list.Skip(Math.Max(0, list.Count - take)).ToList();
+            var reads = Reads();
+            return list.Skip(Math.Max(0, list.Count - take))
+                .Select(m => reads.TryGetValue(m.Id, out var by) ? m with { ReadBy = by.ToList() } : m)
+                .ToList();
         }
+    }
+
+    /// <summary>사용자가 메시지를 읽음 처리한다 (호출 메시지의 읽음 확인용)</summary>
+    public ChatReadView MarkRead(long messageId, string userId)
+    {
+        lock (_lock)
+        {
+            var reads = Reads();
+            if (!reads.TryGetValue(messageId, out var by))
+                reads[messageId] = by = [];
+            if (by.Add(userId))
+            {
+                // 보관하지 않는 옛 메시지의 읽음 기록은 정리
+                var keep = Messages().Select(m => m.Id).ToHashSet();
+                foreach (var id in reads.Keys.Where(id => !keep.Contains(id)).ToList())
+                    reads.Remove(id);
+                Directory.CreateDirectory(Path.GetDirectoryName(_readsPath)!);
+                File.WriteAllText(_readsPath, JsonSerializer.Serialize(reads.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value.ToList()), Json));
+            }
+            return new ChatReadView(messageId, by.ToList());
+        }
+    }
+
+    private Dictionary<long, HashSet<string>> Reads()
+    {
+        if (_reads is not null)
+            return _reads;
+        _reads = [];
+        try
+        {
+            if (File.Exists(_readsPath))
+            {
+                var raw = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(File.ReadAllText(_readsPath), Json) ?? [];
+                foreach (var (k, v) in raw)
+                    if (long.TryParse(k, out var id))
+                        _reads[id] = v.ToHashSet();
+            }
+        }
+        catch (JsonException)
+        {
+            // 깨졌으면 새로 시작
+        }
+        return _reads;
     }
 
     public ChatMessageView Add(string userId, string text, IReadOnlyList<string>? mentions = null)

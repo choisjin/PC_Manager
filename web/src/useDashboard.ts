@@ -176,6 +176,9 @@ export function useDashboard() {
     connection.on('PresenceChanged', (viewers: Record<string, string[]>) => setPresence(viewers))
     connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
     connection.on('RemoteUsageChanged', (v: RemoteUsage) => setRemoteUsage(v.inUseBy))
+    connection.on('ChatReadChanged', (r: { messageId: number; readBy: string[] }) =>
+      setChat((prev) => prev.map((m) => (m.id === r.messageId ? { ...m, readBy: r.readBy } : m))),
+    )
     connection.on('ThumbnailUpdated', (t: Thumbnail) => setThumbnails((prev) => ({ ...prev, [t.agentId]: t })))
     connection.on('ChatMessage', (m: ChatMessage) => setChat((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m].slice(-500))))
 
@@ -350,6 +353,10 @@ export function useDashboard() {
     connectionRef.current?.invoke('WatchThumbnails', agentIds).catch(() => {})
   }, [])
 
+  const markChatRead = useCallback((userId: string, messageId: number) => {
+    connectionRef.current?.invoke('MarkChatRead', userId, messageId).catch((err) => console.error('읽음 처리 실패', err))
+  }, [])
+
   const sendChat = useCallback((userId: string, text: string, mentions: string[] = []) => {
     connectionRef.current?.invoke('SendChat', userId, text, mentions).catch((err) => console.error('채팅 전송 실패', err))
   }, [])
@@ -382,6 +389,7 @@ export function useDashboard() {
     remoteUsage,
     chat,
     sendChat,
+    markChatRead,
     thumbnails,
     watchThumbnails,
     connected,

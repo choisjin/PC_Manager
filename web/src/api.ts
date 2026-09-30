@@ -272,6 +272,8 @@ export interface ChatMessage {
   at: string
   /** @로 호출한 userId 목록 */
   mentions?: string[]
+  /** 읽음 처리한 userId 목록 */
+  readBy?: string[]
 }
 
 /** Remote 화면용 PC 미리보기 */

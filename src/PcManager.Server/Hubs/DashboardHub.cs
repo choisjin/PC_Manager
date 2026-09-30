@@ -23,12 +23,21 @@ public interface IDashboardClient
     Task PcStatusesChanged(PcStatusesView statuses);
     Task RemoteUsageChanged(RemoteUsageView usage);
     Task ChatMessage(ChatMessageView message);
+    Task ChatReadChanged(ChatReadView read);
     Task ThumbnailUpdated(ThumbnailView thumbnail);
 }
 
 /// <summary>웹 대시보드가 접속하는 Hub. 출력은 보고 있는 실행에만 전달한다.</summary>
 public class DashboardHub(PresenceRegistry presence, ChatStore chat, ThumbnailService thumbnails) : Hub<IDashboardClient>
 {
+    /// <summary>메시지 읽음 처리 (호출받은 사람이 확인 버튼을 누름)</summary>
+    public async Task MarkChatRead(string userId, long messageId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+            return;
+        await Clients.All.ChatReadChanged(chat.MarkRead(messageId, userId));
+    }
+
     /// <summary>Remote 화면에서 보고 싶은 PC 목록 (빈 목록이면 구독 해제). 마지막 썸네일은 바로 보내 준다</summary>
     public async Task WatchThumbnails(IReadOnlyList<string> agentIds)
     {
