@@ -25,34 +25,53 @@ public static class DownloadLinkEndpoints
         });
 
         // 공개 다운로드 (인증 없음)
-        app.MapGet("/dl/{token}", HandleDownloadAsync);
+        app.MapGet("/dl/{token}", async (
+            string token, HttpContext context, DownloadLinkStore store, AgentRegistry registry,
+            IHubContext<AgentHub> agentHub, SharedFolderStore shares, LocalShareFiles localShare) =>
+        {
+            if (!store.TryGet(token, out var link))
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+            await StreamAsAttachmentAsync(context, link.AgentId, link.Path, link.Name, registry, agentHub, shares, localShare);
+        });
+
+        // 대시보드에서 바로 다운로드(브라우저 다운로드 폴더로) — 파일 우클릭/더블클릭
+        app.MapGet("/api/agents/{agentId}/download", async (
+            string agentId, string? path, HttpContext context, AgentRegistry registry,
+            IHubContext<AgentHub> agentHub, SharedFolderStore shares, LocalShareFiles localShare) =>
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+            var name = Path.GetFileName(path.TrimEnd('\\', '/'));
+            await StreamAsAttachmentAsync(context, agentId, path, string.IsNullOrEmpty(name) ? "download" : name, registry, agentHub, shares, localShare);
+        });
     }
 
-    private static async Task HandleDownloadAsync(
-        string token, HttpContext context, DownloadLinkStore store, AgentRegistry registry,
-        IHubContext<AgentHub> agentHub, SharedFolderStore shares, LocalShareFiles localShare)
+    /// <summary>파일을 첨부(attachment)로 내보낸다. 공유=로컬 파일, 에이전트=조각 중계.</summary>
+    private static async Task StreamAsAttachmentAsync(
+        HttpContext context, string agentId, string path, string name,
+        AgentRegistry registry, IHubContext<AgentHub> agentHub, SharedFolderStore shares, LocalShareFiles localShare)
     {
         var response = context.Response;
-        if (!store.TryGet(token, out var link))
-        {
-            response.StatusCode = StatusCodes.Status404NotFound;
-            return;
-        }
-
-        var contentType = ContentTypes.TryGetContentType(link.Name, out var t) ? t : "application/octet-stream";
+        var contentType = ContentTypes.TryGetContentType(name, out var t) ? t : "application/octet-stream";
 
         // 공유 폴더: 서버 로컬 파일을 그대로 내보낸다
-        if (shares.TryGet(link.AgentId, out var share))
+        if (shares.TryGet(agentId, out var share))
         {
             try
             {
-                var full = localShare.ResolveWithin(share, link.Path);
+                var full = localShare.ResolveWithin(share, path);
                 if (!File.Exists(full))
                 {
                     response.StatusCode = StatusCodes.Status404NotFound;
                     return;
                 }
-                await Results.File(full, contentType, link.Name, enableRangeProcessing: true).ExecuteAsync(context);
+                await Results.File(full, contentType, name, enableRangeProcessing: true).ExecuteAsync(context);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
@@ -63,7 +82,7 @@ public static class DownloadLinkEndpoints
         }
 
         // 에이전트: 온라인이면 조각으로 받아 중계 (첨부 다운로드)
-        if (!registry.TryGetConnection(link.AgentId, out var connectionId))
+        if (!registry.TryGetConnection(agentId, out var connectionId))
         {
             response.StatusCode = StatusCodes.Status409Conflict;
             await response.WriteAsync("이 파일을 가진 PC가 오프라인입니다.", context.RequestAborted);
@@ -75,7 +94,7 @@ public static class DownloadLinkEndpoints
         long size;
         try
         {
-            size = await proxy.InvokeAsync<long>(AgentClientMethods.GetFileSize, link.Path, ct);
+            size = await proxy.InvokeAsync<long>(AgentClientMethods.GetFileSize, path, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -91,7 +110,7 @@ public static class DownloadLinkEndpoints
 
         response.ContentType = contentType;
         response.ContentLength = size;
-        response.Headers.ContentDisposition = $"attachment; filename*=UTF-8''{Uri.EscapeDataString(link.Name)}";
+        response.Headers.ContentDisposition = $"attachment; filename*=UTF-8''{Uri.EscapeDataString(name)}";
 
         var offset = 0L;
         while (offset < size && !ct.IsCancellationRequested)
@@ -100,7 +119,7 @@ public static class DownloadLinkEndpoints
             byte[] data;
             try
             {
-                data = await proxy.InvokeAsync<byte[]>(AgentClientMethods.ReadFileChunk, link.Path, offset, want, ct);
+                data = await proxy.InvokeAsync<byte[]>(AgentClientMethods.ReadFileChunk, path, offset, want, ct);
             }
             catch (OperationCanceledException)
             {

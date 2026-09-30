@@ -72,6 +72,12 @@ const toMessage = (err: unknown) => (err instanceof Error ? err.message : String
 
 const SIDE_WIDTH_KEY = 'pcm.paneSideWidth'
 
+const EXECUTABLE_EXT = new Set(['exe', 'msi', 'bat', 'cmd', 'com', 'ps1', 'msix', 'appx', 'scr'])
+const isExecutable = (name: string) => {
+  const dot = name.lastIndexOf('.')
+  return dot >= 0 && EXECUTABLE_EXT.has(name.slice(dot + 1).toLowerCase())
+}
+
 export function ExplorerPane({
   paneId,
   agentId,
@@ -263,10 +269,17 @@ export function ExplorerPane({
     onReorderFavorites(next)
   }
 
+  // 가져오기 = 브라우저 다운로드(기본 다운로드 폴더로). 실행 파일은 내려받은 뒤 브라우저에서 실행할 수 있다.
   const fetchFiles = (entries: FileEntry[]) => {
-    entries
-      .filter((e) => !e.isDirectory)
-      .forEach((e) => void api.fetchFile(agentId, e.fullPath).catch((err) => setError(toMessage(err))))
+    for (const e of entries.filter((x) => !x.isDirectory)) {
+      const a = document.createElement('a')
+      a.href = api.downloadUrl(agentId, e.fullPath)
+      a.download = e.name
+      a.rel = 'noopener'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    }
   }
 
   // 공개 다운로드 링크 생성 → 클립보드에 복사
@@ -339,7 +352,13 @@ export function ExplorerPane({
   const openEntry = (entry: FileEntry) => {
     if (entry.isDirectory) navigate(entry.fullPath)
     else if (isVideoFile(entry.name)) setPlaying({ path: entry.fullPath, name: entry.name })
-    else fetchFiles([entry])
+    else {
+      // 파일 더블클릭 = 가져오기(다운로드 폴더로). 실행 파일이면 실행 안내.
+      fetchFiles([entry])
+      if (isExecutable(entry.name)) {
+        setNotice(`'${entry.name}'을(를) 다운로드했습니다. 브라우저 다운로드 표시줄에서 열어 실행하세요. (브라우저 보안상 자동 실행은 불가)`)
+      }
+    }
   }
 
   const paste = async (targetFolder: string) => {

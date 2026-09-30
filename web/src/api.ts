@@ -364,6 +364,10 @@ export const api = {
   mediaUrl: (agentId: string, path: string) =>
     `/api/agents/${agentId}/media?${query({ path })}`,
 
+  /** 파일을 브라우저 다운로드 폴더로 바로 내려받는 URL (첨부) */
+  downloadUrl: (agentId: string, path: string) =>
+    `/api/agents/${agentId}/download?${query({ path })}`,
+
   fetchFile: (agentId: string, path: string) =>
     request<Transfer>(`/api/agents/${agentId}/files/fetch`, { method: 'POST', body: JSON.stringify({ path }) }),
   pushFile: (agentId: string, destinationPath: string, file: Blob) =>
