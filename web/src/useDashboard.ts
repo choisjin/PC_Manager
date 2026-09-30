@@ -295,8 +295,8 @@ export function useDashboard() {
   }, [])
 
   // 공유 폴더 등록/삭제 (서버가 SharesChanged로 전체를 다시 알려준다)
-  const addShare = useCallback(async (name: string, path: string) => {
-    await api.addShare(name, path)
+  const addShare = useCallback(async (name: string, path: string, username?: string, password?: string) => {
+    await api.addShare(name, path, username, password)
     const list = await api.shares().catch(() => null)
     if (list) setShares(list.shares)
   }, [])

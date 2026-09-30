@@ -210,6 +210,7 @@ export interface SharedFolder {
   id: string
   name: string
   path: string
+  username?: string | null
 }
 
 export interface SharedFolders {
@@ -324,9 +325,19 @@ export const api = {
     request<PcFavorites>('/api/pc-favorites', { method: 'PUT', body: JSON.stringify(favorites) }),
 
   shares: () => request<SharedFolders>('/api/shares'),
-  addShare: (name: string, path: string) =>
-    request<SharedFolder>('/api/shares', { method: 'POST', body: JSON.stringify({ name, path }) }),
+  addShare: (name: string, path: string, username?: string, password?: string) =>
+    request<SharedFolder>('/api/shares', {
+      method: 'POST',
+      body: JSON.stringify({ name, path, username: username || null, password: password || null }),
+    }),
   removeShare: (id: string) => request<SharedFolders>(`/api/shares/${id}`, { method: 'DELETE' }),
+
+  /** 파일에 대한 공개 다운로드 링크 생성 (토큰만 있으면 누구나 받음) */
+  createDownloadLink: (agentId: string, path: string) =>
+    request<{ token: string; url: string; name: string }>(`/api/agents/${agentId}/download-links`, {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
 
   org: () => request<Org>('/api/org'),
   createProject: (name: string) => request<Org>('/api/projects', { method: 'POST', body: JSON.stringify({ name }) }),

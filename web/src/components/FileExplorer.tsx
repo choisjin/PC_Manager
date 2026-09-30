@@ -15,7 +15,7 @@ interface Props {
   favorites: PcFavorites
   setAgentFavorites: (agentId: string, paths: string[]) => void
   shares: SharedFolder[]
-  addShare: (name: string, path: string) => Promise<void>
+  addShare: (name: string, path: string, username?: string, password?: string) => Promise<void>
   removeShare: (id: string) => void
   org: Org
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>

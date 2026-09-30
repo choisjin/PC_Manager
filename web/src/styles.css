@@ -2014,6 +2014,40 @@ tr.drop-into > td,
   outline-offset: -1px;
 }
 
+/* 다운로드 링크 등 성공 알림 (창 안) */
+.pane-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-notice .ellipsis {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 공유 등록: 자격증명 */
+.creds-toggle {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px;
+  color: var(--text) !important;
+}
+
+.creds-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-radius: 8px;
+}
+
 /* 전송 기록 페이지 */
 .transfers-page {
   flex: 1;

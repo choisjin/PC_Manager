@@ -11,6 +11,7 @@ export default defineConfig({
     proxy: {
       '/api': SERVER,
       '/hubs': { target: SERVER, ws: true },
+      '/dl': SERVER,
     },
   },
 })

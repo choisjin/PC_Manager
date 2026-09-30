@@ -38,6 +38,7 @@ builder.Services.AddSingleton<SharedFolderStore>();
 builder.Services.AddSingleton<LocalShareFiles>();
 builder.Services.AddSingleton<OrgStore>();
 builder.Services.AddSingleton<PresenceRegistry>();
+builder.Services.AddSingleton<DownloadLinkStore>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<RunService>();
 builder.Services.AddSingleton<ArtifactStore>();
@@ -63,6 +64,9 @@ await using (var db = await app.Services.GetRequiredService<IDbContextFactory<Ap
         // 이미 컬럼이 있으면 무시
     }
 }
+// 자격증명이 있는 공유 서버에 다시 로그온한다 (best-effort)
+app.Services.GetRequiredService<SharedFolderStore>().ReconnectAll();
+
 await app.Services.GetRequiredService<JobService>().RecoverInterruptedAsync();
 
 // 에이전트 토큰(선택): 설정하면 에이전트 Hub와 에이전트 전용 API는 토큰이 맞는 요청만 통과시킨다.
@@ -100,6 +104,7 @@ app.MapPcGroupApi();
 app.MapPcFavoriteApi();
 app.MapSharedFolderApi();
 app.MapOrgApi();
+app.MapDownloadLinkApi();
 app.MapInstallApi(serverOptions);
 
 // 설치 파일은 크므로 요청 크기 제한과 무관하게 스트리밍 (다운로드만, 업로드 아님)

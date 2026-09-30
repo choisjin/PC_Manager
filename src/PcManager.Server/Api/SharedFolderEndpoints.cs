@@ -20,11 +20,11 @@ public static class SharedFolderEndpoints
                 return Results.BadRequest("공유 폴더 경로를 입력하세요. (예: \\\\서버\\공유폴더 또는 D:\\공유)");
             try
             {
-                var share = store.Add(request.Name ?? "", request.Path);
+                var share = store.Add(request.Name ?? "", request.Path, request.Username, request.Password);
                 await dashboard.Clients.All.SharesChanged(store.Load());
                 return Results.Ok(share);
             }
-            catch (Exception ex) when (ex is ArgumentException or DirectoryNotFoundException or InvalidOperationException)
+            catch (Exception ex) when (ex is ArgumentException or DirectoryNotFoundException or InvalidOperationException or IOException)
             {
                 return Results.BadRequest(ex.Message);
             }

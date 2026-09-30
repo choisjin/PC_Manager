@@ -99,6 +99,7 @@ export function ExplorerPane({
   const [listing, setListing] = useState<DirectoryListing | null>(null)
   const [loading, setLoading] = useState(online)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [view, setView] = useState<ViewMode>('details')
   const [sortKey, setSortKey] = useState<SortKey>('name')
@@ -266,6 +267,20 @@ export function ExplorerPane({
     entries
       .filter((e) => !e.isDirectory)
       .forEach((e) => void api.fetchFile(agentId, e.fullPath).catch((err) => setError(toMessage(err))))
+  }
+
+  // 공개 다운로드 링크 생성 → 클립보드에 복사
+  const createDownloadLink = async (entry: FileEntry) => {
+    setError(null)
+    setNotice(null)
+    try {
+      const { url } = await api.createDownloadLink(agentId, entry.fullPath)
+      const full = window.location.origin + url
+      const ok = await copyText(full)
+      setNotice(ok ? `다운로드 링크가 복사되었습니다: ${full}` : `다운로드 링크: ${full}`)
+    } catch (err) {
+      setError(toMessage(err))
+    }
   }
 
   const compress = (targets: FileEntry[]) => {
@@ -595,6 +610,9 @@ export function ExplorerPane({
     if (files.length > 0) {
       items.push({ label: `가져오기${files.length > 1 ? ` (${files.length})` : ''}`, onClick: () => fetchFiles(files) })
     }
+    if (targets.length === 1 && !targets[0].isDirectory) {
+      items.push({ label: '다운로드 링크', onClick: () => void createDownloadLink(targets[0]) })
+    }
     if (targets.length > 0) {
       items.push({ label: `압축 (ZIP)${targets.length > 1 ? ` (${targets.length}개 합쳐서)` : ''}`, disabled: !path, onClick: () => compress(targets) })
       if (targets.length > 1) {
@@ -704,6 +722,12 @@ export function ExplorerPane({
       </div>
 
       {error && <div className="output-error">{error}</div>}
+      {notice && (
+        <div className="pane-notice">
+          <span className="ellipsis">{notice}</span>
+          <button type="button" className="icon-mini" title="닫기" onClick={() => setNotice(null)}>✕</button>
+        </div>
+      )}
 
       <div className="pane-body">
         <div className="pane-side" style={{ width: sideWidth }}>

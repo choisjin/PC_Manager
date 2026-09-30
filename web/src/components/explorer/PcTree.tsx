@@ -10,7 +10,7 @@ interface Props {
   groups: PcGroups
   saveGroups: (groups: PcGroups) => void
   shares: SharedFolder[]
-  addShare: (name: string, path: string) => Promise<void>
+  addShare: (name: string, path: string, username?: string, password?: string) => Promise<void>
   removeShare: (id: string) => void
   org: Org
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
@@ -197,7 +197,6 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         <button type="button" className="icon tree-collapse" title="접기" onClick={onToggleCollapse}>
           ◂
         </button>
-        <h2>테스트 PC</h2>
         <span className="head-actions">
           <span className="muted small">{onlineCount}/{agents.length}</span>
           <button type="button" className="small-btn" title="폴더 추가" onClick={() => createFolder(null)}>

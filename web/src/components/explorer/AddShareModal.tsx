@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 interface Props {
-  onConfirm: (name: string, path: string) => Promise<void>
+  onConfirm: (name: string, path: string, username?: string, password?: string) => Promise<void>
   onClose: () => void
 }
 
@@ -10,6 +10,9 @@ export function AddShareModal({ onConfirm, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [path, setPath] = useState('')
   const [name, setName] = useState('')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [useCreds, setUseCreds] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -22,7 +25,7 @@ export function AddShareModal({ onConfirm, onClose }: Props) {
     setBusy(true)
     setError(null)
     try {
-      await onConfirm(name.trim(), path.trim())
+      await onConfirm(name.trim(), path.trim(), useCreds ? username.trim() : undefined, useCreds ? password : undefined)
       dialogRef.current?.close()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -71,6 +74,23 @@ export function AddShareModal({ onConfirm, onClose }: Props) {
             }}
           />
         </label>
+        <label className="creds-toggle">
+          <input type="checkbox" checked={useCreds} onChange={(e) => setUseCreds(e.target.checked)} />
+          <span>네트워크 자격증명으로 접속 (계정이 필요한 공유 서버)</span>
+        </label>
+        {useCreds && (
+          <div className="creds-fields">
+            <label>
+              사용자 이름
+              <input placeholder="예: DOMAIN\\user 또는 user" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" />
+            </label>
+            <label>
+              비밀번호
+              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
+            </label>
+            <p className="muted small">비밀번호는 서버에 DPAPI로 암호화되어 저장됩니다.</p>
+          </div>
+        )}
         {error && <p className="warning-box">{error}</p>}
       </div>
       <div className="dialog-actions">
