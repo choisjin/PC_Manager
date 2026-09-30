@@ -350,8 +350,8 @@ export function useDashboard() {
     connectionRef.current?.invoke('WatchThumbnails', agentIds).catch(() => {})
   }, [])
 
-  const sendChat = useCallback((userId: string, text: string) => {
-    connectionRef.current?.invoke('SendChat', userId, text).catch((err) => console.error('채팅 전송 실패', err))
+  const sendChat = useCallback((userId: string, text: string, mentions: string[] = []) => {
+    connectionRef.current?.invoke('SendChat', userId, text, mentions).catch((err) => console.error('채팅 전송 실패', err))
   }, [])
 
   // 지금 보고 있는 PC를 서버에 알린다 (실시간 프레즌스)

@@ -3249,3 +3249,49 @@ th.sortable:hover {
   padding: 2px 8px;
   font-size: 11px;
 }
+
+/* 채팅 @호출 */
+.pip-chat-input {
+  position: relative;
+}
+
+.chat-mention-list {
+  position: absolute;
+  bottom: 100%;
+  left: 4px;
+  z-index: 3;
+  min-width: 160px;
+  margin: 0 0 2px;
+  padding: 2px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 20%);
+}
+
+.chat-mention-list li {
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.chat-mention-list li.active,
+.chat-mention-list li:hover {
+  background: var(--selected);
+}
+
+.chat-mention {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.chat-msg.mine .chat-mention {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.chat-msg.to-me .chat-text {
+  background: color-mix(in srgb, var(--warn) 18%, var(--hover));
+}

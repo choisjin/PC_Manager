@@ -43,11 +43,12 @@ public class DashboardHub(PresenceRegistry presence, ChatStore chat, ThumbnailSe
     }
 
     /// <summary>사용자 간 채팅 메시지 (모든 대시보드에 전달)</summary>
-    public async Task SendChat(string userId, string text)
+    /// <param name="mentions">@로 호출한 userId 목록 (선택)</param>
+    public async Task SendChat(string userId, string text, IReadOnlyList<string>? mentions = null)
     {
         if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(text))
             return;
-        var message = chat.Add(userId, text);
+        var message = chat.Add(userId, text, mentions);
         await Clients.All.ChatMessage(message);
     }
 

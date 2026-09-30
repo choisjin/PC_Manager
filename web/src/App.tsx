@@ -183,7 +183,7 @@ export default function App() {
       </main>
 
       {/* 어디서든 보이는 전송 진행률·알림 위젯 */}
-      <TransfersPip transfers={transfers} machineName={machineName} userName={userName} chat={chat} selfUserId={identity.userId} onSendChat={sendChat} />
+      <TransfersPip transfers={transfers} machineName={machineName} userName={userName} chat={chat} users={org.users} selfUserId={identity.userId} onSendChat={sendChat} />
     </div>
   )
 }

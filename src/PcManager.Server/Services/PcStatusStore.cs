@@ -126,7 +126,7 @@ public class ChatStore(AppPaths paths)
         }
     }
 
-    public ChatMessageView Add(string userId, string text)
+    public ChatMessageView Add(string userId, string text, IReadOnlyList<string>? mentions = null)
     {
         text = text.Trim();
         if (text.Length == 0)
@@ -136,7 +136,7 @@ public class ChatStore(AppPaths paths)
         lock (_lock)
         {
             var list = Messages();
-            var message = new ChatMessageView(++_nextId, userId, text, DateTime.UtcNow);
+            var message = new ChatMessageView(++_nextId, userId, text, DateTime.UtcNow, (mentions ?? []).Distinct().Take(50).ToList());
             list.Add(message);
             if (list.Count > MaxKeep)
                 list.RemoveRange(0, list.Count - MaxKeep);
