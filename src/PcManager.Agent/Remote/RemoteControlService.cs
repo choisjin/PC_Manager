@@ -14,9 +14,11 @@ namespace PcManager.Agent.Remote;
 public class RemoteControlService(AgentSettingsStore settings, ILogger<RemoteControlService> logger)
 {
     public const string SessionArgument = "--remote-session";
+    public const string ThumbnailArgument = "--thumb";
 
     /// <returns>오류 메시지. 성공하면 null</returns>
-    public string? Start(string sessionId)
+    /// <param name="thumbnail">true면 썸네일 모드. 세션 선택·RDP 전환 없이 콘솔(또는 활성) 세션 화면만 작게 보낸다</param>
+    public string? Start(string sessionId, bool thumbnail = false)
     {
         if (!Guid.TryParseExact(sessionId, "N", out _))
             return "잘못된 세션 ID입니다.";
@@ -49,14 +51,16 @@ public class RemoteControlService(AgentSettingsStore settings, ILogger<RemoteCon
 
                 // 원격조작을 RDP보다 우선한다: 대상 세션이 RDP로 연결돼 있으면 물리 콘솔로 옮긴다
                 // (RDP 클라이언트 연결은 끊기고, 세션은 앱 상태를 유지한 채 콘솔에 표시돼 여기서 캡처된다)
-                if (SessionProcess.IsRemoteSession(target))
+                // 썸네일은 보기만 하므로 RDP를 끊지 않는다
+                if (!thumbnail && SessionProcess.IsRemoteSession(target))
                 {
                     var moved = SessionProcess.ConnectSessionToConsole(target);
                     logger.LogInformation("세션 {SessionId}이(가) RDP 연결 중 → 콘솔로 전환 {Result}", target, moved ? "성공" : "실패");
                 }
 
-                var pid = SessionProcess.StartAsSystemInSession(target, exePath, $"{SessionArgument} \"{url}\"");
-                logger.LogInformation("원격조작 시작: 세션 {SessionId}, PID {Pid}", target, pid);
+                var extra = thumbnail ? $" {ThumbnailArgument}" : "";
+                var pid = SessionProcess.StartAsSystemInSession(target, exePath, $"{SessionArgument} \"{url}\"{extra}");
+                logger.LogInformation("{Mode} 시작: 세션 {SessionId}, PID {Pid}", thumbnail ? "썸네일" : "원격조작", target, pid);
             }
             else
             {
@@ -64,6 +68,8 @@ public class RemoteControlService(AgentSettingsStore settings, ILogger<RemoteCon
                 var start = new ProcessStartInfo(exePath) { UseShellExecute = false };
                 start.ArgumentList.Add(SessionArgument);
                 start.ArgumentList.Add(url);
+                if (thumbnail)
+                    start.ArgumentList.Add(ThumbnailArgument);
                 start.Environment[RemoteSessionApp.TokenEnvironmentVariable] = current.Token;
                 using var process = Process.Start(start);
                 logger.LogInformation("원격조작 시작 (콘솔 모드), PID {Pid}", process?.Id);

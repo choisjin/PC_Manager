@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { Agent, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder } from '../api'
+import type { Agent, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder, Thumbnail } from '../api'
+import { RemoteGrid } from './RemoteGrid'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
 import { ExplorerToolbar } from './explorer/ExplorerToolbar'
 import { Icon } from './explorer/Icon'
 import type { PaneController } from './explorer/paneController'
 import { PcTree } from './explorer/PcTree'
-import { AGENT_MIME, displayName, type FileClipboard, newId } from './explorer/pcGroups'
+import { AGENT_MIME, buildTree, displayName, type FileClipboard, type FolderNode, newId } from './explorer/pcGroups'
 
 interface Props {
   agents: Agent[]
@@ -24,6 +25,8 @@ interface Props {
   setPcStatus: (agentId: string, status: PcStatusValue, note: string | null) => Promise<void>
   remoteUsage: RemoteUsage['inUseBy']
   setFolderProject: (folderId: string, projectId: string | null) => Promise<void>
+  thumbnails: Record<string, Thumbnail>
+  watchThumbnails: (agentIds: string[]) => void
   filterProjectId: string | null
   selfUserId: string | null
   announcePresence: (userId: string, agentIds: string[]) => void
@@ -48,10 +51,11 @@ function saveLocal(key: string, value: unknown) {
   }
 }
 
+const MODE_KEY = 'explorer.mode'
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   // 선택한 프로젝트의 에이전트 + 아직 미배정 에이전트를 노출 (다른 프로젝트 전용은 숨김). 전체 보기면 모두.
   const visibleAgents = useMemo(
@@ -82,6 +86,34 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   const removeFavorite = (agentId: string, path: string) =>
     setAgentFavorites(agentId, (favorites.favorites[agentId] ?? []).filter((p) => p !== path))
   const [collapsed, setCollapsed] = useState(() => loadLocal(COLLAPSE_KEY, false))
+  // Browser(파일 탐색기) ↔ Remote(PC 화면 미리보기) 모드
+  const [mode, setMode] = useState<'browser' | 'remote'>(() => loadLocal<'browser' | 'remote'>(MODE_KEY, 'browser'))
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
+  const switchMode = (next: 'browser' | 'remote') => {
+    setMode(next)
+    try {
+      localStorage.setItem(MODE_KEY, JSON.stringify(next))
+    } catch {
+      // 무시
+    }
+  }
+  // Remote 모드 대상: 선택한 폴더(하위 포함)의 PC, 없으면 보이는 PC 전체
+  const remoteTargets = useMemo(() => {
+    if (!selectedFolderId) return { name: null as string | null, agents: visibleAgents }
+    const { roots } = buildTree(pcGroups, visibleAgents)
+    const find = (nodes: FolderNode[]): FolderNode | null => {
+      for (const n of nodes) {
+        if (n.folder.id === selectedFolderId) return n
+        const c = find(n.children)
+        if (c) return c
+      }
+      return null
+    }
+    const node = find(roots)
+    if (!node) return { name: null as string | null, agents: visibleAgents }
+    const collect = (n: FolderNode): Agent[] => [...n.agents, ...n.children.flatMap(collect)]
+    return { name: node.folder.name, agents: collect(node) }
+  }, [selectedFolderId, pcGroups, visibleAgents])
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
 
@@ -173,9 +205,37 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}
         onOpenAgent={togglePane}
+        selectedFolderId={selectedFolderId}
+        onSelectFolder={setSelectedFolderId}
       />
 
       <div className="explorer-main">
+        <div className="explorer-mode">
+          <span className="segmented" role="radiogroup" aria-label="모드">
+            <button type="button" role="radio" aria-checked={mode === 'browser'} className={mode === 'browser' ? 'active' : ''} onClick={() => switchMode('browser')}>
+              Browser
+            </button>
+            <button type="button" role="radio" aria-checked={mode === 'remote'} className={mode === 'remote' ? 'active' : ''} onClick={() => switchMode('remote')}>
+              Remote
+            </button>
+          </span>
+          {mode === 'remote' && <span className="small muted">왼쪽에서 폴더를 클릭하면 그 그룹의 PC만 표시됩니다</span>}
+        </div>
+
+        {mode === 'remote' ? (
+          <RemoteGrid
+            agents={remoteTargets.agents}
+            groupName={remoteTargets.name}
+            displayName={(a) => displayName(a, pcGroups)}
+            thumbnails={thumbnails}
+            watchThumbnails={watchThumbnails}
+            pcStatuses={pcStatuses}
+            remoteUsage={remoteUsage}
+            selfUserId={selfUserId}
+            userName={(id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자'}
+          />
+        ) : (
+          <>
         <ExplorerToolbar controller={activeController} />
 
 
@@ -260,6 +320,8 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
             <span className="small muted">창을 클릭하면 상태가 표시됩니다</span>
           )}
         </div>
+          </>
+        )}
       </div>
     </div>
   )

@@ -23,11 +23,25 @@ public interface IDashboardClient
     Task PcStatusesChanged(PcStatusesView statuses);
     Task RemoteUsageChanged(RemoteUsageView usage);
     Task ChatMessage(ChatMessageView message);
+    Task ThumbnailUpdated(ThumbnailView thumbnail);
 }
 
 /// <summary>웹 대시보드가 접속하는 Hub. 출력은 보고 있는 실행에만 전달한다.</summary>
-public class DashboardHub(PresenceRegistry presence, ChatStore chat) : Hub<IDashboardClient>
+public class DashboardHub(PresenceRegistry presence, ChatStore chat, ThumbnailService thumbnails) : Hub<IDashboardClient>
 {
+    /// <summary>Remote 화면에서 보고 싶은 PC 목록 (빈 목록이면 구독 해제). 마지막 썸네일은 바로 보내 준다</summary>
+    public async Task WatchThumbnails(IReadOnlyList<string> agentIds)
+    {
+        var ids = agentIds ?? [];
+        if (ids.Count == 0)
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, ThumbnailService.Group);
+        else
+            await Groups.AddToGroupAsync(Context.ConnectionId, ThumbnailService.Group);
+        thumbnails.SetWants(Context.ConnectionId, ids);
+        foreach (var t in thumbnails.Latest.Where(t => ids.Contains(t.AgentId)))
+            await Clients.Caller.ThumbnailUpdated(t);
+    }
+
     /// <summary>사용자 간 채팅 메시지 (모든 대시보드에 전달)</summary>
     public async Task SendChat(string userId, string text)
     {
@@ -53,6 +67,7 @@ public class DashboardHub(PresenceRegistry presence, ChatStore chat) : Hub<IDash
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
         presence.Remove(Context.ConnectionId);
+        thumbnails.RemoveConnection(Context.ConnectionId);
         await Clients.All.PresenceChanged(presence.Snapshot());
         await base.OnDisconnectedAsync(exception);
     }

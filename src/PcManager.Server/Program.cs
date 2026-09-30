@@ -42,6 +42,7 @@ builder.Services.AddSingleton<DownloadLinkStore>();
 builder.Services.AddSingleton<PcStatusStore>();
 builder.Services.AddSingleton<RemoteUsageRegistry>();
 builder.Services.AddSingleton<ChatStore>();
+builder.Services.AddSingleton<ThumbnailService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<RunService>();
 builder.Services.AddSingleton<ArtifactStore>();

@@ -24,9 +24,12 @@ interface Props {
   collapsed: boolean
   onToggleCollapse: () => void
   onOpenAgent: (agentId: string) => void
+  /** Remote 모드에서 그룹으로 쓸 폴더 (클릭으로 선택, 다시 클릭하면 해제) */
+  selectedFolderId: string | null
+  onSelectFolder: (folderId: string | null) => void
 }
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder }: Props) {
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
@@ -158,8 +161,9 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
     return (
       <li key={node.folder.id}>
         <div
-          className={`tree-folder${isDrop ? ' drop-active' : ''}`}
+          className={`tree-folder${isDrop ? ' drop-active' : ''}${selectedFolderId === node.folder.id ? ' selected' : ''}`}
           style={{ paddingLeft: 8 + depth * 14 }}
+          onClick={() => onSelectFolder(selectedFolderId === node.folder.id ? null : node.folder.id)}
           onContextMenu={(e) => {
             e.preventDefault()
             setFolderMenu({ x: e.clientX, y: e.clientY, folderId: node.folder.id, name: node.folder.name })

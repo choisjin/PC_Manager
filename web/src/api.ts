@@ -272,6 +272,16 @@ export interface ChatMessage {
   at: string
 }
 
+/** Remote 화면용 PC 미리보기 */
+export interface Thumbnail {
+  agentId: string
+  /** base64 JPEG */
+  jpeg: string
+  /** 시계를 뺀 화면이 바뀌지 않은 시간(초) */
+  idleSeconds: number
+  at: string
+}
+
 export interface InstallInfo {
   serverUrl: string
   serverVersion: string

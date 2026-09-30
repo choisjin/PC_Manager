@@ -8,6 +8,7 @@ import {
   type PcStatuses,
   type PcStatusValue,
   type RemoteUsage,
+  type Thumbnail,
   type JobRun,
   type JobState,
   type JobTarget,
@@ -116,6 +117,8 @@ export function useDashboard() {
   const [pcStatuses, setPcStatuses] = useState<Record<string, PcStatus>>({})
   const [remoteUsage, setRemoteUsage] = useState<RemoteUsage['inUseBy']>({})
   const [chat, setChat] = useState<ChatMessage[]>([])
+  const [thumbnails, setThumbnails] = useState<Record<string, Thumbnail>>({})
+  const thumbWantsRef = useRef<string[]>([])
   const [connected, setConnected] = useState(false)
   const connectionRef = useRef<signalR.HubConnection | null>(null)
   // 재연결 시 다시 알리기 위한 마지막 프레즌스
@@ -173,6 +176,7 @@ export function useDashboard() {
     connection.on('PresenceChanged', (viewers: Record<string, string[]>) => setPresence(viewers))
     connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
     connection.on('RemoteUsageChanged', (v: RemoteUsage) => setRemoteUsage(v.inUseBy))
+    connection.on('ThumbnailUpdated', (t: Thumbnail) => setThumbnails((prev) => ({ ...prev, [t.agentId]: t })))
     connection.on('ChatMessage', (m: ChatMessage) => setChat((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m].slice(-500))))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
@@ -202,6 +206,9 @@ export function useDashboard() {
       if (favs) setFavorites(favs)
       if (shareList) setShares(shareList.shares)
       if (orgData) setOrg(orgData)
+      // 재연결 후 썸네일 구독 복구
+      if (thumbWantsRef.current.length > 0)
+        connection.invoke('WatchThumbnails', thumbWantsRef.current).catch(() => {})
       // 재연결 후 프레즌스 복구
       if (presenceRef.current)
         connection.invoke('SetPresence', presenceRef.current.userId, presenceRef.current.agentIds).catch(() => {})
@@ -337,6 +344,12 @@ export function useDashboard() {
   const setPcStatus = useCallback((agentId: string, status: PcStatusValue, note: string | null) =>
     api.setPcStatus(agentId, status, note).then((v) => setPcStatuses(v.statuses)), [])
 
+  // Remote 화면에서 보고 싶은 PC 목록 (빈 목록 = 구독 해제)
+  const watchThumbnails = useCallback((agentIds: string[]) => {
+    thumbWantsRef.current = agentIds
+    connectionRef.current?.invoke('WatchThumbnails', agentIds).catch(() => {})
+  }, [])
+
   const sendChat = useCallback((userId: string, text: string) => {
     connectionRef.current?.invoke('SendChat', userId, text).catch((err) => console.error('채팅 전송 실패', err))
   }, [])
@@ -369,6 +382,8 @@ export function useDashboard() {
     remoteUsage,
     chat,
     sendChat,
+    thumbnails,
+    watchThumbnails,
     connected,
     watchRun,
     upsertRuns,

@@ -19,7 +19,8 @@ public static class RemoteEndpoints
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan AttachTimeout = TimeSpan.FromSeconds(20);
 
-    private static readonly ConcurrentDictionary<string, PendingSession> Pending = new();
+    /// <summary>에이전트 쪽 소켓을 기다리는 세션. ThumbnailService도 같은 경로(/api/agent/remote/{id})로 받는다</summary>
+    internal static readonly ConcurrentDictionary<string, PendingSession> Pending = new();
 
     public static void MapRemoteApi(this WebApplication app)
     {
@@ -172,7 +173,7 @@ public static class RemoteEndpoints
         }
     }
 
-    private static async Task PumpAsync(WebSocket from, WebSocket to, CancellationToken ct)
+    internal static async Task PumpAsync(WebSocket from, WebSocket to, CancellationToken ct)
     {
         var buffer = new byte[64 * 1024];
         try
@@ -192,7 +193,7 @@ public static class RemoteEndpoints
         }
     }
 
-    private static async Task CloseAsync(WebSocket socket, WebSocketCloseStatus status, string reason)
+    internal static async Task CloseAsync(WebSocket socket, WebSocketCloseStatus status, string reason)
     {
         if (socket.State is not (WebSocketState.Open or WebSocketState.CloseReceived))
             return;
@@ -215,7 +216,7 @@ public static class RemoteEndpoints
         return reason;
     }
 
-    private sealed class PendingSession
+    internal sealed class PendingSession
     {
         public TaskCompletionSource<WebSocket> Agent { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

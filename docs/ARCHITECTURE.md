@@ -55,6 +55,10 @@
 - HTTPS: 설치 스크립트가 자체 서명 인증서(SAN: 호스트명·IPv4·localhost)를 LocalMachine\My에 만들고 Kestrel HTTPS 포트(기본 5064)를 연다.
   신뢰는 자동: 서버는 시작 시(`Program.cs`), 에이전트는 등록 시(`ServerCertificateTrust`) `CertificateTrust.EnsureTrustedRoot`로 LocalMachine\Root에 넣는다.
   에이전트 없는 PC는 `/api/install/PcManager-인증서-설치.cmd`(자체 승격 배치)로 한 번 설치. 에이전트 통신 자체는 HTTP 그대로
+- 썸네일(Remote 모드): 서버 `ThumbnailService`가 보는 대시보드가 있는 PC마다 에이전트에 `--remote-session <url> --thumb` 프로세스를 띄워
+  3초마다 320px JPEG + "움직임 없는 시간"(작업 표시줄 제외 회색조 비교)을 받고 SignalR `ThumbnailUpdated`로 뿌린다. 아무도 안 보면 10초 뒤 종료
+- PC 상태: 수동 상태(테스트 중/사용 금지/점검 중, `PcStatusStore`)와 실시간 원격 사용 중(`RemoteUsageRegistry`). 사용 금지·타인 사용 중이면 원격 차단
+- 채팅: `DashboardHub.SendChat` → `ChatStore`(chat.jsonl) → `ChatMessage` 브로드캐스트. 전송 PiP의 채팅 탭
 - 메시지 형식은 `RemoteSessionApp.cs` 주석 참고
 - 추후: 하드웨어 인코더(비동기 MFT), 커서 모양, 클립보드 동기화, 오디오, WebRTC P2P
 

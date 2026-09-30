@@ -1291,9 +1291,20 @@ button.small-btn {
 /* 작업 영역 */
 .explorer-main {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: 10px;
   min-height: 0;
+}
+
+.explorer-mode {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tree-folder.selected {
+  background: var(--selected);
+  border-radius: 6px;
 }
 
 .workspace-bar {
@@ -3107,4 +3118,115 @@ th.sortable:hover {
 .pip-chat-input input {
   flex: 1;
   min-width: 0;
+}
+
+/* Remote 모드: PC 화면 미리보기 카드 */
+.remote-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.remote-grid-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.remote-grid-notice {
+  color: var(--bad);
+}
+
+.remote-grid-empty {
+  padding: 24px;
+  text-align: center;
+}
+
+.remote-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.remote-card {
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.remote-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 15%);
+}
+
+.remote-card.offline {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.remote-card.busy,
+.remote-card.forbidden {
+  cursor: not-allowed;
+}
+
+.remote-card-shot {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
+.remote-card-shot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.remote-card-blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #8b94a1;
+}
+
+.remote-card-overlay {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  text-align: center;
+  background: rgb(37 99 217 / 80%);
+}
+
+.remote-card-overlay.forbidden {
+  background: rgb(204 51 51 / 85%);
+}
+
+.remote-card-body {
+  padding: 8px 10px;
+}
+
+.remote-card-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 600;
+}
+
+.remote-card-sub {
+  margin-top: 2px;
 }

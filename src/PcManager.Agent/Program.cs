@@ -22,7 +22,7 @@ internal static class Program
         // 서비스가 띄운 자식 프로세스라 서비스 판별보다 먼저 확인한다
         var remoteIndex = Array.IndexOf(args, Remote.RemoteControlService.SessionArgument);
         if (remoteIndex >= 0 && remoteIndex + 1 < args.Length)
-            return Remote.RemoteSessionApp.Run(args[remoteIndex + 1]);
+            return Remote.RemoteSessionApp.Run(args[remoteIndex + 1], thumbnail: args.Contains(Remote.RemoteControlService.ThumbnailArgument));
 
         if (AgentHost.IsRunningAsService)
             return AgentHost.Run();

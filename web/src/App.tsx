@@ -53,6 +53,8 @@ export default function App() {
     remoteUsage,
     chat,
     sendChat,
+    thumbnails,
+    watchThumbnails,
     watchRun,
     subscribeTransfers,
   } = dashboard
@@ -169,6 +171,8 @@ export default function App() {
             setPcStatus={setPcStatus}
             remoteUsage={remoteUsage}
             setFolderProject={orgActions.setFolderProject}
+            thumbnails={thumbnails}
+            watchThumbnails={watchThumbnails}
             announcePresence={announcePresence}
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}

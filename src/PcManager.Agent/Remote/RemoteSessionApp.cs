@@ -31,12 +31,13 @@ internal static class RemoteSessionApp
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    public static int Run(string url)
+    /// <param name="thumbnail">true면 썸네일 모드 (입력 없이 작은 화면만 주기적으로 보냄)</param>
+    public static int Run(string url, bool thumbnail = false)
     {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         try
         {
-            return RunAsync(new Uri(url)).GetAwaiter().GetResult();
+            return RunAsync(new Uri(url), thumbnail).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -45,7 +46,7 @@ internal static class RemoteSessionApp
         }
     }
 
-    private static async Task<int> RunAsync(Uri url)
+    private static async Task<int> RunAsync(Uri url, bool thumbnail)
     {
         using var socket = new ClientWebSocket();
         socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
@@ -55,6 +56,13 @@ internal static class RemoteSessionApp
 
         using (var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
             await socket.ConnectAsync(url, connectTimeout.Token);
+
+        if (thumbnail)
+        {
+            using var thumb = new ThumbnailSession(socket);
+            await thumb.RunAsync();
+            return 0;
+        }
 
         using var session = new Session(socket);
         await session.RunAsync();

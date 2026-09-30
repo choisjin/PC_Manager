@@ -28,3 +28,7 @@ public record RemoteUsageView(IReadOnlyDictionary<string, RemoteUserView> InUseB
 public record RemoteUserView(string UserId, DateTime Since);
 
 public record ChatMessageView(long Id, string UserId, string Text, DateTime At);
+
+/// <param name="Jpeg">base64 JPEG (약 320px 폭)</param>
+/// <param name="IdleSeconds">시계를 뺀 화면이 바뀌지 않은 시간(초)</param>
+public record ThumbnailView(string AgentId, string Jpeg, int IdleSeconds, DateTime At);

@@ -195,6 +195,9 @@ public static class AgentClientMethods
     /// <summary>string sessionId → string? 오류. 사용자 세션에 원격조작 프로세스를 띄워 AgentRemotePaths.Session으로 접속시킨다</summary>
     public const string StartRemote = "StartRemote";
 
+    /// <summary>string sessionId → string? 오류. 썸네일 모드 프로세스를 띄운다 (Remote 화면의 PC 미리보기)</summary>
+    public const string StartThumbnail = "StartThumbnail";
+
     /// <summary>() → string? 오류. Ctrl+Alt+Del(SAS)을 보낸다 (서비스만 가능)</summary>
     public const string SendSecureAttention = "SendSecureAttention";
 }
