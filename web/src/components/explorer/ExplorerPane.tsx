@@ -7,7 +7,7 @@ import { VideoViewer } from '../VideoViewer'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DriveTree } from './DriveTree'
 import { Icon } from './Icon'
-import { copyText, type FileClipboard, newId, PANE_MIME } from './pcGroups'
+import { copyText, type FileClipboard, FILES_MIME, type FilesDragPayload, newId, PANE_MIME } from './pcGroups'
 import { fileTypeLabel, type PaneController, sortEntries, type SortKey, type ViewMode } from './paneController'
 import { SplitCompressModal } from './SplitCompressModal'
 import { TerminalModal } from './TerminalModal'
@@ -109,6 +109,7 @@ export function ExplorerPane({
   const [splitTargets, setSplitTargets] = useState<FileEntry[] | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; targets: FileEntry[]; folder: string | null } | null>(null)
   const [dragOver, setDragOver] = useState(false)
+  const [dropDir, setDropDir] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sectionRef = useRef<HTMLElement>(null)
   const requestRef = useRef(0)
@@ -356,6 +357,54 @@ export function ExplorerPane({
     if (errors.length) setError(errors.join(' · '))
   }
 
+  // 창 간(또는 폴더로) 파일 드래그: 선택된 것들을 함께 끈다
+  const startFileDrag = (e: React.DragEvent, entry: FileEntry) => {
+    const chosen = selected.has(entry.fullPath) ? selectedEntries() : [entry]
+    const payload: FilesDragPayload = {
+      agentId,
+      items: chosen.map((t) => ({ path: t.fullPath, name: t.name, isDir: t.isDirectory })),
+    }
+    e.dataTransfer.setData(FILES_MIME, JSON.stringify(payload))
+    e.dataTransfer.effectAllowed = 'move'
+  }
+
+  // 드롭한 항목들을 대상 폴더로 이동 (같은 PC=이동, 다른 PC=크로스카피 이동)
+  const dropFiles = async (targetFolder: string, raw: string) => {
+    let payload: FilesDragPayload
+    try {
+      payload = JSON.parse(raw) as FilesDragPayload
+    } catch {
+      return
+    }
+    if (!targetFolder || !payload.items?.length) return
+    setError(null)
+    const errors: string[] = []
+    for (const item of payload.items) {
+      const parent = item.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '')
+      if (samePath(parent, targetFolder)) continue // 같은 위치
+      const norm = item.path.replace(/[\\/]+$/, '').toLowerCase()
+      if (item.isDir && (samePath(item.path, targetFolder) || `${targetFolder.replace(/[\\/]+$/, '').toLowerCase()}`.startsWith(`${norm}\\`))) {
+        errors.push(`${item.name}: 자기 자신 안으로 이동할 수 없습니다`)
+        continue
+      }
+      try {
+        if (payload.agentId === agentId) {
+          const result = await api.fileOp(agentId, 'Move', item.path, targetFolder)
+          if (!result.success) errors.push(`${item.name}: ${result.error}`)
+        } else if (item.isDir) {
+          errors.push(`${item.name}: PC 간에는 폴더 이동을 지원하지 않습니다`)
+        } else {
+          const result = await api.crossCopy({ sourceAgentId: payload.agentId, sourcePath: item.path, destAgentId: agentId, destFolder: targetFolder, move: true })
+          if (!result.success) errors.push(`${item.name}: ${result.error}`)
+        }
+      } catch (err) {
+        errors.push(`${item.name}: ${toMessage(err)}`)
+      }
+    }
+    refresh()
+    if (errors.length) setError(errors.join(' · '))
+  }
+
   const remove = async (entries: FileEntry[]) => {
     if (entries.length === 0) return
     const label = entries.length === 1 ? `'${entries[0].name}'을(를)` : `${entries.length}개 항목을`
@@ -462,6 +511,73 @@ export function ExplorerPane({
   useEffect(() => {
     if (active) notifyController()
   }, [active, path, view, sortKey, sortAsc, search, selected, listing, clipboard, activeTab.idx, activeTab.stack.length, online])
+
+  // 윈도우 스타일 단축키 (활성 창에만, 크롬에서 가로챌 수 있는 것만)
+  const handleKey = useEffectEvent((e: KeyboardEvent) => {
+    const t = e.target as HTMLElement | null
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+    const ctrl = e.ctrlKey || e.metaKey
+    const key = e.key
+    const sel = selectedEntries()
+    if (ctrl && (key === 'a' || key === 'A')) {
+      e.preventDefault()
+      setSelected(new Set(displayed.map((d) => d.fullPath)))
+    } else if (ctrl && (key === 'c' || key === 'C')) {
+      if (sel.length) {
+        e.preventDefault()
+        setClip(sel, 'copy')
+      }
+    } else if (ctrl && (key === 'x' || key === 'X')) {
+      if (sel.length) {
+        e.preventDefault()
+        setClip(sel, 'cut')
+      }
+    } else if (ctrl && (key === 'v' || key === 'V')) {
+      if (clipboard && path) {
+        e.preventDefault()
+        void paste(path)
+      }
+    } else if (ctrl && (key === 'f' || key === 'F')) {
+      e.preventDefault()
+      ;(document.querySelector('.win-search input') as HTMLInputElement | null)?.focus()
+    } else if (key === 'Delete') {
+      if (sel.length) {
+        e.preventDefault()
+        void remove(sel)
+      }
+    } else if (key === 'F2') {
+      if (sel.length === 1) {
+        e.preventDefault()
+        void rename(sel[0])
+      }
+    } else if (key === 'Enter') {
+      if (sel.length) {
+        e.preventDefault()
+        if (sel.length === 1) openEntry(sel[0])
+        else fetchFiles(sel)
+      }
+    } else if (key === 'Backspace') {
+      if (listing?.parentPath != null) {
+        e.preventDefault()
+        navigate(listing.parentPath)
+      }
+    } else if (key === 'Escape') {
+      setSelected(new Set())
+    } else if (key === 'ArrowDown' || key === 'ArrowUp') {
+      if (displayed.length === 0) return
+      e.preventDefault()
+      const next = Math.max(0, Math.min(displayed.length - 1, anchorRef.current + (key === 'ArrowDown' ? 1 : -1)))
+      anchorRef.current = next
+      setSelected(new Set([displayed[next].fullPath]))
+      queueMicrotask(() => sectionRef.current?.querySelector('tr.selected, .icon-tile.selected')?.scrollIntoView({ block: 'nearest' }))
+    }
+  })
+  useEffect(() => {
+    if (!active) return
+    const handler = (e: KeyboardEvent) => handleKey(e)
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [active])
 
   const buildMenu = (targets: FileEntry[], folder: string | null): MenuItem[] => {
     const pasteTarget = folder ?? path
@@ -644,14 +760,23 @@ export function ExplorerPane({
           className={`table-wrap${dragOver ? ' drop-active' : ''}`}
           onContextMenu={openEmptyMenu}
           onDragOver={(e) => {
-            if (e.dataTransfer.types.includes(PANE_MIME)) {
+            if (e.dataTransfer.types.includes(PANE_MIME) || e.dataTransfer.types.includes(FILES_MIME)) {
               e.preventDefault()
               setDragOver(true)
             }
           }}
-          onDragLeave={() => setDragOver(false)}
+          onDragLeave={(e) => {
+            if (e.currentTarget === e.target) setDragOver(false)
+          }}
           onDrop={(e) => {
             setDragOver(false)
+            setDropDir(null)
+            const files = e.dataTransfer.getData(FILES_MIME)
+            if (files) {
+              e.preventDefault()
+              void dropFiles(path, files) // 현재 폴더로 이동
+              return
+            }
             const from = e.dataTransfer.getData(PANE_MIME)
             if (from && from !== paneId) {
               e.preventDefault()
@@ -687,10 +812,30 @@ export function ExplorerPane({
                   return (
                     <tr
                       key={entry.fullPath}
-                      className={rowClass(entry, isSel, isCut(entry))}
+                      className={`${rowClass(entry, isSel, isCut(entry))}${dropDir === entry.fullPath ? ' drop-into' : ''}`}
+                      draggable
+                      onDragStart={(e) => startFileDrag(e, entry)}
                       onClick={(e) => selectClick(e, entry, index)}
                       onDoubleClick={() => openEntry(entry)}
                       onContextMenu={(e) => openRowMenu(e, entry, index)}
+                      onDragOver={entry.isDirectory ? (e) => {
+                        if (e.dataTransfer.types.includes(FILES_MIME)) {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setDropDir(entry.fullPath)
+                        }
+                      } : undefined}
+                      onDragLeave={entry.isDirectory ? () => setDropDir((d) => (d === entry.fullPath ? null : d)) : undefined}
+                      onDrop={entry.isDirectory ? (e) => {
+                        const files = e.dataTransfer.getData(FILES_MIME)
+                        if (files) {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setDropDir(null)
+                          setDragOver(false)
+                          void dropFiles(entry.fullPath, files)
+                        }
+                      } : undefined}
                     >
                       <td className="ellipsis">
                         <Icon name={iconFor(entry)} className="file-icon" />
@@ -711,11 +856,31 @@ export function ExplorerPane({
                 return (
                   <div
                     key={entry.fullPath}
-                    className={`icon-tile ${rowClass(entry, isSel, isCut(entry))}`}
+                    className={`icon-tile ${rowClass(entry, isSel, isCut(entry))}${dropDir === entry.fullPath ? ' drop-into' : ''}`}
                     title={entry.name}
+                    draggable
+                    onDragStart={(e) => startFileDrag(e, entry)}
                     onClick={(e) => selectClick(e, entry, index)}
                     onDoubleClick={() => openEntry(entry)}
                     onContextMenu={(e) => openRowMenu(e, entry, index)}
+                    onDragOver={entry.isDirectory ? (e) => {
+                      if (e.dataTransfer.types.includes(FILES_MIME)) {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setDropDir(entry.fullPath)
+                      }
+                    } : undefined}
+                    onDragLeave={entry.isDirectory ? () => setDropDir((d) => (d === entry.fullPath ? null : d)) : undefined}
+                    onDrop={entry.isDirectory ? (e) => {
+                      const files = e.dataTransfer.getData(FILES_MIME)
+                      if (files) {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setDropDir(null)
+                        setDragOver(false)
+                        void dropFiles(entry.fullPath, files)
+                      }
+                    } : undefined}
                   >
                     <Icon name={iconFor(entry)} size={44} className="icon-tile-ico" />
                     <span className="icon-tile-name ellipsis-2">{entry.name}</span>

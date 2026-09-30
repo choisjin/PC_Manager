@@ -18,6 +18,13 @@ export function setAlias(groups: PcGroups, agentId: string, alias: string): PcGr
 // 드래그앤드롭 식별용 MIME (dataTransfer)
 export const AGENT_MIME = 'application/x-pcm-agent'
 export const PANE_MIME = 'application/x-pcm-pane'
+export const FILES_MIME = 'application/x-pcm-files'
+
+/** 창 간 파일 드래그 페이로드 */
+export interface FilesDragPayload {
+  agentId: string
+  items: ClipItem[]
+}
 
 // crypto.randomUUID는 보안 컨텍스트(HTTPS/localhost)에서만 동작하므로,
 // http로 접속하는 내부망에서도 되도록 폴백을 둔다. (폴더·창 ID는 암호학적 강도 불필요)

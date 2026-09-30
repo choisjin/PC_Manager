@@ -112,19 +112,17 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
           e.dataTransfer.setData(AGENT_MIME, agent.id)
           e.dataTransfer.effectAllowed = 'copyMove'
         }}
-        onDoubleClick={() => onOpenAgent(agent.id)}
+        onClick={() => onOpenAgent(agent.id)}
         onContextMenu={(e) => openAgentMenu(e, agent)}
         onMouseEnter={(e) => setHover({ agentId: agent.id, x: e.currentTarget.getBoundingClientRect().right, y: e.currentTarget.getBoundingClientRect().top })}
         onMouseLeave={() => setHover((h) => (h?.agentId === agent.id ? null : h))}
+        title="클릭하면 창 열기/닫기"
       >
         <span className={`dot ${agent.online ? 'on' : 'off'}`} />
         <span className="ellipsis">{displayName(agent, groups)}</span>
         {proj && <span className="proj-badge">{proj}</span>}
         {alias && <span className="tree-host mono">{agent.machineName}</span>}
         {viewers.length > 0 && <span className="using-badge" title={`사용 중: ${viewers.join(', ')}`}>● {viewers.length}</span>}
-        <button type="button" className="tree-open" title="열기" onClick={() => onOpenAgent(agent.id)}>
-          ＋
-        </button>
       </li>
     )
   }
@@ -238,15 +236,15 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         <ul className="tree-root share-list">
           {shares.length === 0 && <li className="placeholder small">등록된 공유 폴더가 없습니다</li>}
           {shares.map((s) => (
-            <li key={s.id} className="tree-agent share-item" title={s.path} onDoubleClick={() => onOpenAgent(s.id)}>
+            <li key={s.id} className="tree-agent share-item" title={`${s.path} — 클릭하면 창 열기/닫기`} onClick={() => onOpenAgent(s.id)}>
               <Icon name="drive" size={14} />
               <span className="ellipsis">{s.name}</span>
-              <button type="button" className="tree-open" title="열기" onClick={() => onOpenAgent(s.id)}>＋</button>
               <button
                 type="button"
                 className="icon-mini"
                 title="공유 폴더 삭제"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation()
                   if (window.confirm(`'${s.name}' 공유 폴더를 목록에서 제거할까요? (실제 파일은 지워지지 않습니다)`)) removeShare(s.id)
                 }}
               >
@@ -257,7 +255,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         </ul>
       </div>
 
-      <p className="tree-hint small muted">PC·공유 폴더를 더블클릭하면 창이 열립니다 · 폴더로 끌어 그룹 지정</p>
+      <p className="tree-hint small muted">PC·공유 폴더를 클릭하면 창 열기/닫기 · 폴더로 끌어 그룹 지정</p>
 
       {showAddShare && <AddShareModal onConfirm={addShare} onClose={() => setShowAddShare(false)} />}
 

@@ -2006,6 +2006,14 @@ tr.video {
   flex: none;
 }
 
+/* 창 간 파일 드래그: 폴더 위에 올렸을 때 하이라이트 */
+tr.drop-into > td,
+.icon-tile.drop-into {
+  background: var(--selected);
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+}
+
 /* 공용 하단 상태 표시줄 (활성 창 기준) */
 .explorer-status {
   display: flex;

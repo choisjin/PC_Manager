@@ -108,10 +108,23 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
     })
   }
 
-  const addPane = (agentId: string) => {
+  // PC당 창은 하나만 (중복 방지). 이미 있으면 활성화만.
+  const openPane = (agentId: string) => {
+    const existing = panes.find((p) => p.agentId === agentId)
+    if (existing) {
+      setActivePaneId(existing.paneId)
+      return
+    }
     const paneId = newId()
     updatePanes([...panes, { paneId, agentId }])
     setActivePaneId(paneId)
+  }
+
+  // 트리에서 한 번 클릭: 열려 있으면 닫고, 없으면 연다
+  const togglePane = (agentId: string) => {
+    const existing = panes.find((p) => p.agentId === agentId)
+    if (existing) closePane(existing.paneId)
+    else openPane(agentId)
   }
 
   const closePane = (paneId: string) => {
@@ -151,7 +164,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         filterProjectId={filterProjectId}
         collapsed={collapsed}
         onToggleCollapse={toggleCollapse}
-        onOpenAgent={addPane}
+        onOpenAgent={togglePane}
       />
 
       <div className="explorer-main">
@@ -174,7 +187,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
             const agentId = e.dataTransfer.getData(AGENT_MIME)
             if (agentId) {
               e.preventDefault()
-              addPane(agentId)
+              openPane(agentId)
             }
           }}
         >
