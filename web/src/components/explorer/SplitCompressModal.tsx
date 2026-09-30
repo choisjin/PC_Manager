@@ -10,28 +10,17 @@ interface Props {
 const MB = 1024 * 1024
 const GB = 1024 * MB
 
-interface Preset {
-  label: string
-  value: number
-  unit: 'MB' | 'GB'
-}
-
-const PRESETS: Preset[] = [
-  { label: '100 MB', value: 100, unit: 'MB' },
-  { label: '700 MB (CD)', value: 700, unit: 'MB' },
-  { label: '1 GB', value: 1, unit: 'GB' },
-  { label: '2 GB', value: 2, unit: 'GB' },
-  { label: '4 GB (DVD)', value: 4, unit: 'GB' },
-]
-
 /** 분할 압축 볼륨 크기를 고르는 모달 */
 export function SplitCompressModal({ count, onConfirm, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [value, setValue] = useState('100')
   const [unit, setUnit] = useState<'MB' | 'GB'>('MB')
 
+  const inputRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     dialogRef.current?.showModal()
+    inputRef.current?.select()
   }, [])
 
   const bytes = Math.round(parseFloat(value) * (unit === 'GB' ? GB : MB))
@@ -62,28 +51,11 @@ export function SplitCompressModal({ count, onConfirm, onClose }: Props) {
           선택한 {count}개 항목을 하나의 ZIP으로 압축한 뒤 아래 크기로 나눕니다. 볼륨은{' '}
           <span className="mono">이름.zip.001</span>, <span className="mono">.002</span> … 로 만들어집니다.
         </p>
-        <div className="split-presets">
-          {PRESETS.map((p) => {
-            const active = value === String(p.value) && unit === p.unit
-            return (
-              <button
-                key={p.label}
-                type="button"
-                className={`split-preset${active ? ' active' : ''}`}
-                onClick={() => {
-                  setValue(String(p.value))
-                  setUnit(p.unit)
-                }}
-              >
-                {p.label}
-              </button>
-            )
-          })}
-        </div>
         <label>
-          볼륨 크기 직접 입력
+          볼륨 크기
           <span className="split-size-row">
             <input
+              ref={inputRef}
               type="number"
               min="0"
               step="any"

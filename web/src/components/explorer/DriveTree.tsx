@@ -6,6 +6,8 @@ interface Props {
   agentId: string
   currentPath: string
   onNavigate: (path: string) => void
+  /** 노드 우클릭 (드라이브 루트는 isDrive=true) */
+  onContextMenu?: (e: React.MouseEvent, entry: FileEntry, isDrive: boolean) => void
 }
 
 type Children = FileEntry[] | 'loading' | 'error'
@@ -13,7 +15,7 @@ type Children = FileEntry[] | 'loading' | 'error'
 const same = (a: string, b: string) => a.replace(/\\+$/, '').toLowerCase() === b.replace(/\\+$/, '').toLowerCase()
 
 /** 윈도우 탐색기식 드라이브 트리 (폴더만, 펼칠 때 하위 폴더를 그때그때 불러온다) */
-export function DriveTree({ agentId, currentPath, onNavigate }: Props) {
+export function DriveTree({ agentId, currentPath, onNavigate, onContextMenu }: Props) {
   const [drives, setDrives] = useState<FileEntry[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -61,7 +63,11 @@ export function DriveTree({ agentId, currentPath, onNavigate }: Props) {
     const isCurrent = same(entry.fullPath, currentPath)
     return (
       <li key={entry.fullPath}>
-        <div className={`drive-node${isCurrent ? ' current' : ''}`} style={{ paddingLeft: 2 + depth * 10 }}>
+        <div
+          className={`drive-node${isCurrent ? ' current' : ''}`}
+          style={{ paddingLeft: 2 + depth * 10 }}
+          onContextMenu={onContextMenu ? (e) => onContextMenu(e, entry, depth === 0) : undefined}
+        >
           <button type="button" className="tree-caret" onClick={() => toggle(entry.fullPath)} aria-label={open ? '접기' : '펼치기'}>
             {open ? '▾' : '▸'}
           </button>

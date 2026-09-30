@@ -8,6 +8,8 @@ import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DriveTree } from './DriveTree'
 import { Icon } from './Icon'
 import { copyText, type FileClipboard, FILES_MIME, type FilesDragPayload, newId, PANE_MIME } from './pcGroups'
+
+const COL_WIDTH_KEY = 'explorer.colWidths'
 import { fileTypeLabel, type PaneController, sortEntries, type SortKey, type ViewMode } from './paneController'
 import { SplitCompressModal } from './SplitCompressModal'
 import { RemoteModal } from './RemoteModal'
@@ -116,7 +118,17 @@ export function ExplorerPane({
   const [terminal, setTerminal] = useState(false)
   const [remote, setRemote] = useState(false)
   const [splitTargets, setSplitTargets] = useState<FileEntry[] | null>(null)
-  const [menu, setMenu] = useState<{ x: number; y: number; targets: FileEntry[]; folder: string | null } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; targets: FileEntry[]; folder: string | null; items?: MenuItem[] } | null>(null)
+  // 자세히 보기 열 너비 (px). 이름은 지정 전까지 남는 폭을 차지한다
+  const [colWidths, setColWidths] = useState<{ name?: number; modified: number; type: number; size: number }>(() => {
+    try {
+      const saved = localStorage.getItem(COL_WIDTH_KEY)
+      if (saved) return { modified: 132, type: 80, size: 62, ...JSON.parse(saved) }
+    } catch {
+      // 무시
+    }
+    return { modified: 132, type: 80, size: 62 }
+  })
   const [dragOver, setDragOver] = useState(false)
   const [dropDir, setDropDir] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -257,6 +269,33 @@ export function ExplorerPane({
       } catch {
         // 무시
       }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  // 열 너비 드래그 조절 (헤더 오른쪽 가장자리)
+  const startColResize = (key: 'name' | 'modified' | 'type' | 'size', e: React.MouseEvent<HTMLElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const th = (e.currentTarget as HTMLElement).parentElement as HTMLElement
+    const startX = e.clientX
+    const startWidth = th.getBoundingClientRect().width
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(40, Math.round(startWidth + ev.clientX - startX))
+      setColWidths((prev) => ({ ...prev, [key]: next }))
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setColWidths((prev) => {
+        try {
+          localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(prev))
+        } catch {
+          // 무시
+        }
+        return prev
+      })
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
@@ -684,6 +723,46 @@ export function ExplorerPane({
     setMenu({ x: e.clientX, y: e.clientY, targets: [], folder: null })
   }
 
+  // 드라이브 트리 노드 우클릭: 드라이브 루트는 안전한 항목만, 폴더는 파일 목록의 폴더 메뉴와 같게
+  const openTreeMenu = (e: React.MouseEvent, entry: FileEntry, isDrive: boolean) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const open: MenuItem = { label: '열기', onClick: () => navigate(entry.fullPath) }
+    const items: MenuItem[] = isDrive
+      ? [
+          open,
+          { separator: true },
+          {
+            label: clipboard ? `붙여넣기${clipboard.items.length > 1 ? ` (${clipboard.items.length})` : ''}` : '붙여넣기',
+            disabled: !clipboard,
+            onClick: () => void paste(entry.fullPath),
+          },
+          { label: '즐겨찾기에 추가', onClick: () => onAddFavorite(entry.fullPath) },
+          { label: '경로 복사', onClick: () => void copyText(entry.fullPath) },
+          { separator: true },
+          { label: '터미널 열기', onClick: () => setTerminal(true) },
+        ]
+      : [open, { separator: true }, ...buildMenu([entry], entry.fullPath)]
+    setMenu({ x: e.clientX, y: e.clientY, targets: [], folder: null, items })
+  }
+
+  const openFavMenu = (e: React.MouseEvent, fp: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      targets: [],
+      folder: null,
+      items: [
+        { label: '열기', onClick: () => navigate(fp) },
+        { label: '경로 복사', onClick: () => void copyText(fp) },
+        { separator: true },
+        { label: '즐겨찾기 제거', danger: true, onClick: () => onRemoveFavorite(fp) },
+      ],
+    })
+  }
+
   const style = width && height ? { width, height } : undefined
 
   const rowClass = (entry: FileEntry, isSel: boolean, cut: boolean) =>
@@ -785,6 +864,7 @@ export function ExplorerPane({
                     favDragIndex.current = null
                     setFavOverIndex(null)
                   }}
+                  onContextMenu={(e) => openFavMenu(e, fp)}
                 >
                   <span className="fav-grip" aria-hidden="true">⠿</span>
                   <button type="button" className="drive-name ellipsis fav-btn" title={fp} onClick={() => navigate(fp)}>
@@ -797,7 +877,7 @@ export function ExplorerPane({
               ))}
             </ul>
           </div>
-          <DriveTree agentId={agentId} currentPath={path} onNavigate={navigate} />
+          <DriveTree agentId={agentId} currentPath={path} onNavigate={navigate} onContextMenu={openTreeMenu} />
         </div>
 
         <div className="pane-side-resizer" title="드래그해서 폭 조절" onMouseDown={startSideResize} />
@@ -837,19 +917,32 @@ export function ExplorerPane({
               {search ? '검색 결과가 없습니다' : loading ? '불러오는 중…' : '빈 폴더입니다 (우클릭으로 새 폴더·붙여넣기)'}
             </div>
           ) : view === 'details' ? (
-            <table className="noselect">
+            <table
+              className="noselect details-table"
+              style={colWidths.name ? { width: colWidths.name + colWidths.modified + colWidths.type + colWidths.size, minWidth: '100%' } : undefined}
+            >
               <colgroup>
-                <col />
-                <col style={{ width: 132 }} />
-                <col style={{ width: 80 }} />
-                <col style={{ width: 62 }} />
+                <col style={colWidths.name ? { width: colWidths.name } : undefined} />
+                <col style={{ width: colWidths.modified }} />
+                <col style={{ width: colWidths.type }} />
+                <col style={{ width: colWidths.size }} />
               </colgroup>
               <thead>
                 <tr>
-                  <th className="sortable" onClick={() => applySort('name')}>이름{sortKey === 'name' ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>
-                  <th className="sortable" onClick={() => applySort('modified')}>수정한 날짜{sortKey === 'modified' ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>
-                  <th className="sortable" onClick={() => applySort('type')}>유형{sortKey === 'type' ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>
-                  <th className="sortable" onClick={() => applySort('size')}>크기{sortKey === 'size' ? (sortAsc ? ' ▲' : ' ▼') : ''}</th>
+                  {(
+                    [
+                      ['name', '이름'],
+                      ['modified', '수정한 날짜'],
+                      ['type', '유형'],
+                      ['size', '크기'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <th key={key} className="sortable" onClick={() => applySort(key)}>
+                      {label}
+                      {sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                      <span className="col-resizer" title="드래그해서 너비 조절" onMouseDown={(e) => startColResize(key, e)} onClick={(e) => e.stopPropagation()} />
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -940,7 +1033,7 @@ export function ExplorerPane({
 
       <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => e.target.files && void pushFiles(e.target.files)} />
 
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={buildMenu(menu.targets, menu.folder)} onClose={() => setMenu(null)} />}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items ?? buildMenu(menu.targets, menu.folder)} onClose={() => setMenu(null)} />}
 
       {playing && (
         <VideoViewer agentId={agentId} path={playing.path} name={playing.name} onFetch={() => fetchFiles([{ fullPath: playing.path, name: playing.name, isDirectory: false, size: 0, modifiedAt: null }])} onClose={() => setPlaying(null)} />

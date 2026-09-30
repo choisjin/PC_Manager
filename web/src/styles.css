@@ -456,6 +456,8 @@ th {
   position: sticky;
   top: 0;
   padding: 6px 10px;
+  overflow: hidden;
+  white-space: nowrap;
   font-size: 12px;
   font-weight: 600;
   text-align: left;
@@ -467,6 +469,23 @@ th {
 td {
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
+}
+
+/* 자세히 보기 열 너비 조절 손잡이 (헤더 오른쪽 가장자리) */
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+}
+
+.col-resizer:hover,
+.col-resizer:active {
+  background: var(--accent);
+  opacity: 0.6;
 }
 
 tbody tr {
@@ -695,39 +714,24 @@ button.small-btn {
   width: min(440px, calc(100vw - 32px));
 }
 
-.split-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.split-preset {
-  padding: 6px 10px;
-  font-size: 12px;
-  color: var(--text);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.split-preset:hover {
-  border-color: var(--accent);
-}
-
-.split-preset.active {
-  color: #fff;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-
 .split-size-row {
   display: flex;
   gap: 8px;
+  margin-top: 4px;
 }
 
 .split-size-row input {
   flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.split-size-row select {
+  flex: none;
+  width: 72px;
+  font-size: 14px;
 }
 
 /* 탭 */
