@@ -44,6 +44,11 @@
 - 인코딩: Media Foundation H.264 소프트웨어 MFT (Baseline, 저지연, B 프레임 없음, CBR). BGRA→NV12(BT.709)는 CPU 병렬 변환, 폭 2560 초과면 1/2 축소
 - 디코딩: 보안 컨텍스트(HTTPS/localhost)면 WebCodecs → canvas, 아니면(http://서버IP) 브라우저에서 fMP4로 감싸 MSE → video
 - 입력: 브라우저 KeyboardEvent.code → 스캔 코드 `SendInput` (원격 PC의 배열/IME 적용), 마우스는 모니터 기준 0~1 좌표. Ctrl+Alt+Del은 서비스가 `SendSAS` (SoftwareSASGeneration 정책을 켬)
+- 키 입력은 이벤트마다 수식 키 상태를 함께 보내고, 에이전트가 주입 직전에 원격 수식 키를 맞춘다 (Shift+숫자 등 유실/순서 보정)
+- 로컬에서 가로채는 특수 키(Ctrl+Alt+Del, Win, Alt+Tab…)는 아이콘 버튼으로 전송. 창 모드는 상단바, 전체 화면은 반투명 PiP
+- 전체 화면 + Keyboard Lock API(HTTPS 필요)면 Ctrl+Alt+Del을 뺀 특수 키를 직접 눌러도 원격으로 간다
+- HTTPS: 설치 스크립트가 자체 서명 인증서(SAN: 호스트명·IPv4·localhost)를 LocalMachine\My에 만들고 Kestrel HTTPS 포트(기본 5064)를 연다.
+  공개 인증서는 `/api/install/PcManager-Server.cer`로 배포. 에이전트는 HTTP로 접속하므로 테스트 PC에는 인증서가 필요 없다
 - 메시지 형식은 `RemoteSessionApp.cs` 주석 참고
 - 추후: 하드웨어 인코더(비동기 MFT), 커서 모양, 클립보드 동기화, 오디오, WebRTC P2P
 

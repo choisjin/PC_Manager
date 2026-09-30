@@ -7,6 +7,8 @@ export type IconName =
   | 'new-folder' | 'cut' | 'copy' | 'paste' | 'rename' | 'download' | 'delete'
   | 'sort' | 'view-grid' | 'view-details' | 'terminal' | 'remote' | 'upload' | 'search'
   | 'folder' | 'file' | 'video' | 'pc' | 'drive' | 'star' | 'chevron' | 'close' | 'plus'
+  // 원격조작 특수 키
+  | 'keyboard' | 'three-keys' | 'alt-tab' | 'play' | 'lock' | 'chart' | 'close-window' | 'camera' | 'text' | 'fullscreen' | 'fullscreen-exit'
 
 interface Props {
   name: IconName
@@ -39,6 +41,17 @@ const LINE: Partial<Record<IconName, ReactNode>> = {
   drive: <><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 12h.01" /><path d="M3 12h12" /></>,
   chevron: <path d="M9 6l6 6-6 6" />,
   close: <path d="M6 6l12 12M18 6L6 18" />,
+  keyboard: <><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10" /></>,
+  'three-keys': <><rect x="2" y="9" width="5.5" height="6" rx="1" /><rect x="9.25" y="9" width="5.5" height="6" rx="1" /><rect x="16.5" y="9" width="5.5" height="6" rx="1" /></>,
+  'alt-tab': <><rect x="3" y="8" width="12" height="10" rx="1.5" /><path d="M9 8V6.5A1.5 1.5 0 0 1 10.5 5h9A1.5 1.5 0 0 1 21 6.5v8a1.5 1.5 0 0 1-1.5 1.5H15" /></>,
+  play: <path d="M8 5v14l11-7z" />,
+  lock: <><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
+  chart: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7.5 16v-4M12 16V8M16.5 16v-6" /></>,
+  'close-window': <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M10 13l4 4M14 13l-4 4" /></>,
+  camera: <><path d="M4 8h3.5l1.5-2h6l1.5 2H20v11H4z" /><circle cx="12" cy="13" r="3" /></>,
+  text: <><path d="M5 6h14M12 6v13M9 19h6" /></>,
+  fullscreen: <><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" /></>,
+  'fullscreen-exit': <><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
 }
 

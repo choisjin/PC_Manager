@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api'
 import { MseSink, type VideoSink, WebCodecsSink, webCodecsAvailable } from '../remote/sinks'
-import { ContextMenu, type MenuItem } from './ContextMenu'
+import { Icon, type IconName } from './Icon'
 
 interface Props {
   agentId: string
@@ -31,16 +31,44 @@ const QUALITIES = [
   { label: '높음', bitrate: 12_000_000 },
 ]
 
-// 브라우저/OS가 가로채서 직접 누를 수 없는 조합
-const COMBOS: { label: string; codes: string[] }[] = [
-  { label: 'Windows 키', codes: ['MetaLeft'] },
-  { label: 'Alt + Tab', codes: ['AltLeft', 'Tab'] },
-  { label: 'Win + D (바탕 화면)', codes: ['MetaLeft', 'KeyD'] },
-  { label: 'Win + R (실행)', codes: ['MetaLeft', 'KeyR'] },
-  { label: 'Ctrl + Shift + Esc (작업 관리자)', codes: ['ControlLeft', 'ShiftLeft', 'Escape'] },
-  { label: 'Alt + F4', codes: ['AltLeft', 'F4'] },
-  { label: 'Print Screen', codes: ['PrintScreen'] },
+// 브라우저/OS가 가로채서 로컬에서 직접 누를 수 없는 키. 아이콘 버튼으로 원격에 보낸다
+// (전체 화면 + 키보드 잠금이면 Ctrl+Alt+Del을 뺀 나머지는 직접 눌러도 전달된다)
+interface SpecialKey {
+  icon: IconName
+  label: string
+  /** 스캔 코드로 누를 조합. 없으면 action */
+  codes?: string[]
+  action?: 'cad' | 'text'
+}
+
+const SPECIAL_KEYS: SpecialKey[] = [
+  { icon: 'three-keys', label: 'Ctrl + Alt + Del', action: 'cad' },
+  { icon: 'view-grid', label: 'Windows 키', codes: ['MetaLeft'] },
+  { icon: 'alt-tab', label: 'Alt + Tab', codes: ['AltLeft', 'Tab'] },
+  { icon: 'pc', label: 'Win + D (바탕 화면)', codes: ['MetaLeft', 'KeyD'] },
+  { icon: 'folder', label: 'Win + E (탐색기)', codes: ['MetaLeft', 'KeyE'] },
+  { icon: 'play', label: 'Win + R (실행)', codes: ['MetaLeft', 'KeyR'] },
+  { icon: 'lock', label: 'Win + L (잠금)', codes: ['MetaLeft', 'KeyL'] },
+  { icon: 'chart', label: 'Ctrl + Shift + Esc (작업 관리자)', codes: ['ControlLeft', 'ShiftLeft', 'Escape'] },
+  { icon: 'close-window', label: 'Alt + F4', codes: ['AltLeft', 'F4'] },
+  { icon: 'camera', label: 'Print Screen', codes: ['PrintScreen'] },
+  { icon: 'text', label: '텍스트 보내기…', action: 'text' },
 ]
+
+interface KeyboardApi {
+  lock?: () => Promise<void>
+  unlock?: () => void
+}
+
+const keyboardApi = () => (navigator as Navigator & { keyboard?: KeyboardApi }).keyboard
+
+/**
+ * Keyboard Lock API: 전체 화면에서 Alt+Tab, Win, Alt+F4, Ctrl+W 같은 키를 브라우저/OS 대신 페이지가 받는다.
+ * 보안 컨텍스트(HTTPS, localhost)에서만 노출된다. Ctrl+Alt+Del은 OS가 처리하므로 어떤 방법으로도 가로챌 수 없다.
+ */
+const keyboardLockAvailable = () => typeof window !== 'undefined' && window.isSecureContext && typeof keyboardApi()?.lock === 'function'
+
+type KeyLock = 'off' | 'locked' | 'unavailable'
 
 /** 원격 PC 화면 보기 + 마우스/키보드 조작 (H.264 스트리밍) */
 export function RemoteModal({ agentId, machineName, onClose }: Props) {
@@ -67,11 +95,41 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
   const [quality, setQuality] = useState(1)
   const [viewOnly, setViewOnly] = useState(false)
   const [cursor, setCursor] = useState<{ x: number; y: number; visible: boolean } | null>(null)
-  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  const [pipOpen, setPipOpen] = useState(false)
   const [textOpen, setTextOpen] = useState(false)
   const [text, setText] = useState('')
+  const [fullscreen, setFullscreen] = useState(false)
+  const [keyLock, setKeyLock] = useState<KeyLock>(() => (keyboardLockAvailable() ? 'off' : 'unavailable'))
+  const [hint, setHint] = useState<string | null>(null)
 
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 })
+
+  // 잠깐 보였다 사라지는 안내 (연결 오류 오버레이와 별개)
+  const showHint = (text: string) => setHint(text)
+  useEffect(() => {
+    if (!hint) return
+    const id = setTimeout(() => setHint(null), 6000)
+    return () => clearTimeout(id)
+  }, [hint])
+
+  // 전체 화면을 벗어나면(Esc 길게 누름 등) 키보드 잠금도 풀린다. 모달을 닫을 때도 정리
+  useEffect(() => {
+    const onChange = () => {
+      const active = document.fullscreenElement === stageRef.current
+      setFullscreen(active)
+      if (!active) {
+        keyboardApi()?.unlock?.()
+        setKeyLock((s) => (s === 'locked' ? 'off' : s))
+      }
+      stageRef.current?.focus()
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange)
+      keyboardApi()?.unlock?.()
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
+    }
+  }, [])
 
   useEffect(() => {
     dialogRef.current?.showModal()
@@ -87,6 +145,7 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
   const changeViewOnly = (value: boolean) => {
     viewOnlyRef.current = value
     setViewOnly(value)
+    focusStage()
   }
 
   // 연결 (다시 연결하면 attempt가 바뀐다)
@@ -261,11 +320,13 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
   const changeMonitor = (index: number) => {
     setMonitor(index)
     send({ t: 'monitor', index })
+    focusStage()
   }
 
   const changeQuality = (index: number) => {
     setQuality(index)
     send({ t: 'quality', bitrate: QUALITIES[index].bitrate })
+    focusStage()
   }
 
   const toggleFullscreen = async () => {
@@ -275,37 +336,65 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
     try {
       if (document.fullscreenElement) {
         await document.exitFullscreen()
-      } else {
-        await stage.requestFullscreen()
-        // 전체 화면에서는 Win, Alt+Tab 같은 키도 가로챌 수 있다 (HTTPS에서만 지원)
-        const keyboard = (navigator as Navigator & { keyboard?: { lock?: () => Promise<void> } }).keyboard
-        await keyboard?.lock?.().catch(() => {})
+        return
       }
+      await stage.requestFullscreen()
     } catch (err) {
-      setMessage(`전체 화면을 전환하지 못했습니다: ${err instanceof Error ? err.message : String(err)}`)
+      showHint(`전체 화면을 전환하지 못했습니다: ${err instanceof Error ? err.message : String(err)}`)
+      stage.focus()
+      return
+    }
+
+    // 전체 화면에서만 키보드 잠금이 가능: Alt+Tab, Win, Alt+F4, Ctrl+W 등이 로컬 대신 원격으로 간다
+    if (keyLock === 'unavailable') {
+      // HTTP 접속: 브라우저가 Keyboard Lock API를 노출하지 않는다 → HTTPS 주소를 안내
+      let https: string | null = null
+      try {
+        https = (await api.installInfo()).httpsUrl
+      } catch {
+        // 안내만 생략
+      }
+      showHint(
+        https
+          ? `Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: ${https}  (지금은 위 아이콘으로 보낼 수 있습니다)`
+          : 'Alt+Tab·Win 키를 직접 누르려면 HTTPS(또는 localhost)로 접속해야 합니다. 지금은 위 아이콘으로 보낼 수 있습니다.',
+      )
+    } else {
+      try {
+        await keyboardApi()!.lock!()
+        setKeyLock('locked')
+        showHint('키보드 잠금: Alt+Tab·Win·Alt+F4가 원격으로 전달됩니다. 종료하려면 Esc를 길게 누르거나 ⛶ 버튼을 누르세요.')
+      } catch (err) {
+        setKeyLock('off')
+        showHint(`키보드 잠금 실패: ${err instanceof Error ? err.message : String(err)}`)
+      }
     }
     stage.focus()
   }
 
-  const specialMenu = (e: React.MouseEvent) => {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    setMenu({
-      x: r.left,
-      y: r.bottom + 2,
-      items: [
-        {
-          label: 'Ctrl + Alt + Del',
-          onClick: () => {
-            api.sendCtrlAltDel(agentId).catch((err: unknown) => setMessage(err instanceof Error ? err.message : String(err)))
-          },
-        },
-        { separator: true },
-        ...COMBOS.map((c) => ({ label: c.label, onClick: () => sendInput({ t: 'combo', codes: c.codes }) })),
-        { separator: true },
-        { label: '텍스트 보내기…', onClick: () => setTextOpen(true) },
-      ],
-    })
+  // 헤더/PiP 버튼을 누르면 포커스가 버튼으로 가므로 키 입력이 계속 원격으로 가게 되돌린다
+  const focusStage = () => stageRef.current?.focus()
+
+  const pressSpecial = (k: SpecialKey) => {
+    if (k.action === 'cad') {
+      api.sendCtrlAltDel(agentId).catch((err: unknown) => showHint(err instanceof Error ? err.message : String(err)))
+    } else if (k.action === 'text') {
+      setTextOpen(true)
+      return
+    } else if (k.codes) {
+      sendInput({ t: 'combo', codes: k.codes })
+    }
+    setPipOpen(false)
+    focusStage()
   }
+
+  const keysDisabled = viewOnly || phase !== 'live'
+  const renderSpecialKeys = (className: string) =>
+    SPECIAL_KEYS.map((k) => (
+      <button key={k.label} type="button" className={className} title={k.label} aria-label={k.label} disabled={keysDisabled} onClick={() => pressSpecial(k)}>
+        <Icon name={k.icon} size={18} />
+      </button>
+    ))
 
   const sendText = () => {
     if (text) sendInput({ t: 'text', text })
@@ -337,6 +426,7 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
           <b>{machineName}</b>
           <span className="muted small">{statusText}</span>
           {secureDesktop && <span className="remote-badge">보안 데스크톱</span>}
+          {keyLock === 'locked' && <span className="remote-badge ok">키보드 잠금</span>}
         </span>
         <span className="remote-actions">
           {monitors.length > 1 && (
@@ -358,11 +448,21 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
           <label className="remote-toggle">
             <input type="checkbox" checked={viewOnly} onChange={(e) => changeViewOnly(e.target.checked)} /> 보기 전용
           </label>
-          <button type="button" disabled={viewOnly || phase !== 'live'} onClick={specialMenu}>
-            특수 키 ▾
-          </button>
-          <button type="button" className="icon" title="전체 화면" onClick={() => void toggleFullscreen()}>
-            ⛶
+          {/* 로컬에서 가로채는 특수 키 (창 모드: 상단바에 아이콘) */}
+          <span className="remote-keys" role="group" aria-label="특수 키">
+            {renderSpecialKeys('icon remote-key')}
+          </span>
+          <button
+            type="button"
+            className="icon"
+            title={
+              keyLock === 'unavailable'
+                ? '전체 화면 (Alt+Tab·Win 키 전달은 HTTPS 접속에서만 가능)'
+                : '전체 화면 + 키보드 잠금 (Alt+Tab·Win·Alt+F4를 원격으로 전달)'
+            }
+            onClick={() => void toggleFullscreen()}
+          >
+            <Icon name="fullscreen" size={18} />
           </button>
           <button type="button" className="icon" aria-label="닫기" onClick={() => dialogRef.current?.close()}>
             ✕
@@ -386,6 +486,27 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
         {useWebCodecs ? <canvas ref={canvasRef} className="remote-surface" /> : <video ref={videoRef} className="remote-surface" muted playsInline />}
 
         {viewOnly && cursor?.visible && format && <RemoteCursor x={cursor.x} y={cursor.y} stage={stageSize} format={format} />}
+
+        {/* 전체 화면에서는 헤더가 안 보이므로 반투명 PiP 도구를 띄운다. 키보드 아이콘을 누르면 특수 키가 펼쳐진다 */}
+        {fullscreen && (
+          <div
+            className={`remote-pip${pipOpen ? ' open' : ''}`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            onPointerMove={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+          >
+            <button type="button" className="icon remote-key" title="특수 키" aria-expanded={pipOpen} onClick={() => setPipOpen((o) => !o)}>
+              <Icon name="keyboard" size={18} />
+            </button>
+            {pipOpen && <span className="remote-pip-keys">{renderSpecialKeys('icon remote-key')}</span>}
+            <button type="button" className="icon remote-key" title="전체 화면 종료" onClick={() => void toggleFullscreen()}>
+              <Icon name="fullscreen-exit" size={18} />
+            </button>
+          </div>
+        )}
+
+        {hint && <div className="remote-hint">{hint}</div>}
 
         {message && (
           <div className="remote-overlay">
@@ -428,7 +549,6 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
         )}
       </div>
 
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </dialog>
   )
 }

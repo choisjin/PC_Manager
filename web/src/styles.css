@@ -1406,6 +1406,90 @@ tr.cut td {
   height: 100%;
 }
 
+.remote-badge.ok {
+  color: var(--ok);
+}
+
+/* 특수 키 아이콘 (창 모드: 상단바) */
+.remote-keys {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+}
+
+.remote-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+/* 전체 화면: 반투명 PiP 도구 (마우스를 올리면 또렷해짐). 키보드 아이콘을 누르면 특수 키가 펼쳐진다 */
+.remote-pip {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  color: #fff;
+  background: rgb(20 24 30 / 60%);
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 35%);
+  opacity: 0.4;
+  transform: translateX(-50%);
+  backdrop-filter: blur(6px);
+  transition: opacity 0.15s;
+}
+
+.remote-pip:hover,
+.remote-pip.open {
+  opacity: 1;
+}
+
+.remote-pip .remote-key {
+  color: #fff;
+  background: transparent;
+  border-color: transparent;
+}
+
+.remote-pip .remote-key:hover:not(:disabled) {
+  background: rgb(255 255 255 / 15%);
+}
+
+.remote-pip-keys {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 4px;
+  border-right: 1px solid rgb(255 255 255 / 25%);
+  border-left: 1px solid rgb(255 255 255 / 25%);
+}
+
+/* 잠깐 보이는 안내 토스트 */
+.remote-hint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 2;
+  max-width: min(640px, calc(100% - 32px));
+  padding: 8px 14px;
+  font-size: 13px;
+  color: #fff;
+  background: rgb(0 0 0 / 70%);
+  border-radius: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
 .remote-head {
   flex: none;
   gap: 12px;

@@ -12,6 +12,9 @@ public class ServerOptions
     /// <summary>에이전트가 접속할 서버 주소 (예: http://192.168.0.10:5063). 비우면 대시보드 요청 주소를 쓴다</summary>
     public string? PublicUrl { get; set; }
 
+    /// <summary>대시보드 HTTPS 주소 (예: https://192.168.0.10:5064). 설치 스크립트가 자체 서명 인증서와 함께 설정한다</summary>
+    public string? DashboardHttpsUrl { get; set; }
+
     /// <summary>업데이트 확인에 쓰는 GitHub 저장소 (owner/repo)</summary>
     public string UpdateRepo { get; set; } = "choisjin/PC_Manager";
 

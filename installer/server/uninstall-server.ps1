@@ -54,6 +54,7 @@ if ($RemoveData) {
         Write-Host "==> 데이터 삭제: $DataDir" -ForegroundColor Cyan
         Remove-Item -Path $DataDir -Recurse -Force
     }
+    Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq 'CN=PC Manager Server' } | Remove-Item -Force
 }
 else {
     Write-Host "설정과 데이터는 남겨두었습니다: $DataDir (다시 설치하면 그대로 이어서 사용, 함께 지우려면 -RemoveData)"

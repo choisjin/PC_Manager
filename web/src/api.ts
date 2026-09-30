@@ -242,6 +242,10 @@ export interface InstallInfo {
   /** 서버에 더블클릭 설치 파일이 있으면 true */
   setupAvailable: boolean
   setupDownloadUrl: string
+  /** 대시보드 HTTPS 주소 (원격조작 키보드 잠금·WebCodecs용). 설치형이 아니면 null */
+  httpsUrl: string | null
+  /** 자체 서명 인증서(.cer) 다운로드 경로. 없으면 null */
+  certificateDownloadUrl: string | null
 }
 
 export const isActiveRun = (state: RunState) => state === 'Pending' || state === 'Running'

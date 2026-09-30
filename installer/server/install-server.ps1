@@ -12,9 +12,20 @@
   .\install-server.ps1
   .\install-server.ps1 -Port 8080 -PublicUrl http://pcmanager.mycompany.local:8080
   .\install-server.ps1 -AgentToken (내부망이 아니라 토큰 인증을 쓰려는 고급 사용자용)
+  .\install-server.ps1 -RenewCertificate   (서버 IP/이름이 바뀌어 HTTPS 인증서를 다시 만들 때)
+
+.NOTES
+  HTTPS: 자체 서명 인증서를 만들어 HTTPS 포트(기본 = HTTP 포트 + 1)도 함께 엽니다.
+  원격조작의 키보드 잠금(Alt+Tab·Win 키 전달)과 저지연 디코딩은 브라우저 정책상 HTTPS에서만 동작합니다.
+  대시보드를 여는 PC에서 인증서 파일(PcManager-Server.cer)을 '신뢰할 수 있는 루트 인증 기관'에 한 번 설치하면 경고 없이 열립니다.
+  에이전트는 계속 HTTP 주소로 접속하므로 테스트 PC에는 인증서를 설치할 필요가 없습니다.
 #>
 param(
     [int] $Port = 5063,
+    # HTTPS 포트. 0이면 HTTP 포트 + 1
+    [int] $HttpsPort = 0,
+    # 기존 인증서를 버리고 새로 만든다 (IP/호스트 이름 변경 시)
+    [switch] $RenewCertificate,
     [string] $InstallDir = (Join-Path $env:ProgramFiles 'PcManager\Server'),
     # 에이전트가 접속할 주소. 비우면 이 PC의 IP 주소로 설정
     [string] $PublicUrl,
@@ -30,12 +41,50 @@ $ConfigPath = Join-Path $ConfigDir 'server.json'
 $DataDir = Join-Path $ConfigDir 'data'
 $FirewallRuleName = 'PC Manager Server'
 $EventSource = 'PcManager.Server'
+$CertSubject = 'CN=PC Manager Server'
+# Kestrel의 Certificate.Subject는 DN이 아니라 주체 이름 부분 문자열로 찾는다 (FindBySubjectName)
+$CertKestrelSubject = 'PC Manager Server'
+$CertFriendlyName = 'PC Manager Server (self-signed)'
+$CertExportPath = Join-Path $ConfigDir 'PcManager-Server.cer'
 # 자가 업데이트(서비스가 자기 파일 교체·재시작)를 위해 LocalSystem으로 실행한다
 $ServiceAccount = 'LocalSystem'
 $LocalServiceSid = '*S-1-5-19'
 
 function Write-Step([string] $Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
+}
+
+function Get-AllIPv4 {
+    Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
+        ForEach-Object { $_.IPAddress } | Sort-Object -Unique
+}
+
+# 자체 서명 HTTPS 인증서 (LocalMachine\My). 호스트 이름·모든 IPv4·localhost를 SAN에 넣어 어느 주소로 열어도 맞는다
+function Get-ServerCertificate {
+    $existing = Get-ChildItem Cert:\LocalMachine\My |
+        Where-Object { $_.Subject -eq $CertSubject -and $_.NotAfter -gt (Get-Date).AddDays(30) } |
+        Sort-Object NotAfter -Descending | Select-Object -First 1
+    if ($existing -and -not $RenewCertificate) {
+        return $existing
+    }
+
+    Write-Step 'HTTPS 자체 서명 인증서 생성'
+    # 이전 인증서는 지운다 (Kestrel은 같은 Subject 중 만료가 가장 늦은 것을 고른다)
+    Get-ChildItem Cert:\LocalMachine\My | Where-Object { $_.Subject -eq $CertSubject } | Remove-Item -Force
+    $names = @($env:COMPUTERNAME, 'localhost')
+    try {
+        $fqdn = [System.Net.Dns]::GetHostEntry($env:COMPUTERNAME).HostName
+        if ($fqdn -and $fqdn -ne $env:COMPUTERNAME) { $names += $fqdn }
+    }
+    catch { }
+    $ips = @(Get-AllIPv4) + @('127.0.0.1')
+    $san = (($names | ForEach-Object { "DNS=$_" }) + ($ips | ForEach-Object { "IPAddress=$_" })) -join '&'
+    $cert = New-SelfSignedCertificate -Subject $CertSubject -FriendlyName $CertFriendlyName `
+        -CertStoreLocation 'Cert:\LocalMachine\My' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 `
+        -KeyUsage DigitalSignature, KeyEncipherment -NotAfter (Get-Date).AddYears(10) `
+        -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.1', "2.5.29.17={text}$san")
+    return $cert
 }
 
 function Get-PrimaryIPv4 {
@@ -67,6 +116,11 @@ if (Test-Path $ConfigPath) {
 if (-not $PSBoundParameters.ContainsKey('Port') -and $existingConfig -and "$($existingConfig.Kestrel.Endpoints.Http.Url)" -match ':(\d+)$') {
     $Port = [int]$Matches[1]
 }
+if (-not $PSBoundParameters.ContainsKey('HttpsPort') -and $existingConfig -and "$($existingConfig.Kestrel.Endpoints.Https.Url)" -match ':(\d+)$') {
+    $HttpsPort = [int]$Matches[1]
+}
+if ($HttpsPort -le 0) { $HttpsPort = $Port + 1 }
+if ($HttpsPort -eq $Port) { throw 'HTTPS 포트는 HTTP 포트와 달라야 합니다.' }
 if (-not $PublicUrl) {
     if ($existingConfig -and $existingConfig.Server.PublicUrl) {
         $PublicUrl = $existingConfig.Server.PublicUrl
@@ -101,14 +155,29 @@ for ($attempt = 1; $attempt -le 10; $attempt++) {
     }
 }
 
-Write-Step "설정 저장: $ConfigPath"
 New-Item -ItemType Directory -Path $DataDir -Force | Out-Null
+$cert = Get-ServerCertificate
+# 대시보드 PC에서 신뢰 설치할 공개 인증서 (개인 키 없음). 서버가 /api/install/PcManager-Server.cer 로도 내려준다
+Export-Certificate -Cert $cert -FilePath $CertExportPath -Type CERT -Force | Out-Null
+$httpsHost = ([Uri]$PublicUrl).Host
+$DashboardHttpsUrl = "https://${httpsHost}:$HttpsPort"
+
+Write-Step "설정 저장: $ConfigPath"
 $config = [ordered]@{
-    Kestrel = @{ Endpoints = @{ Http = @{ Url = "http://*:$Port" } } }
+    Kestrel = @{
+        Endpoints = [ordered]@{
+            Http  = @{ Url = "http://*:$Port" }
+            Https = [ordered]@{
+                Url         = "https://*:$HttpsPort"
+                Certificate = [ordered]@{ Subject = $CertKestrelSubject; Store = 'My'; Location = 'LocalMachine'; AllowInvalid = $true }
+            }
+        }
+    }
     Server  = [ordered]@{
-        AgentToken    = $token
-        DataDirectory = $DataDir
-        PublicUrl     = $PublicUrl
+        AgentToken        = $token
+        DataDirectory     = $DataDir
+        PublicUrl         = $PublicUrl
+        DashboardHttpsUrl = $DashboardHttpsUrl
     }
 }
 $config | ConvertTo-Json -Depth 6 | Set-Content -Path $ConfigPath -Encoding UTF8
@@ -143,9 +212,9 @@ if ($result.ReturnValue -ne 0) {
 }
 & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/5000/restart/5000 | Out-Null
 
-Write-Step "방화벽 허용: TCP $Port"
+Write-Step "방화벽 허용: TCP $Port, $HttpsPort"
 Get-NetFirewallRule -DisplayName $FirewallRuleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-New-NetFirewallRule -DisplayName $FirewallRuleName -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Any | Out-Null
+New-NetFirewallRule -DisplayName $FirewallRuleName -Direction Inbound -Protocol TCP -LocalPort @($Port, $HttpsPort) -Action Allow -Profile Any | Out-Null
 
 Write-Step '서비스 시작'
 Start-Service -Name $ServiceName
@@ -171,8 +240,13 @@ if ($ready) {
 else {
     Write-Warning '서비스는 시작했지만 응답을 확인하지 못했습니다. 이벤트 뷰어 > Windows 로그 > 응용 프로그램 (원본: PcManager.Server)을 확인하세요.'
 }
-Write-Host "대시보드 주소 : $PublicUrl"
+Write-Host "대시보드 주소 : $DashboardHttpsUrl  (원격조작 권장)"
+Write-Host "                $PublicUrl  (HTTP)"
+Write-Host "에이전트 주소 : $PublicUrl  (테스트 PC 런처에 입력, HTTP 그대로)"
 Write-Host "에이전트 설치 : 대시보드 왼쪽 'PC 추가' > 설치 파일 다운로드 > 테스트 PC에서 더블클릭 > 서버 주소 입력"
+Write-Host "HTTPS 인증서  : $CertExportPath"
+Write-Host "                대시보드를 여는 PC에서 이 파일을 더블클릭 > 인증서 설치 > 로컬 컴퓨터 > '신뢰할 수 있는 루트 인증 기관'"
+Write-Host "                (또는 $PublicUrl/api/install/PcManager-Server.cer 에서 다운로드)"
 Write-Host "설정 파일     : $ConfigPath (변경 후 'Restart-Service $ServiceName')"
 Write-Host ''
 Write-Warning '현재 버전은 대시보드 로그인이 없습니다. 신뢰할 수 있는 내부망에서만 사용하세요.'
