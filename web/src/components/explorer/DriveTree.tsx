@@ -61,7 +61,7 @@ export function DriveTree({ agentId, currentPath, onNavigate }: Props) {
     const isCurrent = same(entry.fullPath, currentPath)
     return (
       <li key={entry.fullPath}>
-        <div className={`drive-node${isCurrent ? ' current' : ''}`} style={{ paddingLeft: 4 + depth * 12 }}>
+        <div className={`drive-node${isCurrent ? ' current' : ''}`} style={{ paddingLeft: 2 + depth * 10 }}>
           <button type="button" className="tree-caret" onClick={() => toggle(entry.fullPath)} aria-label={open ? '접기' : '펼치기'}>
             {open ? '▾' : '▸'}
           </button>

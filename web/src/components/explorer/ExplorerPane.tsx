@@ -727,19 +727,6 @@ export function ExplorerPane({
         </div>
       </div>
 
-      {/* 상태 표시줄 */}
-      <div className="pane-status">
-        <span className="small muted">
-          {listing?.entries.length ?? 0}개 항목
-          {selected.size > 0 && ` · ${selected.size}개 선택함`}
-          {search && ` · 검색 "${search}" (${displayed.length})`}
-        </span>
-        <span className="pane-status-views">
-          <button type="button" className={view === 'details' ? 'active' : ''} title="자세히" onClick={() => setView('details')}><Icon name="view-details" size={15} /></button>
-          <button type="button" className={view === 'icons' ? 'active' : ''} title="큰 아이콘" onClick={() => setView('icons')}><Icon name="view-grid" size={15} /></button>
-        </span>
-      </div>
-
       <input ref={fileInputRef} type="file" multiple hidden onChange={(e) => e.target.files && void pushFiles(e.target.files)} />
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={buildMenu(menu.targets, menu.folder)} onClose={() => setMenu(null)} />}

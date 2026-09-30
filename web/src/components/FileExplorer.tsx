@@ -3,6 +3,7 @@ import type { Agent, Org, PcFavorites, PcGroups, SharedFolder } from '../api'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
 import { ExplorerToolbar } from './explorer/ExplorerToolbar'
+import { Icon } from './explorer/Icon'
 import type { PaneController } from './explorer/paneController'
 import { PcTree } from './explorer/PcTree'
 import { AGENT_MIME, displayName, type FileClipboard, newId } from './explorer/pcGroups'
@@ -156,16 +157,6 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       <div className="explorer-main">
         <ExplorerToolbar controller={activeController} />
 
-        {clipboard && (
-          <div className="workspace-bar">
-            <span className="clip-chip">
-              {clipboard.mode === 'cut' ? '잘라냄' : '복사됨'}: <b className="ellipsis">{clipboard.items[0]?.name}{clipboard.items.length > 1 ? ` 외 ${clipboard.items.length - 1}` : ''}</b>
-              <button type="button" className="icon-mini" title="지우기" onClick={() => setClipboard(null)}>
-                ✕
-              </button>
-            </span>
-          </div>
-        )}
 
         <div
           className={`workspace-grid${dropActive ? ' drop-active' : ''}`}
@@ -224,6 +215,28 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         </div>
 
         <TransfersBar agentById={agentById} subscribeTransfers={subscribeTransfers} />
+
+        {/* 공용 하단 상태 표시줄 (활성 창 기준) */}
+        <div className="explorer-status">
+          {activeController ? (
+            <>
+              <span className="small muted">
+                {activeController.itemCount}개 항목
+                {activeController.selectionCount > 0 && ` · ${activeController.selectionCount}개 선택함`}
+              </span>
+              <span className="pane-status-views">
+                <button type="button" className={activeController.view === 'details' ? 'active' : ''} title="자세히" onClick={() => activeController.setView('details')}>
+                  <Icon name="view-details" size={15} />
+                </button>
+                <button type="button" className={activeController.view === 'icons' ? 'active' : ''} title="큰 아이콘" onClick={() => activeController.setView('icons')}>
+                  <Icon name="view-grid" size={15} />
+                </button>
+              </span>
+            </>
+          ) : (
+            <span className="small muted">창을 클릭하면 상태가 표시됩니다</span>
+          )}
+        </div>
       </div>
     </div>
   )

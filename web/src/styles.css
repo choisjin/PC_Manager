@@ -1996,6 +1996,28 @@ tr.video {
   cursor: pointer;
 }
 
+/* 드라이브 트리: 인덴트는 노드 인라인 padding으로만 (ul 중복 들여쓰기 제거) */
+.pane-side .tree-children {
+  padding-left: 0;
+}
+
+.pane-side .tree-caret {
+  width: 14px;
+  flex: none;
+}
+
+/* 공용 하단 상태 표시줄 (활성 창 기준) */
+.explorer-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 3px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
 /* PC 목록 컴팩트 (밀도 높임) */
 .tree-root {
   font-size: 12px;
