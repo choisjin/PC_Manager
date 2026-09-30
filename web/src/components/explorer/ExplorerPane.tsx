@@ -10,6 +10,7 @@ import { Icon } from './Icon'
 import { copyText, type FileClipboard, FILES_MIME, type FilesDragPayload, newId, PANE_MIME } from './pcGroups'
 import { fileTypeLabel, type PaneController, sortEntries, type SortKey, type ViewMode } from './paneController'
 import { SplitCompressModal } from './SplitCompressModal'
+import { RemoteModal } from './RemoteModal'
 import { TerminalModal } from './TerminalModal'
 
 export interface Pane {
@@ -113,6 +114,7 @@ export function ExplorerPane({
   const [search, setSearch] = useState('')
   const [playing, setPlaying] = useState<{ path: string; name: string } | null>(null)
   const [terminal, setTerminal] = useState(false)
+  const [remote, setRemote] = useState(false)
   const [splitTargets, setSplitTargets] = useState<FileEntry[] | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; targets: FileEntry[]; folder: string | null } | null>(null)
   const [dragOver, setDragOver] = useState(false)
@@ -536,6 +538,7 @@ export function ExplorerPane({
     setView,
     setSearch,
     openTerminal: () => setTerminal(true),
+    openRemote: () => setRemote(true),
     upload: () => fileInputRef.current?.click(),
   }
   const controllerRef = useRef(controller)
@@ -946,6 +949,8 @@ export function ExplorerPane({
       {terminal && (
         <TerminalModal agentId={agentId} machineName={machineName} path={path} watchRun={watchRun} onClose={() => setTerminal(false)} />
       )}
+
+      {remote && <RemoteModal agentId={agentId} machineName={machineName} onClose={() => setRemote(false)} />}
 
       {splitTargets && (
         <SplitCompressModal

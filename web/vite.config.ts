@@ -9,7 +9,8 @@ export default defineConfig({
   server: {
     // 개발 중에는 API와 SignalR을 ASP.NET Core 서버로 넘긴다
     proxy: {
-      '/api': SERVER,
+      // 원격조작 화면은 /api 아래 WebSocket으로 중계된다
+      '/api': { target: SERVER, ws: true },
       '/hubs': { target: SERVER, ws: true },
       '/dl': SERVER,
     },

@@ -37,6 +37,7 @@ export interface PaneController {
   setView: (view: ViewMode) => void
   setSearch: (q: string) => void
   openTerminal: () => void
+  openRemote: () => void
   upload: () => void
 }
 

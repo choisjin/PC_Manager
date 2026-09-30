@@ -18,6 +18,7 @@
   │    --service  : Windows Service (SYSTEM). 서버 연결, 명령/Job/파일 전송, 세션에 런처 실행
   │    --launcher : 트레이 런처 (로그인 사용자 세션). 연결/끊기/서버주소/업데이트/상태
   │    --install / --uninstall : 더블클릭 설치기 (UAC 승격, 서비스 등록)
+  │    --remote-session <url> : 원격조작 프로세스 (서비스가 콘솔 세션에 SYSTEM 권한으로 띄움, 보는 사람마다 1개)
   │    서비스 ↔ 런처는 named pipe로 통신 (LocalControl)
   └─ (예정) 세션 에이전트: 화면 캡처, 입력 주입, 입력 잠금, GUI 테스트 실행
 ```
@@ -36,12 +37,15 @@
 
 ## 요구사항별 설계
 
-### 원격조작
-- 캡처: DXGI Desktop Duplication
-- 인코딩: Media Foundation H.264 하드웨어 인코더
-- 전송: WSS 서버 릴레이 → 브라우저 WebCodecs 디코딩 (추후 WebRTC P2P 확장)
-- 입력: 브라우저 이벤트 → `SendInput`
-- 목록은 저프레임 썸네일, 열린 원격 창만 고화질 스트리밍
+### 원격조작 (구현: `src/PcManager.Agent/Remote`, `Api/RemoteEndpoints.cs`, `web/src/components/remote`)
+- 흐름: 브라우저 WS `/api/agents/{id}/remote` → 서버가 세션 ID 발급 후 에이전트에 `StartRemote` → 서비스가 콘솔 세션에 원격조작 프로세스 실행 → 그 프로세스가 WS `/api/agent/remote/{sessionId}`로 접속 → 서버가 두 소켓을 그대로 중계
+- 원격조작 프로세스는 서비스의 SYSTEM 토큰을 복제해 세션만 바꿔 실행 → 입력 데스크톱(Default/Winlogon)을 따라가며 UAC 확인 창·잠금/로그인 화면도 캡처/조작
+- 캡처: DXGI Desktop Duplication (실패 시 GDI BitBlt). 바뀐 화면만 인코딩, 최대 30fps
+- 인코딩: Media Foundation H.264 소프트웨어 MFT (Baseline, 저지연, B 프레임 없음, CBR). BGRA→NV12(BT.709)는 CPU 병렬 변환, 폭 2560 초과면 1/2 축소
+- 디코딩: 보안 컨텍스트(HTTPS/localhost)면 WebCodecs → canvas, 아니면(http://서버IP) 브라우저에서 fMP4로 감싸 MSE → video
+- 입력: 브라우저 KeyboardEvent.code → 스캔 코드 `SendInput` (원격 PC의 배열/IME 적용), 마우스는 모니터 기준 0~1 좌표. Ctrl+Alt+Del은 서비스가 `SendSAS` (SoftwareSASGeneration 정책을 켬)
+- 메시지 형식은 `RemoteSessionApp.cs` 주석 참고
+- 추후: 하드웨어 인코더(비동기 MFT), 커서 모양, 클립보드 동기화, 오디오, WebRTC P2P
 
 ### 일괄 동작
 - Job = Step 목록 (명령 실행, 파일 배포, 잠금, 재부팅 대기, 결과 수집)
@@ -73,7 +77,7 @@
 1. 에이전트 등록·연결, PC 목록/온라인 상태, 원격 명령 실행 + 실시간 로그 — 완료
 2. 일괄 Job, 결과 수집/조회, 원격 파일 탐색기 — 완료 (재부팅 후 재개는 미구현: 서버가 Job 진행을 메모리로 관리)
 3. 세션 에이전트 + 테스트 중 입력 잠금
-4. 원격 화면/제어 (H.264 스트리밍)
+4. 원격 화면/제어 (H.264 스트리밍) — 완료 (소프트웨어 인코더, 하드웨어 가속은 미구현)
 5. 인증/권한/감사 로그, 설치 패키지 — 부분 완료 (무인증 설치·자동 업데이트는 구현, 인증/권한은 미구현)
 
 ## 업데이트 (0.2.3+)

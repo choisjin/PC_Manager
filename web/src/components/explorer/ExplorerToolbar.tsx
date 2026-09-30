@@ -152,6 +152,7 @@ export function ExplorerToolbar({ controller }: Props) {
         <button type="button" className="win-cmd" disabled={!c} onClick={sortMenu}><Icon name="sort" /> 정렬</button>
         <button type="button" className="win-cmd" disabled={!c} onClick={viewMenu}><Icon name={c?.view === 'icons' ? 'view-grid' : 'view-details'} /> 보기</button>
         <span className="win-spacer" />
+        <button type="button" className="win-cmd icon-only" title="원격조작" disabled={disabled} onClick={() => c?.openRemote()}><Icon name="remote" /></button>
         <button type="button" className="win-cmd icon-only" title="터미널 열기" disabled={disabled} onClick={() => c?.openTerminal()}><Icon name="terminal" /></button>
         <button type="button" className="win-cmd icon-only" title="올리기(업로드)" disabled={disabled || !c?.path} onClick={() => c?.upload()}><Icon name="upload" /></button>
       </div>

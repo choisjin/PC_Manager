@@ -11,12 +11,18 @@ internal static class Program
     ///   --service   Windows 서비스 본체 (SCM이 실행)
     ///   --console   개발용 콘솔 서비스
     ///   --launcher  트레이 런처 (--tray: 창을 열지 않고 트레이만)
+    ///   --remote-session &lt;url&gt; 원격조작 프로세스 (서비스가 사용자 세션에 띄움)
     /// </summary>
     [STAThread]
     private static int Main(string[] args)
     {
         // cmd 출력(CP949 등 OEM 코드 페이지)을 읽기 위해 필요
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+        // 서비스가 띄운 자식 프로세스라 서비스 판별보다 먼저 확인한다
+        var remoteIndex = Array.IndexOf(args, Remote.RemoteControlService.SessionArgument);
+        if (remoteIndex >= 0 && remoteIndex + 1 < args.Length)
+            return Remote.RemoteSessionApp.Run(args[remoteIndex + 1]);
 
         if (AgentHost.IsRunningAsService)
             return AgentHost.Run();

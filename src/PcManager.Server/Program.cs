@@ -90,6 +90,9 @@ if (!string.IsNullOrWhiteSpace(serverOptions.AgentToken))
 }
 
 // 배포 패키지는 대시보드 빌드 결과를 wwwroot에 포함한다 (개발 중에는 Vite 개발 서버 사용)
+// 원격조작 화면 중계 (브라우저 ↔ 서버 ↔ 에이전트)
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(15) });
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -98,6 +101,7 @@ app.MapHub<DashboardHub>(HubPaths.Dashboard);
 app.MapApi();
 app.MapFileApi();
 app.MapMediaApi();
+app.MapRemoteApi();
 app.MapJobApi();
 app.MapUpdateApi();
 app.MapPcGroupApi();

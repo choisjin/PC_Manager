@@ -14,6 +14,7 @@ public class AgentWorker(
     CommandRunner runner,
     FileTransferService files,
     AgentUpdater updater,
+    Remote.RemoteControlService remote,
     OutboundQueue outbound,
     ILogger<AgentWorker> logger) : BackgroundService
 {
@@ -143,6 +144,11 @@ public class AgentWorker(
         connection.On<string, bool>(AgentClientMethods.AbortWrite,
             writeId => files.AbortWriteAsync(writeId));
         connection.On<string?>(nameof(IAgentClient.UpdateAgent), updater.Start);
+        // 원격조작: 화면이 있는 세션에 캡처/입력 프로세스를 띄운다
+        connection.On<string, string?>(AgentClientMethods.StartRemote,
+            sessionId => Task.Run(() => remote.Start(sessionId)));
+        connection.On<string?>(AgentClientMethods.SendSecureAttention,
+            () => Task.Run(remote.SendSecureAttention));
 
         connection.Reconnecting += error =>
         {

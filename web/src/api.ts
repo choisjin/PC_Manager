@@ -364,6 +364,12 @@ export const api = {
   mediaUrl: (agentId: string, path: string) =>
     `/api/agents/${agentId}/media?${query({ path })}`,
 
+  /** 원격조작 화면/입력 WebSocket 주소 */
+  remoteUrl: (agentId: string) =>
+    `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/agents/${agentId}/remote`,
+  /** Ctrl+Alt+Del 보내기 (에이전트 서비스가 SAS 전송) */
+  sendCtrlAltDel: (agentId: string) => request<void>(`/api/agents/${agentId}/remote/cad`, { method: 'POST' }),
+
   /** 파일을 브라우저 다운로드 폴더로 바로 내려받는 URL (첨부) */
   downloadUrl: (agentId: string, path: string) =>
     `/api/agents/${agentId}/download?${query({ path })}`,

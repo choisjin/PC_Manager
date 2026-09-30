@@ -100,6 +100,13 @@ public static class AgentTransferPaths
     public static string Content(string transferId) => $"/api/agent/transfers/{transferId}/content";
 }
 
+/// <summary>원격조작 WebSocket 경로</summary>
+public static class AgentRemotePaths
+{
+    /// <summary>에이전트의 원격조작 프로세스가 접속한다 (에이전트 토큰 필요)</summary>
+    public static string Session(string sessionId) => $"/api/agent/remote/{sessionId}";
+}
+
 [JsonConverter(typeof(JsonStringEnumConverter<TransferKind>))]
 public enum TransferKind
 {
@@ -178,6 +185,12 @@ public static class AgentClientMethods
 
     /// <summary>string writeId → bool. 쓰기 세션 취소(임시 파일 삭제)</summary>
     public const string AbortWrite = "AbortWrite";
+
+    /// <summary>string sessionId → string? 오류. 사용자 세션에 원격조작 프로세스를 띄워 AgentRemotePaths.Session으로 접속시킨다</summary>
+    public const string StartRemote = "StartRemote";
+
+    /// <summary>() → string? 오류. Ctrl+Alt+Del(SAS)을 보낸다 (서비스만 가능)</summary>
+    public const string SendSecureAttention = "SendSecureAttention";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<FileOpKind>))]

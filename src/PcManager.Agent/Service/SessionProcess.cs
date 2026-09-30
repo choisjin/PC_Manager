@@ -72,6 +72,63 @@ internal static class SessionProcess
         }
     }
 
+    /// <summary>물리 콘솔(모니터가 연결된) 세션 ID. 로그인 전이라도 로그인 화면 세션이 있다. 없으면 null</summary>
+    public static int? GetConsoleSessionId()
+    {
+        var id = WTSGetActiveConsoleSessionId();
+        return id == uint.MaxValue ? null : (int)id;
+    }
+
+    /// <summary>
+    /// 서비스 자신의 SYSTEM 토큰을 복제해 지정 세션에서 프로세스를 시작한다.
+    /// 사용자 권한과 달리 UAC 확인 창·잠금/로그인 화면(Winlogon 데스크톱)까지 캡처/조작할 수 있다. 원격조작 세션용
+    /// </summary>
+    /// <returns>프로세스 ID</returns>
+    public static int StartAsSystemInSession(int sessionId, string exePath, string arguments)
+    {
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, out var selfToken))
+            throw new Win32Exception();
+
+        var primaryToken = IntPtr.Zero;
+        var environment = IntPtr.Zero;
+        try
+        {
+            if (!DuplicateTokenEx(selfToken, MAXIMUM_ALLOWED, IntPtr.Zero, SecurityImpersonation, TokenPrimary, out primaryToken))
+                throw new Win32Exception();
+            if (!SetTokenInformation(primaryToken, TokenSessionId, ref sessionId, sizeof(int)))
+                throw new Win32Exception();
+            if (!CreateEnvironmentBlock(out environment, primaryToken, false))
+                throw new Win32Exception();
+
+            var startup = new STARTUPINFO
+            {
+                cb = Marshal.SizeOf<STARTUPINFO>(),
+                lpDesktop = @"winsta0\default",
+            };
+            var commandLine = $"\"{exePath}\" {arguments}";
+            if (!CreateProcessAsUser(primaryToken, null, commandLine, IntPtr.Zero, IntPtr.Zero, false,
+                    CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW, environment, Path.GetDirectoryName(exePath), ref startup, out var process))
+            {
+                throw new Win32Exception();
+            }
+            CloseHandle(process.hThread);
+            CloseHandle(process.hProcess);
+            return process.dwProcessId;
+        }
+        finally
+        {
+            if (environment != IntPtr.Zero)
+                DestroyEnvironmentBlock(environment);
+            if (primaryToken != IntPtr.Zero)
+                CloseHandle(primaryToken);
+            CloseHandle(selfToken);
+        }
+    }
+
+    private const uint TOKEN_ALL_ACCESS = 0x000F01FF;
+    private const int TokenSessionId = 12;
+    private const uint CREATE_NO_WINDOW = 0x08000000;
+
     private const uint MAXIMUM_ALLOWED = 0x02000000;
     private const int SecurityImpersonation = 2;
     private const int TokenPrimary = 1;
@@ -157,4 +214,16 @@ internal static class SessionProcess
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint WTSGetActiveConsoleSessionId();
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool SetTokenInformation(IntPtr token, int infoClass, ref int info, int length);
 }

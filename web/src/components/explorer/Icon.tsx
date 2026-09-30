@@ -5,7 +5,7 @@ import type { ReactNode } from 'react'
 export type IconName =
   | 'back' | 'forward' | 'up' | 'refresh'
   | 'new-folder' | 'cut' | 'copy' | 'paste' | 'rename' | 'download' | 'delete'
-  | 'sort' | 'view-grid' | 'view-details' | 'terminal' | 'upload' | 'search'
+  | 'sort' | 'view-grid' | 'view-details' | 'terminal' | 'remote' | 'upload' | 'search'
   | 'folder' | 'file' | 'video' | 'pc' | 'drive' | 'star' | 'chevron' | 'close' | 'plus'
 
 interface Props {
@@ -31,6 +31,7 @@ const LINE: Partial<Record<IconName, ReactNode>> = {
   'view-grid': <><rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="4" width="7" height="7" rx="1" /><rect x="4" y="13" width="7" height="7" rx="1" /><rect x="13" y="13" width="7" height="7" rx="1" /></>,
   'view-details': <><path d="M8 6h12M8 12h12M8 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" /></>,
   terminal: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9l3 3-3 3M13 15h4" /></>,
+  remote: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /><path d="M10.5 7.5l4.5 2-2 .6-.6 2z" /></>,
   upload: <><path d="M12 20V9" /><path d="M8 13l4-4 4 4" /><path d="M5 4h14" /></>,
   search: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4-4" /></>,
   file: <><path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z" /><path d="M13 3v6h6" /></>,

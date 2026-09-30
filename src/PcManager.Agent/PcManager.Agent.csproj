@@ -13,6 +13,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- 원격조작: 화면 버퍼 변환, ICodecAPI vtable 호출 -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>PcManager.Agent</AssemblyName>
     <RootNamespace>PcManager.Agent</RootNamespace>
   </PropertyGroup>
@@ -30,6 +32,9 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.12" />
+    <!-- 원격조작: DXGI 화면 캡처, Media Foundation H.264 인코더 -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
   </ItemGroup>
 
   <ItemGroup>
