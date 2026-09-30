@@ -77,6 +77,7 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const sendViewRef = useRef<() => void>(() => {})
   const formatRef = useRef<Format | null>(null)
   const viewOnlyRef = useRef(false)
   const pressedRef = useRef(new Set<string>())
@@ -99,6 +100,9 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
   const [textOpen, setTextOpen] = useState(false)
   const [text, setText] = useState('')
   const [fullscreen, setFullscreen] = useState(false)
+  // 원격 PC 해상도를 이 PC 모니터 해상도에 맞춘다 (RDP처럼). 끄면 원격 원래 해상도
+  const [matchResolution, setMatchResolution] = useState(true)
+  const matchRef = useRef(true)
   const [keyLock, setKeyLock] = useState<KeyLock>(() => (keyboardLockAvailable() ? 'off' : 'unavailable'))
   const [hint, setHint] = useState<string | null>(null)
 
@@ -142,6 +146,13 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
     return () => observer.disconnect()
   }, [])
 
+  const changeMatchResolution = (value: boolean) => {
+    matchRef.current = value
+    setMatchResolution(value)
+    sendViewRef.current()
+    focusStage()
+  }
+
   const changeViewOnly = (value: boolean) => {
     viewOnlyRef.current = value
     setViewOnly(value)
@@ -184,8 +195,12 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
       const dpr = window.devicePixelRatio || 1
       const width = Math.round(stage.clientWidth * dpr)
       const height = Math.round(stage.clientHeight * dpr)
-      if (width > 0 && height > 0) ws.send(JSON.stringify({ t: 'view', width, height }))
+      // 모니터 해상도(물리 픽셀)는 원격 디스플레이 모드 맞춤에, 화면 영역 크기는 스트림 축소에 쓴다
+      const screenWidth = Math.round(window.screen.width * dpr)
+      const screenHeight = Math.round(window.screen.height * dpr)
+      if (width > 0 && height > 0) ws.send(JSON.stringify({ t: 'view', width, height, screenWidth, screenHeight, match: matchRef.current }))
     }
+    sendViewRef.current = sendViewSize
 
     ws.onmessage = (e) => {
       if (typeof e.data === 'string') {
@@ -212,6 +227,8 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
             break
           case 'status':
             setDesktop(msg.desktop ?? null)
+            if (msg.note === 'resolution-changed') showHint(`원격 해상도를 ${msg.width}×${msg.height}(으)로 맞췄습니다.`)
+            else if (msg.note === 'resolution-failed') showHint(`해상도 맞춤 실패: ${msg.message ?? '지원하지 않는 모드'}`)
             break
           case 'cursor':
             setCursor({ x: msg.x, y: msg.y, visible: msg.visible })
@@ -474,6 +491,9 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
               </button>
             ))}
           </span>
+          <label className="remote-toggle" title="원격 PC 해상도를 이 PC 모니터 해상도에 맞춥니다 (세션 종료 시 복원)">
+            <input type="checkbox" checked={matchResolution} onChange={(e) => changeMatchResolution(e.target.checked)} /> 해상도 맞춤
+          </label>
           <label className="remote-toggle">
             <input type="checkbox" checked={viewOnly} onChange={(e) => changeViewOnly(e.target.checked)} /> 보기 전용
           </label>

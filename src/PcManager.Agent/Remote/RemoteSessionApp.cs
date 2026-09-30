@@ -87,9 +87,13 @@ internal static class RemoteSessionApp
         private volatile int _monitorIndex = -1; // -1: 주 모니터
         private volatile bool _keyFrameRequested = true;
         private volatile int _bitrate = 6_000_000;
-        // 대시보드(보는 쪽) 화면 크기. 스트림을 이 크기에 맞춰 줄인다. 0이면 아직 모름 → 원본 기준
+        // 대시보드(보는 쪽) 화면 영역 크기. 스트림을 이 크기에 맞춰 줄인다. 0이면 아직 모름 → 원본 기준
         private volatile int _viewWidth;
         private volatile int _viewHeight;
+        // 대시보드 PC 모니터 해상도. 켜져 있으면 원격 PC 디스플레이 모드를 여기에 맞춘다 (RDP처럼)
+        private volatile int _screenWidth;
+        private volatile int _screenHeight;
+        private volatile bool _matchResolution = true;
         private Rectangle _monitorBounds;
         private readonly Lock _boundsLock = new();
 
@@ -216,9 +220,16 @@ internal static class RemoteSessionApp
                     _monitorIndex = root.GetProperty("index").GetInt32();
                     break;
                 case "view":
-                    // 대시보드 화면(픽셀) 크기. 스트림 해상도를 여기에 맞춘다
+                    // 대시보드 화면 영역(픽셀) 크기 → 스트림 해상도. 모니터 해상도 → 원격 디스플레이 모드
                     _viewWidth = Math.Clamp(root.GetProperty("width").GetInt32(), 0, 8192);
                     _viewHeight = Math.Clamp(root.GetProperty("height").GetInt32(), 0, 8192);
+                    if (root.TryGetProperty("screenWidth", out var sw) && root.TryGetProperty("screenHeight", out var sh))
+                    {
+                        _screenWidth = Math.Clamp(sw.GetInt32(), 0, 8192);
+                        _screenHeight = Math.Clamp(sh.GetInt32(), 0, 8192);
+                    }
+                    if (root.TryGetProperty("match", out var match))
+                        _matchResolution = match.ValueKind == JsonValueKind.True;
                     break;
                 case "keyframe":
                     _keyFrameRequested = true;
@@ -280,6 +291,8 @@ internal static class RemoteSessionApp
             // DXGI가 만들어지긴 했는데 프레임을 전혀 주지 않는 경우(끊긴 세션, 일부 VM/RDP 디스플레이)를 위한 GDI 전환
             var preferGdi = false;
             var captureStarted = TimeSpan.Zero;
+            // 마지막으로 디스플레이 모드 맞춤을 시도한 (모니터, 대시보드 해상도, 켜짐). 바뀌면 다시 시도한다
+            var appliedMatch = (Monitor: int.MinValue, Width: 0, Height: 0, On: false);
 
             try
             {
@@ -289,6 +302,18 @@ internal static class RemoteSessionApp
                     var desktopChanged = DesktopSwitcher.SyncThreadToInputDesktop();
                     if (desktopChanged && currentMonitor != int.MinValue)
                         _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName }, ct);
+
+                    // 대시보드 PC 해상도에 맞춰 원격 디스플레이 모드를 바꾼다 (RDP처럼). 바뀌면 캡처 장치를 다시 만든다
+                    var wantMatch = (Monitor: _monitorIndex, Width: _screenWidth, Height: _screenHeight, On: _matchResolution);
+                    if (wantMatch != appliedMatch && (desktopChanged || capturer is not null || appliedMatch.Monitor == int.MinValue))
+                    {
+                        appliedMatch = wantMatch;
+                        if (ApplyDisplayMode(wantMatch.Monitor, wantMatch.Width, wantMatch.Height, wantMatch.On, ct))
+                        {
+                            capturer?.Dispose();
+                            capturer = null;
+                        }
+                    }
 
                     // 대시보드 화면 크기가 바뀌면(창 크기 조절 등) 인코더 해상도를 다시 맞춘다
                     var monitorChanged = currentMonitor != _monitorIndex;
@@ -425,7 +450,56 @@ internal static class RemoteSessionApp
             {
                 capturer?.Dispose();
                 encoder?.Dispose();
+                // 바꿨던 해상도는 되돌린다
+                try
+                {
+                    DisplayModes.RestoreAll();
+                }
+                catch (Exception ex)
+                {
+                    Trace.WriteLine($"해상도 복원 실패: {ex.Message}");
+                }
             }
+        }
+
+        /// <summary>
+        /// 원격 모니터의 디스플레이 모드를 대시보드 PC 해상도에 맞춘다. 끄면 원래 모드로 되돌린다.
+        /// </summary>
+        /// <returns>모드가 실제로 바뀌어 캡처 장치를 다시 만들어야 하면 true</returns>
+        private bool ApplyDisplayMode(int monitorIndex, int screenWidth, int screenHeight, bool on, CancellationToken ct)
+        {
+            var displays = DisplayModes.Enumerate();
+            if (displays.Count == 0)
+                return false;
+            var display = monitorIndex >= 0 && monitorIndex < displays.Count ? displays[monitorIndex]
+                : displays.FirstOrDefault(d => d.Primary, displays[0]);
+            var before = display.Bounds.Size;
+
+            try
+            {
+                if (!on)
+                {
+                    DisplayModes.RestoreAll();
+                }
+                else if (screenWidth > 0 && screenHeight > 0)
+                {
+                    if (!DisplayModes.TryMatch(display.DeviceName, screenWidth, screenHeight, out var applied, out var error))
+                    {
+                        _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "resolution-failed", message = error }, ct);
+                        return false;
+                    }
+                    if (applied != before)
+                        _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "resolution-changed", width = applied.Width, height = applied.Height }, ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"해상도 변경 실패: {ex.Message}");
+                return false;
+            }
+
+            var after = DisplayModes.Enumerate().FirstOrDefault(d => d.DeviceName == display.DeviceName).Bounds.Size;
+            return after != before;
         }
 
         /// <summary>대시보드 화면 크기에 맞춘 인코딩 해상도 (가로세로 비 유지, 원본보다 크게 늘리지 않음, 짝수)</summary>
@@ -467,21 +541,23 @@ internal static class RemoteSessionApp
 
         private static Rectangle ResolveMonitor(int index)
         {
-            var screens = Screen.AllScreens;
-            if (index >= 0 && index < screens.Length)
-                return screens[index].Bounds;
-            return (Screen.PrimaryScreen ?? screens[0]).Bounds;
+            var displays = DisplayModes.Enumerate();
+            if (displays.Count == 0)
+                throw new InvalidOperationException("연결된 모니터가 없습니다.");
+            if (index >= 0 && index < displays.Count)
+                return displays[index].Bounds;
+            return displays.FirstOrDefault(d => d.Primary, displays[0]).Bounds;
         }
 
-        private static object[] DescribeMonitors() => [.. Screen.AllScreens.Select((s, i) => new
+        private static object[] DescribeMonitors() => [.. DisplayModes.Enumerate().Select((d, i) => new
         {
             index = i,
-            name = s.DeviceName.TrimStart('\\', '.'),
-            primary = s.Primary,
-            x = s.Bounds.X,
-            y = s.Bounds.Y,
-            width = s.Bounds.Width,
-            height = s.Bounds.Height,
+            name = d.DeviceName.TrimStart('\\', '.'),
+            primary = d.Primary,
+            x = d.Bounds.X,
+            y = d.Bounds.Y,
+            width = d.Bounds.Width,
+            height = d.Bounds.Height,
         })];
 
         private void SendCursorIfMoved(ref Point last, CancellationToken ct)
