@@ -43,11 +43,30 @@ internal static class InputInjector
             Send(MouseInput(0, 0, deltaX, MOUSEEVENTF_HWHEEL));
     }
 
+    /// <summary>브라우저가 알려주는 조합 키(수식 키) 상태</summary>
+    public readonly record struct Modifiers(bool Shift, bool Ctrl, bool Alt, bool Meta)
+    {
+        public static readonly Modifiers None = default;
+    }
+
+    // 우리가 원격에서 누르고 있다고 보는 수식 키 상태 (Shift/Ctrl/Alt/Win)
+    // 브라우저의 keydown/keyup이 유실되거나 순서가 어긋나도, 실제 키를 넣기 직전에 맞춰 준다
+    private static readonly bool[] ModHeld = new bool[4];
+    private const int ModShift = 0, ModCtrl = 1, ModAlt = 2, ModWin = 3;
+    private static readonly int[] ModScan = [0x2A, 0x1D, 0x38, 0xE05B];
+
+    private static readonly HashSet<string> ModifierCodes =
+    [
+        "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight",
+        "AltLeft", "AltRight", "MetaLeft", "MetaRight",
+    ];
+
     /// <param name="code">KeyboardEvent.code (예: KeyA, ArrowLeft)</param>
     /// <param name="key">KeyboardEvent.key. 한/영, 한자 키 구분에 쓴다</param>
-    public static void Key(string code, string? key, bool down)
+    /// <param name="mods">이 이벤트 시점의 브라우저 수식 키 상태. 유실된 수식 키를 보정하는 데 쓴다</param>
+    public static void Key(string code, string? key, bool down, Modifiers mods = default)
     {
-        // 한국어 키보드의 한/영·한자 키는 가상 키로 보낸다
+        // 한국어 키보드의 한/영·한자 키 등은 가상 키로 보낸다
         var vk = key switch
         {
             "HangulMode" or "KanaMode" => VK_HANGUL,
@@ -69,19 +88,85 @@ internal static class InputInjector
 
         if (!ScanCodes.TryGetValue(code, out var scan))
             return;
-        var flags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
-        if (scan > 0xFF)
-            flags |= KEYEVENTF_EXTENDEDKEY;
-        Send(KeyInput(0, (ushort)(scan & 0xFF), flags));
+
+        var isModifier = ModifierCodes.Contains(code);
+        if (isModifier)
+        {
+            SendScan(scan, down);
+            UpdateHeld(code, down);
+            return;
+        }
+
+        // 일반 키를 누르기 직전, 원격의 수식 키를 브라우저 상태와 일치시킨다
+        // (Shift+숫자처럼 수식 키 keydown이 유실돼도 여기서 Shift를 눌러 준다)
+        if (down)
+            ReconcileModifiers(mods);
+        SendScan(scan, down);
     }
 
     /// <summary>Win, Ctrl+Esc처럼 브라우저가 가로채는 조합을 원격에서 누른다</summary>
     public static void Combo(IReadOnlyList<string> codes)
     {
+        // 조합에 포함된 수식 키를 미리 반영해, 일반 키를 누를 때 방금 누른 수식 키가 풀리지 않게 한다
+        var mods = new Modifiers(
+            codes.Any(c => c is "ShiftLeft" or "ShiftRight"),
+            codes.Any(c => c is "ControlLeft" or "ControlRight"),
+            codes.Any(c => c is "AltLeft" or "AltRight"),
+            codes.Any(c => c is "MetaLeft" or "MetaRight"));
         foreach (var code in codes)
-            Key(code, null, true);
+            Key(code, null, true, mods);
         for (var i = codes.Count - 1; i >= 0; i--)
-            Key(codes[i], null, false);
+            Key(codes[i], null, false, mods);
+    }
+
+    /// <summary>원격에서 눌린 것으로 관리하던 수식 키를 모두 뗀다 (브라우저 포커스 이탈 시)</summary>
+    public static void ReleaseModifiers()
+    {
+        for (var slot = 0; slot < ModHeld.Length; slot++)
+        {
+            if (!ModHeld[slot])
+                continue;
+            SendScan(ModScan[slot], false);
+            ModHeld[slot] = false;
+        }
+    }
+
+    private static void ReconcileModifiers(Modifiers mods)
+    {
+        Set(ModShift, mods.Shift);
+        Set(ModCtrl, mods.Ctrl);
+        Set(ModAlt, mods.Alt);
+        Set(ModWin, mods.Meta);
+
+        static void Set(int slot, bool wanted)
+        {
+            if (ModHeld[slot] == wanted)
+                return;
+            SendScan(ModScan[slot], wanted);
+            ModHeld[slot] = wanted;
+        }
+    }
+
+    private static void UpdateHeld(string code, bool down)
+    {
+        var slot = code switch
+        {
+            "ShiftLeft" or "ShiftRight" => ModShift,
+            "ControlLeft" or "ControlRight" => ModCtrl,
+            "AltLeft" or "AltRight" => ModAlt,
+            "MetaLeft" or "MetaRight" => ModWin,
+            _ => -1,
+        };
+        if (slot >= 0)
+            ModHeld[slot] = down;
+    }
+
+    private static void SendScan(int scan, bool down)
+    {
+        var flags = KEYEVENTF_SCANCODE | (down ? 0 : KEYEVENTF_KEYUP);
+        if (scan > 0xFF)
+            flags |= KEYEVENTF_EXTENDEDKEY;
+        Send(KeyInput(0, (ushort)(scan & 0xFF), flags));
     }
 
     /// <summary>문자열을 유니코드 키 입력으로 보낸다 (붙여넣기용)</summary>

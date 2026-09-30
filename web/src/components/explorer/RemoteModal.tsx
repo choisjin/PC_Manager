@@ -247,13 +247,15 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
     e.stopPropagation()
     if (down) pressedRef.current.add(e.code)
     else pressedRef.current.delete(e.code)
-    send({ t: down ? 'kd' : 'ku', code: e.code, key: e.key })
+    // 수식 키 상태를 함께 보내, 원격에서 Shift+숫자 등이 어긋나지 않게 한다
+    send({ t: down ? 'kd' : 'ku', code: e.code, key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey })
   }
 
-  // 포커스를 잃으면 눌린 채 남은 키를 뗀다 (Alt+Tab 등)
+  // 포커스를 잃으면 눌린 채 남은 키를 뗀다 (Alt+Tab 등). reset으로 원격의 수식 키도 모두 해제
   const releaseKeys = () => {
     for (const code of pressedRef.current) send({ t: 'ku', code })
     pressedRef.current.clear()
+    send({ t: 'reset' })
   }
 
   const changeMonitor = (index: number) => {
@@ -267,17 +269,22 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
   }
 
   const toggleFullscreen = async () => {
-    const dialog = dialogRef.current
-    if (!dialog) return
-    if (document.fullscreenElement) {
-      await document.exitFullscreen()
-      return
+    // 모달 <dialog>는 이미 최상위 레이어라 전체 화면 요청이 무시된다 → 화면 영역(stage)을 전체 화면으로
+    const stage = stageRef.current
+    if (!stage) return
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen()
+      } else {
+        await stage.requestFullscreen()
+        // 전체 화면에서는 Win, Alt+Tab 같은 키도 가로챌 수 있다 (HTTPS에서만 지원)
+        const keyboard = (navigator as Navigator & { keyboard?: { lock?: () => Promise<void> } }).keyboard
+        await keyboard?.lock?.().catch(() => {})
+      }
+    } catch (err) {
+      setMessage(`전체 화면을 전환하지 못했습니다: ${err instanceof Error ? err.message : String(err)}`)
     }
-    await dialog.requestFullscreen()
-    // 전체 화면에서는 Win, Alt+Tab 같은 키도 가로챌 수 있다 (HTTPS에서만 지원)
-    const keyboard = (navigator as Navigator & { keyboard?: { lock?: () => Promise<void> } }).keyboard
-    await keyboard?.lock?.().catch(() => {})
-    stageRef.current?.focus()
+    stage.focus()
   }
 
   const specialMenu = (e: React.MouseEvent) => {

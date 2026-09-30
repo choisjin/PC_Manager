@@ -188,7 +188,9 @@ internal static class RemoteSessionApp
                     var code = root.GetProperty("code").GetString() ?? "";
                     var key = root.TryGetProperty("key", out var k) ? k.GetString() : null;
                     var down = type == "kd";
-                    EnqueueInput(() => InputInjector.Key(code, key, down));
+                    var mods = new InputInjector.Modifiers(
+                        Flag(root, "shift"), Flag(root, "ctrl"), Flag(root, "alt"), Flag(root, "meta"));
+                    EnqueueInput(() => InputInjector.Key(code, key, down, mods));
                     break;
                 }
                 case "combo":
@@ -197,6 +199,9 @@ internal static class RemoteSessionApp
                     EnqueueInput(() => InputInjector.Combo(codes));
                     break;
                 }
+                case "reset":
+                    EnqueueInput(InputInjector.ReleaseModifiers);
+                    break;
                 case "text":
                 {
                     var text = root.GetProperty("text").GetString() ?? "";
@@ -214,6 +219,9 @@ internal static class RemoteSessionApp
                     break;
             }
         }
+
+        private static bool Flag(JsonElement root, string name) =>
+            root.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
 
         private void EnqueueInput(Action action)
         {

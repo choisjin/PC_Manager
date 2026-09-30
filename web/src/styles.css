@@ -1394,6 +1394,18 @@ tr.cut td {
   border-radius: 0;
 }
 
+/* 화면 영역만 전체 화면으로 (모달 dialog는 최상위 레이어라 전체 화면 요청이 무시됨) */
+.remote-stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: #000;
+}
+
+.remote-stage:fullscreen .remote-surface {
+  width: 100%;
+  height: 100%;
+}
+
 .remote-head {
   flex: none;
   gap: 12px;
