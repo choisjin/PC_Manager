@@ -189,9 +189,9 @@ public class AgentWorker(
         logger.LogInformation("서버에 등록됨: {ServerUrl}", settings.ServerUrl);
 
         // 런처의 업데이트 알림용 (서버가 업그레이드되면 재접속하면서 다시 확인된다)
-        var (version, _) = await ServerInfoClient.ProbeAsync(settings.ServerUrl, ct);
-        if (version is not null)
-            status.SetServerVersion(version);
+        var probe = await ServerInfoClient.ProbeAsync(settings.ServerUrl, ct);
+        if (probe.Version is not null)
+            status.SetServerInfo(probe.Version, probe.DashboardUrl);
 
         // 이 PC에서 대시보드를 HTTPS로 열 때 경고가 없도록 서버 인증서를 신뢰 저장소에 넣는다 (best-effort)
         await certificateTrust.EnsureAsync(settings.ServerUrl, ct);

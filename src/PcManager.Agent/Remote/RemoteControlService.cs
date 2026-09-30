@@ -37,8 +37,13 @@ public class RemoteControlService(AgentSettingsStore settings, ILogger<RemoteCon
         {
             if (AgentHost.IsRunningAsService)
             {
-                var sessionIdToUse = SessionProcess.GetConsoleSessionId()
-                    ?? SessionProcess.GetActiveSessionIds().Cast<int?>().FirstOrDefault();
+                // 사용자가 실제로 쓰고 있는(활성) 세션을 우선한다. RDP로 접속 중이면 RDP 세션이 활성이고
+                // 물리 콘솔 세션은 끊긴 상태라 화면이 갱신되지 않는다. 활성 세션이 없으면(로그인 전) 콘솔 세션(로그인 화면)
+                var console = SessionProcess.GetConsoleSessionId();
+                var active = SessionProcess.GetActiveSessionIds();
+                int? sessionIdToUse = active.Count == 0 ? console
+                    : console is { } c && active.Contains(c) ? c
+                    : active[0];
                 if (sessionIdToUse is not { } target)
                     return "화면이 있는 세션을 찾지 못했습니다.";
 

@@ -39,30 +39,36 @@ public static class ServerInfoClient
         return builder.Uri.GetLeftPart(UriPartial.Authority);
     }
 
-    /// <returns>서버 버전 또는 연결 오류 메시지</returns>
-    public static async Task<(string? Version, string? Error)> ProbeAsync(string serverUrl, CancellationToken ct)
+    /// <param name="Version">서버 버전</param>
+    /// <param name="DashboardUrl">대시보드 HTTPS 주소 (서버가 HTTPS를 쓰면). 없으면 null → 서버 주소(HTTP)로 연다</param>
+    /// <param name="Error">연결 오류 메시지. 성공이면 null</param>
+    public readonly record struct ProbeResult(string? Version, string? DashboardUrl, string? Error);
+
+    public static async Task<ProbeResult> ProbeAsync(string serverUrl, CancellationToken ct)
     {
         try
         {
             using var response = await Http.GetAsync($"{serverUrl.TrimEnd('/')}/api/install/info", ct);
             if (!response.IsSuccessStatusCode)
-                return (null, $"PC Manager 서버가 아닙니다 (HTTP {(int)response.StatusCode})");
+                return new(null, null, $"PC Manager 서버가 아닙니다 (HTTP {(int)response.StatusCode})");
 
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
-            var version = document.RootElement.TryGetProperty("serverVersion", out var value) ? value.GetString() : null;
-            return (version, null);
+            var root = document.RootElement;
+            var version = root.TryGetProperty("serverVersion", out var value) ? value.GetString() : null;
+            var dashboard = root.TryGetProperty("httpsUrl", out var https) && https.ValueKind == JsonValueKind.String ? https.GetString() : null;
+            return new(version, string.IsNullOrWhiteSpace(dashboard) ? null : dashboard, null);
         }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested)
         {
-            return (null, "응답 시간이 초과되었습니다");
+            return new(null, null, "응답 시간이 초과되었습니다");
         }
         catch (HttpRequestException ex)
         {
-            return (null, ex.Message);
+            return new(null, null, ex.Message);
         }
         catch (JsonException)
         {
-            return (null, "PC Manager 서버가 아닙니다");
+            return new(null, null, "PC Manager 서버가 아닙니다");
         }
     }
 }

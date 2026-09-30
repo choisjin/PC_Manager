@@ -27,6 +27,7 @@ internal static class RemoteSessionApp
 
     private const int Fps = 30;
     private const int MaxEncodeWidth = 2560;
+    private static readonly TimeSpan NoFrameFallback = TimeSpan.FromSeconds(3);
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -269,6 +270,9 @@ internal static class RemoteSessionApp
             var lastEncode = TimeSpan.Zero;
             var lastCursor = new Point(int.MinValue, int.MinValue);
             var failures = 0;
+            // DXGI가 만들어지긴 했는데 프레임을 전혀 주지 않는 경우(끊긴 세션, 일부 VM/RDP 디스플레이)를 위한 GDI 전환
+            var preferGdi = false;
+            var captureStarted = TimeSpan.Zero;
 
             try
             {
@@ -287,7 +291,8 @@ internal static class RemoteSessionApp
                         var bounds = ResolveMonitor(currentMonitor);
                         try
                         {
-                            capturer = CreateCapturer(bounds);
+                            capturer = CreateCapturer(bounds, preferGdi);
+                            captureStarted = clock.Elapsed;
                         }
                         catch (Exception ex)
                         {
@@ -337,6 +342,16 @@ internal static class RemoteSessionApp
                         continue;
                     }
                     failures = 0;
+
+                    // 첫 프레임이 3초 넘게 안 오면 DXGI를 포기하고 GDI(BitBlt)로 바꾼다. GDI는 항상 현재 화면을 돌려준다
+                    if (!hasFrame && status == CaptureStatus.NoChange && capturer is DxgiCapturer && clock.Elapsed - captureStarted > NoFrameFallback)
+                    {
+                        preferGdi = true;
+                        capturer.Dispose();
+                        capturer = null;
+                        _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "dxgi-no-frames" }, ct);
+                        continue;
+                    }
 
                     SendCursorIfMoved(ref lastCursor, ct);
 
@@ -388,8 +403,10 @@ internal static class RemoteSessionApp
             }
         }
 
-        private static IScreenCapturer CreateCapturer(Rectangle bounds)
+        private static IScreenCapturer CreateCapturer(Rectangle bounds, bool preferGdi)
         {
+            if (preferGdi)
+                return new GdiCapturer(bounds);
             try
             {
                 return new DxgiCapturer(bounds);

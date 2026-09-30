@@ -109,11 +109,11 @@ public class LocalControlServer(
                 if (serverUrl is null)
                     return Fail("서버 주소 형식이 올바르지 않습니다. 예: 192.168.0.10:5063");
 
-                var (version, error) = await ServerInfoClient.ProbeAsync(serverUrl, ct);
+                var (version, dashboardUrl, error) = await ServerInfoClient.ProbeAsync(serverUrl, ct);
                 if (error is not null)
                     return Fail($"서버에 연결할 수 없습니다: {error}");
 
-                status.SetServerVersion(version);
+                status.SetServerInfo(version, dashboardUrl);
                 settings.Save(settings.Current with { ServerUrl = serverUrl, Enabled = true });
                 logger.LogInformation("런처에서 서버 연결: {ServerUrl}", serverUrl);
                 return Ok();

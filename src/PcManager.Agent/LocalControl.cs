@@ -35,7 +35,9 @@ public record LocalStatus(
     string? ServerVersion,
     bool UpdateAvailable,
     bool Updating,
-    string? LastError);
+    string? LastError,
+    /// <summary>대시보드 HTTPS 주소 (서버가 HTTPS를 쓰면). null이면 ServerUrl로 연다</summary>
+    string? DashboardUrl = null);
 
 /// <param name="Command">LocalControl의 *Command 상수</param>
 /// <param name="ServerUrl">connect 명령에서 사용</param>

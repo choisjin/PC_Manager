@@ -11,6 +11,7 @@ public class AgentStatusTracker
     private ConnectionStatus _status = ConnectionStatus.NotConfigured;
     private string? _lastError;
     private string? _serverVersion;
+    private string? _dashboardUrl;
     private bool _updating;
 
     /// <param name="error">표시할 오류. null이면 지운다</param>
@@ -23,10 +24,14 @@ public class AgentStatusTracker
         }
     }
 
-    public void SetServerVersion(string? version)
+    /// <param name="dashboardUrl">대시보드 HTTPS 주소. null이면 런처가 서버 주소(HTTP)로 연다</param>
+    public void SetServerInfo(string? version, string? dashboardUrl)
     {
         lock (_lock)
+        {
             _serverVersion = version;
+            _dashboardUrl = dashboardUrl;
+        }
     }
 
     public void SetUpdating(bool updating)
@@ -42,7 +47,7 @@ public class AgentStatusTracker
             var updateAvailable = Version.TryParse(_serverVersion, out var server) && ToThreeParts(server) > AgentVersion;
             return new LocalStatus(
                 _status, settings.ServerUrl, Environment.MachineName, AgentVersionText,
-                _serverVersion, updateAvailable, _updating, _lastError);
+                _serverVersion, updateAvailable, _updating, _lastError, _dashboardUrl);
         }
     }
 

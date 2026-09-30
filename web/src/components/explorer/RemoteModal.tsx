@@ -192,6 +192,12 @@ export function RemoteModal({ agentId, machineName, onClose }: Props) {
             formatRef.current = msg
             setFormat(msg)
             sink.reset(msg.width, msg.height)
+            // 연결은 됐고 첫 프레임을 기다리는 단계임을 구분해 보여 준다 (진단용: 캡처 방식)
+            setMessage((m) =>
+              m === '연결 중…' || m?.startsWith('화면을 기다리는 중')
+                ? `화면을 기다리는 중… (캡처 ${String(msg.capture).toUpperCase()})`
+                : m,
+            )
             break
           case 'status':
             setDesktop(msg.desktop ?? null)

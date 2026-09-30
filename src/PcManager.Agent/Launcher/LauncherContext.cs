@@ -150,7 +150,9 @@ internal sealed class LauncherContext : ApplicationContext
 
     private void OpenDashboard()
     {
-        var url = _lastStatus?.ServerUrl;
+        // 원격조작(키보드 잠금·저지연 화면)은 HTTPS에서만 되므로 서버가 알려준 HTTPS 주소를 우선 쓴다.
+        // 이 PC의 에이전트가 서버 인증서를 신뢰 저장소에 넣어 두므로 경고 없이 열린다
+        var url = _lastStatus?.DashboardUrl ?? _lastStatus?.ServerUrl;
         if (string.IsNullOrWhiteSpace(url))
         {
             ShowForm();
