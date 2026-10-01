@@ -18,10 +18,13 @@ internal static class ServiceInstaller
     {
         var sourceExe = Environment.ProcessPath!;
         StopServiceIfRunning(log);
+        // 같은 exe로 떠 있는 런처·원격조작·썸네일 프로세스가 파일을 잡고 있으면 덮어쓸 수 없다
+        KillOtherInstances(log);
 
         log($"파일 복사: {InstallDir}");
         Directory.CreateDirectory(InstallDir);
-        CopyWithRetry(sourceExe, InstalledExePath);
+        CleanupOldExe();
+        CopyWithRetry(sourceExe, InstalledExePath, log);
 
         if (ServiceExists())
         {
@@ -84,6 +87,7 @@ internal static class ServiceInstaller
     public static void Uninstall(bool removeData, Action<string> log)
     {
         StopServiceIfRunning(log);
+        KillOtherInstances(log);
         // 원격조작이 설치했을 수 있는 가상 모니터 드라이버도 함께 제거 (best-effort)
         try
         {
@@ -150,18 +154,73 @@ internal static class ServiceInstaller
         }
     }
 
-    private static void CopyWithRetry(string source, string destination)
+    private static string OldExePath => InstalledExePath + ".old";
+
+    /// <summary>설치된 exe로 실행 중인 다른 프로세스(런처 --launcher, 원격조작/썸네일 --remote-session)를 끝낸다. 서비스가 다시 뜨면 런처는 자동으로 다시 실행된다</summary>
+    private static void KillOtherInstances(Action<string> log)
     {
-        for (var attempt = 1; ; attempt++)
+        var self = Environment.ProcessId;
+        var killed = 0;
+        foreach (var process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(InstalledExePath)))
+        {
+            using (process)
+            {
+                if (process.Id == self)
+                    continue;
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(5000);
+                    killed++;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    log($"경고: 프로세스 {process.Id} 종료 실패: {ex.Message}");
+                }
+            }
+        }
+        if (killed > 0)
+            log($"실행 중이던 에이전트 프로세스 {killed}개 종료");
+    }
+
+    private static void CleanupOldExe()
+    {
+        try
+        {
+            if (File.Exists(OldExePath))
+                File.Delete(OldExePath);
+        }
+        catch (IOException)
+        {
+            // 아직 쓰는 중이면 다음 설치 때 지운다
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // 위와 같음
+        }
+    }
+
+    private static void CopyWithRetry(string source, string destination, Action<string> log)
+    {
+        for (var attempt = 1; attempt <= 5; attempt++)
         {
             try
             {
                 File.Copy(source, destination, overwrite: true);
                 return;
             }
-            catch (IOException) when (attempt < 10)
+            catch (IOException) when (attempt < 5)
             {
                 Thread.Sleep(1000);
+            }
+            catch (IOException)
+            {
+                // 그래도 잠겨 있으면(실행 중인 이미지) 이름만 바꿔 두고 새 파일을 놓는다. 실행 중인 exe도 이름 변경은 된다
+                log("기존 파일이 잠겨 있어 .old로 바꾸고 복사합니다");
+                CleanupOldExe();
+                File.Move(destination, OldExePath, overwrite: true);
+                File.Copy(source, destination, overwrite: true);
+                return;
             }
         }
     }
