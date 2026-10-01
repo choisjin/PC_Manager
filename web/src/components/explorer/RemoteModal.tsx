@@ -85,6 +85,18 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
       return true
     }
   })
+  // 전체 화면: 왼쪽 가장자리에 마우스를 대면 PC 목록이 잠깐 펼쳐진다 (PiP 버튼은 고정)
+  const [edgeOpen, setEdgeOpen] = useState(false)
+  const [fsPinned, setFsPinned] = useState(false)
+  const edgeTimerRef = useRef(0)
+  const openEdge = () => {
+    clearTimeout(edgeTimerRef.current)
+    setEdgeOpen(true)
+  }
+  const closeEdgeSoon = () => {
+    clearTimeout(edgeTimerRef.current)
+    edgeTimerRef.current = window.setTimeout(() => setEdgeOpen(false), 250)
+  }
   const toggleList = () => {
     setListOpen((v) => {
       try {
@@ -494,6 +506,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     releaseKeys()
     setAgentId(id)
     setPipOpen(false)
+    setEdgeOpen(false)
     focusStage()
   }
 
@@ -652,7 +665,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
             onPointerMove={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
           >
-            <button type="button" className={`icon remote-key${listOpen ? ' active' : ''}`} title="PC 목록" aria-pressed={listOpen} onClick={toggleList}>
+            <button type="button" className={`icon remote-key${fsPinned ? ' active' : ''}`} title={fsPinned ? 'PC 목록 고정 해제 (왼쪽 가장자리에 마우스를 대면 표시)' : 'PC 목록 고정 (왼쪽 가장자리에 마우스를 대도 표시)'} aria-pressed={fsPinned} onClick={() => setFsPinned((v) => !v)}>
               <Icon name="pc" size={18} />
             </button>
             <button type="button" className="icon remote-key" title="특수 키" aria-expanded={pipOpen} onClick={() => setPipOpen((o) => !o)}>
@@ -665,15 +678,24 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
           </div>
         )}
 
-        {fullscreen && listOpen && (
+        {/* 전체 화면 왼쪽 가장자리 호버 영역 */}
+        {fullscreen && !fsPinned && !edgeOpen && (
+          <div className="remote-edge-hot" onPointerEnter={openEdge} onPointerDown={(e) => e.stopPropagation()} title="PC 목록" />
+        )}
+
+        {fullscreen && (fsPinned || edgeOpen) && (
           <aside
-            className="remote-pclist overlay"
+            className={`remote-pclist overlay${fsPinned ? ' pinned' : ''}`}
+            onPointerEnter={openEdge}
+            onPointerLeave={() => {
+              if (!fsPinned) closeEdgeSoon()
+            }}
             onPointerDown={(e) => e.stopPropagation()}
             onPointerUp={(e) => e.stopPropagation()}
             onPointerMove={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
           >
-            <div className="remote-pclist-title small">PC 목록 · 클릭하면 전환</div>
+            <div className="remote-pclist-title small">PC 목록 · 클릭하면 전환{fsPinned ? ' · 고정됨' : ''}</div>
             {pcList}
           </aside>
         )}
