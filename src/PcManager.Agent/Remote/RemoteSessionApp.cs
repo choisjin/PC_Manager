@@ -102,6 +102,9 @@ internal static class RemoteSessionApp
         private volatile int _screenWidth;
         private volatile int _screenHeight;
         private volatile bool _matchResolution = true;
+        // 클립보드 동기화: 마지막으로 원격에 쓴/원격에서 읽은 텍스트 (서로 되돌려 보내지 않도록)
+        private string? _lastClipboard;
+        private readonly Lock _clipLock = new();
         private Rectangle _monitorBounds;
         private readonly Lock _boundsLock = new();
 
@@ -218,6 +221,21 @@ internal static class RemoteSessionApp
                 case "reset":
                     EnqueueInput(InputInjector.ReleaseModifiers);
                     break;
+                case "clip":
+                {
+                    var clip = root.GetProperty("text").GetString() ?? "";
+                    EnqueueInput(() =>
+                    {
+                        lock (_clipLock)
+                        {
+                            if (clip == _lastClipboard)
+                                return;
+                            _lastClipboard = clip;
+                        }
+                        RemoteClipboard.SetText(clip);
+                    });
+                    break;
+                }
                 case "text":
                 {
                     var text = root.GetProperty("text").GetString() ?? "";
@@ -260,24 +278,58 @@ internal static class RemoteSessionApp
         /// <summary>SendInput은 입력 데스크톱에 붙은 스레드에서만 동작하므로 전용 스레드에서 처리한다</summary>
         private void InputLoop()
         {
+            var ct = _cts.Token;
+            var lastPoll = Stopwatch.StartNew();
             try
             {
-                foreach (var action in _inputQueue.GetConsumingEnumerable(_cts.Token))
+                while (!ct.IsCancellationRequested)
                 {
-                    DesktopSwitcher.SyncThreadToInputDesktop();
-                    try
+                    if (_inputQueue.TryTake(out var action, 150, ct))
                     {
-                        action();
+                        DesktopSwitcher.SyncThreadToInputDesktop();
+                        try
+                        {
+                            action();
+                        }
+                        catch (Exception ex)
+                        {
+                            Trace.WriteLine($"입력 실패: {ex.Message}");
+                        }
                     }
-                    catch (Exception ex)
+
+                    // 원격 클립보드가 바뀌면 대시보드로 보낸다 (클립보드는 입력 데스크톱에 붙은 이 스레드에서만 접근 가능)
+                    if (lastPoll.ElapsedMilliseconds >= 600)
                     {
-                        Trace.WriteLine($"입력 실패: {ex.Message}");
+                        lastPoll.Restart();
+                        PollClipboard(ct);
                     }
                 }
             }
             catch (OperationCanceledException)
             {
                 // 종료
+            }
+        }
+
+        private void PollClipboard(CancellationToken ct)
+        {
+            try
+            {
+                DesktopSwitcher.SyncThreadToInputDesktop();
+                var text = RemoteClipboard.GetText();
+                if (string.IsNullOrEmpty(text) || text.Length > 256 * 1024)
+                    return;
+                lock (_clipLock)
+                {
+                    if (text == _lastClipboard)
+                        return;
+                    _lastClipboard = text;
+                }
+                _ = SendJsonAsync(new { type = "clipboard", text }, ct);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"클립보드 폴링 실패: {ex.Message}");
             }
         }
 

@@ -104,6 +104,9 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
   const formatRef = useRef<Format | null>(null)
   const viewOnlyRef = useRef(false)
   const pressedRef = useRef(new Set<string>())
+  // 클립보드 동기화: 마지막으로 주고받은 텍스트 (되돌려 보내지 않도록)
+  const lastClipRef = useRef<string | null>(null)
+  const syncClipRef = useRef<() => void>(() => {})
   const pendingMoveRef = useRef<{ x: number; y: number } | null>(null)
   const moveFrameRef = useRef(0)
 
@@ -259,6 +262,13 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
           case 'cursor':
             setCursor({ x: msg.x, y: msg.y, visible: msg.visible })
             break
+          case 'clipboard':
+            // 원격 클립보드가 바뀌면 이 PC 클립보드에 반영 (보안 컨텍스트에서만, 창에 포커스가 있어야 함)
+            if (typeof msg.text === 'string' && msg.text !== lastClipRef.current) {
+              lastClipRef.current = msg.text
+              navigator.clipboard?.writeText?.(msg.text).catch(() => {})
+            }
+            break
           case 'error':
             setMessage(msg.message)
             break
@@ -296,9 +306,14 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     const stage = stageRef.current
     const observer = stage ? new ResizeObserver(onResize) : null
     if (stage && observer) observer.observe(stage)
+    // 창에 포커스가 있을 때 이 PC 클립보드를 원격으로 보낸다 (복사 직후 바로 붙여넣을 수 있게)
+    const clipTimer = window.setInterval(() => {
+      if (document.hasFocus()) syncClipRef.current()
+    }, 1500)
 
     return () => {
       clearInterval(statsTimer)
+      clearInterval(clipTimer)
       clearTimeout(resizeTimer)
       observer?.disconnect()
       ws.onmessage = null
@@ -446,6 +461,21 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
 
   // 헤더/PiP 버튼을 누르면 포커스가 버튼으로 가므로 키 입력이 계속 원격으로 가게 되돌린다
   const focusStage = () => stageRef.current?.focus()
+
+  // 이 PC 클립보드를 원격으로 보낸다 (보기 전용이 아닐 때, 보안 컨텍스트에서만 가능)
+  const syncClipboardToRemote = () => {
+    if (viewOnlyRef.current) return
+    navigator.clipboard
+      ?.readText?.()
+      .then((text) => {
+        if (typeof text === 'string' && text && text !== lastClipRef.current) {
+          lastClipRef.current = text
+          send({ t: 'clip', text })
+        }
+      })
+      .catch(() => {})
+  }
+  syncClipRef.current = syncClipboardToRemote
 
   // PC 목록에서 다른 PC 선택 (상태·사용 중 규칙은 탐색기와 같다)
   const switchTo = (id: string) => {
@@ -606,6 +636,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
         onContextMenu={(e) => e.preventDefault()}
         onKeyDown={(e) => onKey(e, true)}
         onKeyUp={(e) => onKey(e, false)}
+        onFocus={syncClipboardToRemote}
         onBlur={releaseKeys}
       >
         {useWebCodecs ? <canvas ref={canvasRef} className="remote-surface" /> : <video ref={videoRef} className="remote-surface" muted playsInline />}
