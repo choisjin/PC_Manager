@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import { api } from '../../api'
+import { useContext, useEffect, useRef, useState } from 'react'
+import { api, PC_STATUS_LABEL } from '../../api'
+import { RemoteContext } from '../remote/RemoteContext'
 import { MseSink, type VideoSink, WebCodecsSink, webCodecsAvailable } from '../remote/sinks'
 import { Icon, type IconName } from './Icon'
 
@@ -72,7 +73,28 @@ const keyboardLockAvailable = () => typeof window !== 'undefined' && window.isSe
 type KeyLock = 'off' | 'locked' | 'unavailable'
 
 /** 원격 PC 화면 보기 + 마우스/키보드 조작 (H.264 스트리밍) */
-export function RemoteModal({ agentId, machineName, userId, onClose }: Props) {
+export function RemoteModal({ agentId: initialAgentId, machineName: initialName, userId, onClose }: Props) {
+  // PC 목록에서 다른 PC로 바꾸면 그 PC로 다시 연결한다
+  const [agentId, setAgentId] = useState(initialAgentId)
+  const { pcs, userName } = useContext(RemoteContext)
+  const machineName = pcs.find((p) => p.id === agentId)?.name ?? (agentId === initialAgentId ? initialName : agentId.slice(0, 8))
+  const [listOpen, setListOpen] = useState(() => {
+    try {
+      return localStorage.getItem('pcm.remote.pclist') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const toggleList = () => {
+    setListOpen((v) => {
+      try {
+        localStorage.setItem('pcm.remote.pclist', v ? '0' : '1')
+      } catch {
+        // 무시
+      }
+      return !v
+    })
+  }
   const dialogRef = useRef<HTMLDialogElement>(null)
   const stageRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -424,6 +446,46 @@ export function RemoteModal({ agentId, machineName, userId, onClose }: Props) {
   // 헤더/PiP 버튼을 누르면 포커스가 버튼으로 가므로 키 입력이 계속 원격으로 가게 되돌린다
   const focusStage = () => stageRef.current?.focus()
 
+  // PC 목록에서 다른 PC 선택 (상태·사용 중 규칙은 탐색기와 같다)
+  const switchTo = (id: string) => {
+    if (id === agentId) return
+    const pc = pcs.find((p) => p.id === id)
+    if (!pc || !pc.online) return
+    if (pc.status?.status === 'forbidden') {
+      showHint(`${pc.name}: 사용 금지 상태라 원격조작할 수 없습니다.${pc.status.note ? ` (${pc.status.note})` : ''}`)
+      return
+    }
+    if (pc.inUseBy && pc.inUseBy !== (userId ?? 'anonymous')) {
+      showHint(`${pc.name}: ${userName(pc.inUseBy)}님이 원격조작 중입니다.`)
+      return
+    }
+    if (pc.status?.status === 'testing' && !window.confirm(`'${pc.name}'은(는) '테스트 중' 상태입니다.${pc.status.note ? ` (${pc.status.note})` : ''}\n그래도 원격조작할까요?`)) return
+    releaseKeys()
+    setAgentId(id)
+    setPipOpen(false)
+    focusStage()
+  }
+
+  const pcList = (
+    <ul className="remote-pclist-items">
+      {pcs.map((pc) => {
+        const busy = !!pc.inUseBy && pc.inUseBy !== (userId ?? 'anonymous')
+        const cls = ['remote-pc', pc.id === agentId ? 'current' : '', pc.online ? '' : 'offline', busy || pc.status?.status === 'forbidden' ? 'blocked' : ''].filter(Boolean).join(' ')
+        return (
+          <li key={pc.id}>
+            <button type="button" className={cls} disabled={!pc.online} title={pc.name} onClick={() => switchTo(pc.id)}>
+              <span className={`dot ${pc.online ? 'on' : 'off'}`} />
+              <span className="ellipsis">{pc.name}</span>
+              {pc.status && pc.status.status !== 'available' && <span className={`status-badge ${pc.status.status}`}>{PC_STATUS_LABEL[pc.status.status]}</span>}
+              {busy && <span className="remote-pc-busy" title={`${userName(pc.inUseBy!)} 사용 중`}>●</span>}
+            </button>
+          </li>
+        )
+      })}
+      {pcs.length === 0 && <li className="muted small remote-pc-empty">PC 없음</li>}
+    </ul>
+  )
+
   const pressSpecial = (k: SpecialKey) => {
     if (k.action === 'cad') {
       api.sendCtrlAltDel(agentId).catch((err: unknown) => showHint(err instanceof Error ? err.message : String(err)))
@@ -478,6 +540,9 @@ export function RemoteModal({ agentId, machineName, userId, onClose }: Props) {
           {keyLock === 'locked' && <span className="remote-badge ok">키보드 잠금</span>}
         </span>
         <span className="remote-actions">
+          <button type="button" className={`icon remote-key${listOpen ? ' active' : ''}`} title="PC 목록 (빠른 전환)" aria-pressed={listOpen} onClick={toggleList}>
+            <Icon name="pc" size={18} />
+          </button>
           {monitors.length > 1 && (
             <select aria-label="모니터" value={monitor} onChange={(e) => changeMonitor(Number(e.target.value))}>
               {monitors.map((m) => (
@@ -522,6 +587,13 @@ export function RemoteModal({ agentId, machineName, userId, onClose }: Props) {
         </span>
       </div>
 
+      <div className="remote-body">
+      {listOpen && !fullscreen && (
+        <aside className="remote-pclist">
+          <div className="remote-pclist-title small muted">PC 목록 · 클릭하면 전환</div>
+          {pcList}
+        </aside>
+      )}
       <div
         ref={stageRef}
         className={`remote-stage${viewOnly ? ' view-only' : ''}`}
@@ -548,6 +620,9 @@ export function RemoteModal({ agentId, machineName, userId, onClose }: Props) {
             onPointerMove={(e) => e.stopPropagation()}
             onWheel={(e) => e.stopPropagation()}
           >
+            <button type="button" className={`icon remote-key${listOpen ? ' active' : ''}`} title="PC 목록" aria-pressed={listOpen} onClick={toggleList}>
+              <Icon name="pc" size={18} />
+            </button>
             <button type="button" className="icon remote-key" title="특수 키" aria-expanded={pipOpen} onClick={() => setPipOpen((o) => !o)}>
               <Icon name="keyboard" size={18} />
             </button>
@@ -556,6 +631,19 @@ export function RemoteModal({ agentId, machineName, userId, onClose }: Props) {
               <Icon name="fullscreen-exit" size={18} />
             </button>
           </div>
+        )}
+
+        {fullscreen && listOpen && (
+          <aside
+            className="remote-pclist overlay"
+            onPointerDown={(e) => e.stopPropagation()}
+            onPointerUp={(e) => e.stopPropagation()}
+            onPointerMove={(e) => e.stopPropagation()}
+            onWheel={(e) => e.stopPropagation()}
+          >
+            <div className="remote-pclist-title small">PC 목록 · 클릭하면 전환</div>
+            {pcList}
+          </aside>
         )}
 
         {hint && <div className="remote-hint">{hint}</div>}
@@ -599,6 +687,7 @@ export function RemoteModal({ agentId, machineName, userId, onClose }: Props) {
             </div>
           </form>
         )}
+      </div>
       </div>
 
     </dialog>

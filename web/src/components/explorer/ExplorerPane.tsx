@@ -596,7 +596,7 @@ export function ExplorerPane({
         setError(`사용 금지 상태라 원격조작할 수 없습니다.${st.note ? ` (${st.note})` : ''}`)
         return
       }
-      if (by && by !== selfUserId) {
+      if (by && by !== (selfUserId ?? 'anonymous')) {
         setError(`${userName(by)}님이 원격조작 중입니다.`)
         return
       }

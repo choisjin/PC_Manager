@@ -1559,6 +1559,96 @@ tr.cut td {
   cursor: pointer;
 }
 
+.remote-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.remote-pclist {
+  flex: none;
+  width: 170px;
+  overflow: auto;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.remote-pclist.overlay {
+  position: absolute;
+  top: 48px;
+  bottom: 12px;
+  left: 10px;
+  z-index: 2;
+  width: 190px;
+  color: #fff;
+  background: rgb(20 24 30 / 75%);
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-right: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+}
+
+.remote-pclist-title {
+  padding: 6px 8px 2px;
+}
+
+.remote-pclist-items {
+  margin: 0;
+  padding: 2px 4px;
+  list-style: none;
+}
+
+.remote-pc {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.remote-pc:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.remote-pclist.overlay .remote-pc:hover:not(:disabled) {
+  background: rgb(255 255 255 / 12%);
+}
+
+.remote-pc.current {
+  font-weight: 700;
+  background: var(--selected);
+}
+
+.remote-pclist.overlay .remote-pc.current {
+  background: rgb(79 142 245 / 45%);
+}
+
+.remote-pc.offline {
+  opacity: 0.5;
+}
+
+.remote-pc.blocked {
+  cursor: not-allowed;
+}
+
+.remote-pc-busy {
+  color: var(--accent);
+}
+
+.remote-pc-empty {
+  padding: 6px 8px;
+}
+
+.remote-key.active {
+  background: var(--selected);
+}
+
 .remote-stage {
   position: relative;
   flex: 1;

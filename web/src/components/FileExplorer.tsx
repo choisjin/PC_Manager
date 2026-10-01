@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Agent, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder, Thumbnail } from '../api'
 import { RemoteGrid } from './RemoteGrid'
+import { RemoteContext, type RemoteContextValue } from './remote/RemoteContext'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
 import { ExplorerToolbar } from './explorer/ExplorerToolbar'
@@ -97,6 +98,21 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       // 무시
     }
   }
+  // 원격조작 모달의 PC 목록(빠른 전환)
+  const remoteContext = useMemo<RemoteContextValue>(
+    () => ({
+      pcs: visibleAgents.map((a) => ({
+        id: a.id,
+        name: displayName(a, pcGroups),
+        online: a.online,
+        status: pcStatuses[a.id] ?? null,
+        inUseBy: remoteUsage[a.id]?.userId ?? null,
+      })),
+      userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
+    }),
+    [visibleAgents, pcGroups, pcStatuses, remoteUsage, org.users],
+  )
+
   // Remote 모드 대상: 선택한 폴더(하위 포함)의 PC, 없으면 보이는 PC 전체
   const remoteTargets = useMemo(() => {
     if (!selectedFolderId) return { name: null as string | null, agents: visibleAgents }
@@ -185,6 +201,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   }
 
   return (
+    <RemoteContext.Provider value={remoteContext}>
     <div className={`explorer-shell${collapsed ? ' tree-collapsed' : ''}`}>
       <PcTree
         agents={visibleAgents}
@@ -314,5 +331,6 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         )}
       </div>
     </div>
+    </RemoteContext.Provider>
   )
 }

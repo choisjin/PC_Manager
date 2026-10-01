@@ -51,7 +51,7 @@ export function RemoteGrid({ agents, groupName, displayName, thumbnails, watchTh
       setNotice(`${displayName(agent)}: 사용 금지 상태라 원격조작할 수 없습니다.${st.note ? ` (${st.note})` : ''}`)
       return
     }
-    if (by && by !== selfUserId) {
+    if (by && by !== (selfUserId ?? 'anonymous')) {
       setNotice(`${displayName(agent)}: ${userName(by)}님이 원격조작 중입니다.`)
       return
     }
@@ -74,7 +74,7 @@ export function RemoteGrid({ agents, groupName, displayName, thumbnails, watchTh
           const t = thumbnails[agent.id]
           const st = pcStatuses[agent.id]
           const by = remoteUsage[agent.id]?.userId
-          const busy = !!by
+          const busy = !!by && by !== (selfUserId ?? 'anonymous')
           const idle = t ? idleText(t.idleSeconds) : null
           const cls = ['remote-card', agent.online ? '' : 'offline', busy ? 'busy' : '', st?.status === 'forbidden' ? 'forbidden' : ''].filter(Boolean).join(' ')
           return (
