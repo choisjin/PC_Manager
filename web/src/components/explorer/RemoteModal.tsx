@@ -218,7 +218,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
       const dpr = window.devicePixelRatio || 1
       const width = Math.round(stage.clientWidth * dpr)
       const height = Math.round(stage.clientHeight * dpr)
-      // 모니터 해상도(물리 픽셀)는 원격 디스플레이 모드 맞춤에, 화면 영역 크기는 스트림 축소에 쓴다
+      // 모니터 해상도(물리 픽셀)는 원격 디스플레이 모드 맞춤(헤드리스 PC)에, 화면 영역 크기(width/height)는 스트림 크기에 쓴다.
+      // 실제 모니터가 달린 PC의 해상도를 창 크기로 바꾸면 안 되므로 여기선 항상 모니터 크기를 보낸다
       const screenWidth = Math.round(window.screen.width * dpr)
       const screenHeight = Math.round(window.screen.height * dpr)
       if (width > 0 && height > 0) ws.send(JSON.stringify({ t: 'view', width, height, screenWidth, screenHeight, match: matchRef.current }))
@@ -290,7 +291,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     let resizeTimer = 0
     const onResize = () => {
       clearTimeout(resizeTimer)
-      resizeTimer = window.setTimeout(sendViewSize, 300)
+      resizeTimer = window.setTimeout(sendViewSize, 600)
     }
     const stage = stageRef.current
     const observer = stage ? new ResizeObserver(onResize) : null
