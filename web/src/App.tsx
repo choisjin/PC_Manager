@@ -51,6 +51,7 @@ export default function App() {
     announcePresence,
     pcStatuses,
     setPcStatus,
+    serverHostName,
     remoteUsage,
     chat,
     sendChat,
@@ -174,6 +175,7 @@ export default function App() {
             setFolderProject={orgActions.setFolderProject}
             thumbnails={thumbnails}
             watchThumbnails={watchThumbnails}
+            serverHostName={serverHostName}
             announcePresence={announcePresence}
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}

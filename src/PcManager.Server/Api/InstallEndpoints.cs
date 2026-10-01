@@ -10,7 +10,8 @@ namespace PcManager.Server.Api;
 /// <param name="CertificateInstallerUrl">대시보드 PC용 인증서 신뢰 설치 도구(.cmd) 경로. 없으면 null</param>
 public record InstallInfo(
     string ServerUrl, string ServerVersion, bool SetupAvailable, string SetupDownloadUrl,
-    string? HttpsUrl = null, string? CertificateDownloadUrl = null, string? CertificateInstallerUrl = null);
+    string? HttpsUrl = null, string? CertificateDownloadUrl = null, string? CertificateInstallerUrl = null,
+    string? ServerMachineName = null);
 
 /// <summary>
 /// 에이전트 설치 지원. 서버 패키지의 agent 폴더에 더블클릭 설치 파일(PcManager-Agent-Setup.exe)이 들어 있다.
@@ -40,7 +41,8 @@ public static class InstallEndpoints
             new InstallInfo(ServerUrl(request), version, File.Exists(setupPath), $"/api/install/{SetupFileName}",
                 string.IsNullOrWhiteSpace(options.DashboardHttpsUrl) ? null : options.DashboardHttpsUrl.TrimEnd('/'),
                 File.Exists(CertificatePath) ? $"/api/install/{CertificateFileName}" : null,
-                File.Exists(CertificatePath) ? $"/api/install/{CertificateInstallerName}" : null));
+                File.Exists(CertificatePath) ? $"/api/install/{CertificateInstallerName}" : null,
+                Environment.MachineName));
 
         api.MapGet($"/{CertificateFileName}", () =>
             File.Exists(CertificatePath)

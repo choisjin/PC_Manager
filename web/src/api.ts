@@ -298,6 +298,8 @@ export interface InstallInfo {
   certificateDownloadUrl: string | null
   /** 대시보드 PC용 인증서 신뢰 설치 도구(.cmd) 경로. 없으면 null */
   certificateInstallerUrl: string | null
+  /** 서버가 도는 PC의 머신 이름 (Remote 모드에서 '내 PC'를 숨기는 데 쓴다) */
+  serverMachineName: string | null
 }
 
 export const isActiveRun = (state: RunState) => state === 'Pending' || state === 'Running'

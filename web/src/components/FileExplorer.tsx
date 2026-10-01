@@ -28,6 +28,8 @@ interface Props {
   setFolderProject: (folderId: string, projectId: string | null) => Promise<void>
   thumbnails: Record<string, Thumbnail>
   watchThumbnails: (agentIds: string[]) => void
+  /** 서버(=대시보드)가 도는 PC의 머신 이름. Remote 모드에서 이 PC는 숨긴다 */
+  serverHostName: string | null
   filterProjectId: string | null
   selfUserId: string | null
   announcePresence: (userId: string, agentIds: string[]) => void
@@ -56,7 +58,7 @@ const MODE_KEY = 'explorer.mode'
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   // 선택한 프로젝트의 에이전트 + 아직 미배정 에이전트를 노출 (다른 프로젝트 전용은 숨김). 전체 보기면 모두.
   const visibleAgents = useMemo(
@@ -68,6 +70,11 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
           })
         : agents,
     [agents, org.agentProjects, filterProjectId],
+  )
+  // Remote 모드에서는 서버가 도는 이 PC(자기 화면)를 숨긴다 (Browser·파일 작업에는 그대로 둔다)
+  const remoteAgents = useMemo(
+    () => (serverHostName ? visibleAgents.filter((a) => a.machineName.toLowerCase() !== serverHostName.toLowerCase()) : visibleAgents),
+    [visibleAgents, serverHostName],
   )
   const shareById = useMemo(() => new Map(shares.map((s) => [s.id, s])), [shares])
   // 창 제목·온라인 상태: 에이전트면 별칭, 공유 폴더면 공유 이름
@@ -101,7 +108,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   // 원격조작 모달의 PC 목록(빠른 전환)
   const remoteContext = useMemo<RemoteContextValue>(
     () => ({
-      pcs: visibleAgents.map((a) => ({
+      pcs: remoteAgents.map((a) => ({
         id: a.id,
         name: displayName(a, pcGroups),
         online: a.online,
@@ -110,13 +117,13 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       })),
       userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
     }),
-    [visibleAgents, pcGroups, pcStatuses, remoteUsage, org.users],
+    [remoteAgents, pcGroups, pcStatuses, remoteUsage, org.users],
   )
 
   // Remote 모드 대상: 선택한 폴더(하위 포함)의 PC, 없으면 보이는 PC 전체
   const remoteTargets = useMemo(() => {
-    if (!selectedFolderId) return { name: null as string | null, agents: visibleAgents }
-    const { roots } = buildTree(pcGroups, visibleAgents)
+    if (!selectedFolderId) return { name: null as string | null, agents: remoteAgents }
+    const { roots } = buildTree(pcGroups, remoteAgents)
     const find = (nodes: FolderNode[]): FolderNode | null => {
       for (const n of nodes) {
         if (n.folder.id === selectedFolderId) return n
@@ -126,10 +133,10 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       return null
     }
     const node = find(roots)
-    if (!node) return { name: null as string | null, agents: visibleAgents }
+    if (!node) return { name: null as string | null, agents: remoteAgents }
     const collect = (n: FolderNode): Agent[] => [...n.agents, ...n.children.flatMap(collect)]
     return { name: node.folder.name, agents: collect(node) }
-  }, [selectedFolderId, pcGroups, visibleAgents])
+  }, [selectedFolderId, pcGroups, remoteAgents])
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
 
