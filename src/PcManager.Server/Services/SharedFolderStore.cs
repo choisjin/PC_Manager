@@ -78,8 +78,14 @@ public class SharedFolderStore(AppPaths paths, ILogger<SharedFolderStore> logger
         var cleanPath = path.Trim().TrimEnd('\\', '/');
         if (cleanPath.Length == 0)
             return new ShareProbeResult(false, false, "경로를 입력하세요.");
-        if (IsNetworkPath(cleanPath) && cleanPath.TrimStart('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries).Length < 2)
-            return new ShareProbeResult(false, false, "\\\\서버\\공유폴더 형식으로 입력하세요.");
+        // 서버 주소만(\\서버): 탐색기처럼 그 서버의 공유 목록을 연다
+        if (NetworkShares.IsServerRoot(cleanPath))
+        {
+            var code = NetworkShares.TryList(cleanPath, out _);
+            return code == 0 ? new ShareProbeResult(true, false, null)
+                : NetworkShares.IsAccessError(code) ? new ShareProbeResult(false, true, null)
+                : new ShareProbeResult(false, false, $"공유 서버에 연결할 수 없습니다 (코드 {code}). 주소와 네트워크 연결을 확인하세요.");
+        }
         try
         {
             // 목록을 실제로 읽어 봐야 권한 문제를 알 수 있다 (Directory.Exists는 권한이 없어도 false만 준다)
@@ -133,17 +139,18 @@ public class SharedFolderStore(AppPaths paths, ILogger<SharedFolderStore> logger
         if (hasCredentials)
         {
             using var token = LogonNetwork(username!.Trim(), password ?? "", cleanPath);
-            var exists = WindowsIdentity.RunImpersonated(token, () => Directory.Exists(cleanPath));
+            var exists = WindowsIdentity.RunImpersonated(token, () =>
+                NetworkShares.IsServerRoot(cleanPath) ? NetworkShares.TryList(cleanPath, out _) == 0 : Directory.Exists(cleanPath));
             if (!exists)
                 throw new DirectoryNotFoundException($"그 자격증명으로 폴더에 접근할 수 없습니다: {cleanPath} (경로·사용자 이름·비밀번호 확인)");
         }
-        else if (!Directory.Exists(cleanPath))
+        else if (NetworkShares.IsServerRoot(cleanPath) ? NetworkShares.TryList(cleanPath, out _) != 0 : !Directory.Exists(cleanPath))
         {
             throw new DirectoryNotFoundException($"폴더에 접근할 수 없습니다: {cleanPath}");
         }
 
         var cleanName = string.IsNullOrWhiteSpace(name)
-            ? (Path.GetFileName(cleanPath) is { Length: > 0 } leaf ? leaf : cleanPath)
+            ? (NetworkShares.IsServerRoot(cleanPath) ? cleanPath.TrimStart('\\') : Path.GetFileName(cleanPath) is { Length: > 0 } leaf ? leaf : cleanPath)
             : name.Trim();
 
         lock (_lock)

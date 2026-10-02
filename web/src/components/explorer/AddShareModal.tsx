@@ -87,7 +87,7 @@ export function AddShareModal({ onConfirm, onClose }: Props) {
           <input
             className="mono"
             autoFocus
-            placeholder="\\서버\공유폴더  또는  D:\공유"
+            placeholder="\\서버  ·  \\서버\공유폴더  ·  D:\공유"
             value={path}
             onChange={(e) => setPath(e.target.value)}
             onKeyDown={(e) => {

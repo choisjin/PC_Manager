@@ -91,6 +91,11 @@ export function buildCrumbs(path: string): Crumb[] {
   const normalized = path.replace(/\//g, '\\')
   const parts = normalized.split('\\').filter(Boolean)
   if (parts.length === 0) return crumbs
+  // 서버 주소만(\\서버): 한 칸
+  if (normalized.startsWith('\\\\') && parts.length === 1) {
+    crumbs.push({ label: parts[0], target: `\\\\${parts[0]}` })
+    return crumbs
+  }
   // 네트워크 공유: \\서버\공유 까지를 한 칸(루트)으로
   if (normalized.startsWith('\\\\') && parts.length >= 2) {
     let unc = `\\\\${parts[0]}\\${parts[1]}`

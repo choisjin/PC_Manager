@@ -91,6 +91,20 @@ public class LocalShareFiles(SharedFolderStore store, ILogger<LocalShareFiles> l
         {
             var root = RootOf(share);
             var target = ResolveWithin(share, path);
+
+            // 서버 주소만 등록한 경우(\\서버): 맨 위는 그 서버의 공유 폴더 목록
+            if (NetworkShares.IsServerRoot(target))
+            {
+                var code = NetworkShares.TryList(target, out var names);
+                if (code != 0)
+                    return new DirectoryListing(target, null, [], NetworkShares.IsAccessError(code)
+                        ? "공유 서버에 접근할 권한이 없습니다. 공유 폴더를 우클릭해 다시 등록(자격증명)하세요."
+                        : $"공유 서버에 연결할 수 없습니다 (코드 {code}).");
+                var serverRoot = target.TrimEnd('\\', '/');
+                return new DirectoryListing(serverRoot, null,
+                    names.Select(n => new FileEntry(n, serverRoot + "\\" + n, true, 0, null)).ToList(), null);
+            }
+
             var dir = new DirectoryInfo(target);
             if (!dir.Exists && ArchiveBrowser.TrySplit(target, out var archivePath, out var innerPath))
                 return ArchiveBrowser.List(archivePath, innerPath);
@@ -111,9 +125,12 @@ public class LocalShareFiles(SharedFolderStore store, ILogger<LocalShareFiles> l
                 .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            // 공유 루트 위로는 못 올라가게 한다
+            // 공유 루트 위로는 못 올라가게 한다. \\서버\공유의 위는 (서버 주소로 등록했으면) \\서버
             var parent = dir.Parent;
-            var parentPath = parent is not null && IsWithin(root, parent.FullName) ? parent.FullName : null;
+            var parentPath = parent is not null && IsWithin(root, parent.FullName) ? parent.FullName
+                : parent is null && NetworkShares.IsServerRoot(root) && IsWithin(root, dir.FullName) && !dir.FullName.TrimEnd('\\').Equals(root, StringComparison.OrdinalIgnoreCase)
+                    ? root
+                    : null;
             return new DirectoryListing(dir.FullName, parentPath, entries, null);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
