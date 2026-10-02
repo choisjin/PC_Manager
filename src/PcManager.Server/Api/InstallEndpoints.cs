@@ -11,7 +11,8 @@ namespace PcManager.Server.Api;
 public record InstallInfo(
     string ServerUrl, string ServerVersion, bool SetupAvailable, string SetupDownloadUrl,
     string? HttpsUrl = null, string? CertificateDownloadUrl = null, string? CertificateInstallerUrl = null,
-    string? ServerMachineName = null);
+    string? ServerMachineName = null,
+    string? ClientIp = null);
 
 /// <summary>
 /// 에이전트 설치 지원. 서버 패키지의 agent 폴더에 더블클릭 설치 파일(PcManager-Agent-Setup.exe)이 들어 있다.
@@ -42,7 +43,8 @@ public static class InstallEndpoints
                 string.IsNullOrWhiteSpace(options.DashboardHttpsUrl) ? null : options.DashboardHttpsUrl.TrimEnd('/'),
                 File.Exists(CertificatePath) ? $"/api/install/{CertificateFileName}" : null,
                 File.Exists(CertificatePath) ? $"/api/install/{CertificateInstallerName}" : null,
-                Environment.MachineName));
+                Environment.MachineName,
+                ClientIp(request)));
 
         api.MapGet($"/{CertificateFileName}", () =>
             File.Exists(CertificatePath)
@@ -61,6 +63,17 @@ public static class InstallEndpoints
             File.Exists(setupPath)
                 ? Results.File(setupPath, "application/octet-stream", SetupFileName)
                 : Results.NotFound());
+    }
+
+    /// <summary>대시보드를 연 PC의 IP (IPv4로 정규화). 이 PC의 에이전트를 Remote 화면에서 숨기는 데 쓴다. 서버 자신이면 null</summary>
+    private static string? ClientIp(HttpRequest request)
+    {
+        var ip = request.HttpContext.Connection.RemoteIpAddress;
+        if (ip is null || System.Net.IPAddress.IsLoopback(ip))
+            return null;
+        if (ip.IsIPv4MappedToIPv6)
+            ip = ip.MapToIPv4();
+        return ip.ToString();
     }
 
     /// <summary>인증서를 내려받아 LocalMachine\Root에 넣는 배치 파일. 관리자가 아니면 스스로 승격한다</summary>

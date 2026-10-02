@@ -52,6 +52,7 @@ export default function App() {
     pcStatuses,
     setPcStatus,
     serverHostName,
+    clientIp,
     remoteUsage,
     chat,
     sendChat,
@@ -176,6 +177,7 @@ export default function App() {
             thumbnails={thumbnails}
             watchThumbnails={watchThumbnails}
             serverHostName={serverHostName}
+            clientIp={clientIp}
             announcePresence={announcePresence}
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}

@@ -116,6 +116,7 @@ export function useDashboard() {
   const [presence, setPresence] = useState<Record<string, string[]>>({})
   const [pcStatuses, setPcStatuses] = useState<Record<string, PcStatus>>({})
   const [serverHostName, setServerHostName] = useState<string | null>(null)
+  const [clientIp, setClientIp] = useState<string | null>(null)
   const [remoteUsage, setRemoteUsage] = useState<RemoteUsage['inUseBy']>({})
   const [chat, setChat] = useState<ChatMessage[]>([])
   const [thumbnails, setThumbnails] = useState<Record<string, Thumbnail>>({})
@@ -200,7 +201,10 @@ export function useDashboard() {
       const chatList = await api.chat().catch(() => null)
       const install = await api.installInfo().catch(() => null)
       if (disposed) return
-      if (install) setServerHostName(install.serverMachineName)
+      if (install) {
+        setServerHostName(install.serverMachineName)
+        setClientIp(install.clientIp)
+      }
       if (statuses) setPcStatuses(statuses.statuses)
       if (usage) setRemoteUsage(usage.inUseBy)
       if (chatList) setChat(chatList)
@@ -390,6 +394,7 @@ export function useDashboard() {
     pcStatuses,
     setPcStatus,
     serverHostName,
+    clientIp,
     remoteUsage,
     chat,
     sendChat,

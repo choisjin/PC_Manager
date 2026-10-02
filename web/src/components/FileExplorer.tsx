@@ -30,6 +30,8 @@ interface Props {
   watchThumbnails: (agentIds: string[]) => void
   /** 서버(=대시보드)가 도는 PC의 머신 이름. Remote 모드에서 이 PC는 숨긴다 */
   serverHostName: string | null
+  /** 대시보드를 연 이 PC의 IP. 이 IP의 에이전트도 Remote 모드에서 숨긴다 */
+  clientIp: string | null
   filterProjectId: string | null
   selfUserId: string | null
   announcePresence: (userId: string, agentIds: string[]) => void
@@ -58,7 +60,7 @@ const MODE_KEY = 'explorer.mode'
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, clientIp, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   // 선택한 프로젝트의 에이전트 + 아직 미배정 에이전트를 노출 (다른 프로젝트 전용은 숨김). 전체 보기면 모두.
   const visibleAgents = useMemo(
@@ -71,10 +73,16 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         : agents,
     [agents, org.agentProjects, filterProjectId],
   )
-  // Remote 모드에서는 서버가 도는 이 PC(자기 화면)를 숨긴다 (Browser·파일 작업에는 그대로 둔다)
+  // Remote 모드에서는 서버 PC와, 지금 대시보드를 보고 있는 이 PC를 숨긴다 (자기 화면을 원격하면 화면이 무한히 겹친다).
+  // Browser·파일 작업에는 그대로 둔다
   const remoteAgents = useMemo(
-    () => (serverHostName ? visibleAgents.filter((a) => a.machineName.toLowerCase() !== serverHostName.toLowerCase()) : visibleAgents),
-    [visibleAgents, serverHostName],
+    () =>
+      visibleAgents.filter((a) => {
+        if (serverHostName && a.machineName.toLowerCase() === serverHostName.toLowerCase()) return false
+        if (clientIp && a.ipAddresses.includes(clientIp)) return false
+        return true
+      }),
+    [visibleAgents, serverHostName, clientIp],
   )
   const shareById = useMemo(() => new Map(shares.map((s) => [s.id, s])), [shares])
   // 창 제목·온라인 상태: 에이전트면 별칭, 공유 폴더면 공유 이름

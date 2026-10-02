@@ -300,6 +300,8 @@ export interface InstallInfo {
   certificateInstallerUrl: string | null
   /** 서버가 도는 PC의 머신 이름 (Remote 모드에서 '내 PC'를 숨기는 데 쓴다) */
   serverMachineName: string | null
+  /** 대시보드를 연 이 PC의 IP. 이 IP를 가진 에이전트도 Remote 모드에서 숨긴다. 서버 PC에서 열면 null */
+  clientIp: string | null
 }
 
 export const isActiveRun = (state: RunState) => state === 'Pending' || state === 'Running'
