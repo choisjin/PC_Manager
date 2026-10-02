@@ -31,6 +31,7 @@ public static class AgentHost
         builder.Services.AddSingleton<CommandRunner>();
         builder.Services.AddSingleton<FileTransferService>();
         builder.Services.AddSingleton<LocalEditService>();
+        builder.Services.AddSingleton<UserShellIcons>();
         builder.Services.AddSingleton<Remote.RemoteControlService>();
         builder.Services.AddSingleton<ServerCertificateTrust>();
         builder.Services.AddHostedService<AgentWorker>();

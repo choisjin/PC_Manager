@@ -27,18 +27,16 @@ public static class FileIconEndpoints
             byte[]? png = null;
             if (!string.IsNullOrEmpty(agent) && registry.TryGetConnection(agent, out var conn))
             {
-                png = await Cache.GetOrAdd($"{agent}|{extension}|{px}", _ => new Lazy<Task<byte[]?>>(async () =>
+                // 에이전트가 사용자 기준으로 꺼내고 기억한다 (서버는 따로 기억하지 않음: 로그인 전 임시 결과가 굳지 않게)
+                try
                 {
-                    try
-                    {
-                        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                        return await agentHub.Clients.Client(conn).InvokeAsync<byte[]?>(AgentClientMethods.GetFileIcon, extension, px, timeout.Token);
-                    }
-                    catch (Exception ex) when (ex is not OutOfMemoryException)
-                    {
-                        return null; // 옛 에이전트 등 → 서버 아이콘
-                    }
-                })).Value;
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+                    png = await agentHub.Clients.Client(conn).InvokeAsync<byte[]?>(AgentClientMethods.GetFileIcon, extension, px, timeout.Token);
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    png = null; // 옛 에이전트 등 → 서버 아이콘
+                }
             }
             if (png is null && OperatingSystem.IsWindows())
                 png = await Cache.GetOrAdd($"server|{extension}|{px}", _ => new Lazy<Task<byte[]?>>(() => Task.Run(() => OperatingSystem.IsWindows() ? ShellIcons.GetPng(extension, px) : null))).Value;

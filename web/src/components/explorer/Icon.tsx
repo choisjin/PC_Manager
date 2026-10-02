@@ -213,7 +213,8 @@ export function ShellIcon({ name, folder, size = 16, agentId, className }: { nam
   const ext = folder ? '<folder>' : fileKind(name) === 'archive' && /\.\d{3}$/.test(name) ? 'zip' : extensionOf(name) || 'file'
   // 고해상도 화면에서도 선명하게 한 단계 큰 아이콘을 받아 줄여 그린다
   const want = size <= 16 ? (window.devicePixelRatio > 1 ? 32 : 16) : size <= 32 ? 48 : 256
-  const query = new URLSearchParams({ ext, size: String(want), ...(agentId ? { agent: agentId } : {}) })
+  // v: 아이콘 받는 방식이 바뀌면 올려서 브라우저에 저장된 이전 아이콘을 새로 받게 한다
+  const query = new URLSearchParams({ ext, size: String(want), v: '2', ...(agentId ? { agent: agentId } : {}) })
   return (
     <img
       src={`/api/file-icon?${query}`}

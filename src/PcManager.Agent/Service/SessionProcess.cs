@@ -79,7 +79,8 @@ internal static class SessionProcess
     }
 
     /// <summary>세션의 로그인 사용자 권한으로 프로세스를 시작한다. SYSTEM 계정에서만 동작한다.</summary>
-    public static void StartAsSessionUser(int sessionId, string exePath, string arguments)
+    /// <param name="waitMilliseconds">0보다 크면 끝날 때까지 기다려 종료 코드를 돌려준다 (시간 초과면 null)</param>
+    public static int? StartAsSessionUser(int sessionId, string exePath, string arguments, int waitMilliseconds = 0)
     {
         if (!WTSQueryUserToken(sessionId, out var userToken))
             throw new Win32Exception();
@@ -105,7 +106,18 @@ internal static class SessionProcess
                 throw new Win32Exception();
             }
             CloseHandle(process.hThread);
-            CloseHandle(process.hProcess);
+            try
+            {
+                if (waitMilliseconds <= 0)
+                    return null;
+                if (WaitForSingleObject(process.hProcess, (uint)waitMilliseconds) != 0)
+                    return null;
+                return GetExitCodeProcess(process.hProcess, out var exitCode) ? (int)exitCode : null;
+            }
+            finally
+            {
+                CloseHandle(process.hProcess);
+            }
         }
         finally
         {
@@ -116,6 +128,12 @@ internal static class SessionProcess
             CloseHandle(userToken);
         }
     }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
 
     /// <summary>물리 콘솔(모니터가 연결된) 세션 ID. 로그인 전이라도 로그인 화면 세션이 있다. 없으면 null</summary>
     public static int? GetConsoleSessionId()
@@ -287,14 +305,20 @@ internal static class SessionProcess
     }
 
     /// <summary>세션 사용자의 '문서' 폴더 (OneDrive로 옮겨 둔 경우도 그 위치). SYSTEM 계정에서만 동작한다.</summary>
-    public static string GetUserDocumentsFolder(int sessionId)
+    public static string GetUserDocumentsFolder(int sessionId) =>
+        GetUserKnownFolder(sessionId, new Guid("FDD39AD0-238F-46AF-ADB4-6C85480369C7"));
+
+    /// <summary>세션 사용자의 AppData\Local. SYSTEM 계정에서만 동작한다.</summary>
+    public static string GetUserLocalAppDataFolder(int sessionId) =>
+        GetUserKnownFolder(sessionId, new Guid("F1B32785-6FBA-4FCF-9D55-7B8E7F157091"));
+
+    private static string GetUserKnownFolder(int sessionId, Guid folderId)
     {
         if (!WTSQueryUserToken(sessionId, out var userToken))
             throw new Win32Exception();
         try
         {
-            var documents = new Guid("FDD39AD0-238F-46AF-ADB4-6C85480369C7");
-            var hr = SHGetKnownFolderPath(documents, 0, userToken, out var pathPtr);
+            var hr = SHGetKnownFolderPath(folderId, 0, userToken, out var pathPtr);
             if (hr != 0)
                 throw new Win32Exception(hr);
             try
