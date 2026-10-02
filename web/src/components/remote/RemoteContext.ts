@@ -5,6 +5,8 @@ import type { PcStatus } from '../../api'
 export interface RemotePc {
   id: string
   name: string
+  /** 그룹(폴더) 이름. 하위 폴더는 "상위 / 하위", 그룹 없는 PC는 "미분류" */
+  group: string
   online: boolean
   status: PcStatus | null
   /** 지금 원격조작 중인 userId */

@@ -116,23 +116,9 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       // 무시
     }
   }
-  // 원격조작 모달의 PC 목록(빠른 전환)
-  const remoteContext = useMemo<RemoteContextValue>(
-    () => ({
-      pcs: remoteAgents.map((a) => ({
-        id: a.id,
-        name: displayName(a, pcGroups),
-        online: a.online,
-        status: pcStatuses[a.id] ?? null,
-        inUseBy: remoteUsage[a.id]?.userId ?? null,
-      })).sort((x, y) => x.name.localeCompare(y.name, 'ko', { numeric: true, sensitivity: 'base' })),
-      userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
-    }),
-    [remoteAgents, pcGroups, pcStatuses, remoteUsage, org.users],
-  )
-
   // Remote 모드 대상: 선택한 폴더(하위 포함), 없으면 전체. 폴더(그룹)별 구역으로 나눠 보여 준다
-  const remoteTargets = useMemo(() => {
+  // allSections는 선택과 무관한 전체 구역 (원격 창 빠른 전환 목록의 그룹 표시에 쓴다)
+  const { remoteTargets, allSections } = useMemo(() => {
     // 트리와 같은 규칙: 다른 프로젝트에 배정된 폴더는 숨긴다
     const folderVisible = (folderId: string) => {
       const pid = org.folderProjects?.[folderId]
@@ -147,11 +133,11 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       if (n.agents.length > 0) sections.push({ key: n.folder.id, name: path, agents: n.agents })
       for (const c of n.children) walk(c, `${path} / ${c.folder.name}`)
     }
-    if (!selectedFolderId) {
-      for (const r of roots) walk(r, r.folder.name)
-      if (ungrouped.length > 0) sections.push({ key: 'ungrouped', name: '미분류', agents: ungrouped })
-      return { name: null as string | null, sections }
-    }
+    for (const r of roots) walk(r, r.folder.name)
+    if (ungrouped.length > 0) sections.push({ key: 'ungrouped', name: '미분류', agents: ungrouped })
+    const all = [...sections]
+    const whole = { remoteTargets: { name: null as string | null, sections: all }, allSections: all }
+    if (!selectedFolderId) return whole
     const find = (nodes: FolderNode[]): FolderNode | null => {
       for (const n of nodes) {
         if (n.folder.id === selectedFolderId) return n
@@ -161,14 +147,31 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       return null
     }
     const node = find(roots)
-    if (!node) {
-      for (const r of roots) walk(r, r.folder.name)
-      if (ungrouped.length > 0) sections.push({ key: 'ungrouped', name: '미분류', agents: ungrouped })
-      return { name: null as string | null, sections }
-    }
+    if (!node) return whole
+    sections.length = 0
     walk(node, node.folder.name)
-    return { name: node.folder.name, sections }
+    return { remoteTargets: { name: node.folder.name, sections: [...sections] }, allSections: all }
   }, [selectedFolderId, pcGroups, remoteAgents, org.folderProjects, org.projectUsers, filterProjectId, selfUserId])
+
+  // 원격조작 모달의 PC 목록(빠른 전환): 그룹(폴더) 순서, 그룹 안은 별칭 순
+  const remoteContext = useMemo<RemoteContextValue>(
+    () => ({
+      pcs: allSections.flatMap((section) =>
+        section.agents
+          .map((a) => ({
+            id: a.id,
+            name: displayName(a, pcGroups),
+            group: section.name,
+            online: a.online,
+            status: pcStatuses[a.id] ?? null,
+            inUseBy: remoteUsage[a.id]?.userId ?? null,
+          }))
+          .sort((x, y) => x.name.localeCompare(y.name, 'ko', { numeric: true, sensitivity: 'base' })),
+      ),
+      userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
+    }),
+    [allSections, pcGroups, pcStatuses, remoteUsage, org.users],
+  )
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
 

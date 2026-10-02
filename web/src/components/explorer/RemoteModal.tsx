@@ -512,11 +512,13 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
 
   const pcList = (
     <ul className="remote-pclist-items">
-      {pcs.map((pc) => {
+      {pcs.map((pc, i) => {
+        const showGroup = i === 0 || pcs[i - 1].group !== pc.group
         const busy = !!pc.inUseBy && pc.inUseBy !== (userId ?? 'anonymous')
         const cls = ['remote-pc', pc.id === agentId ? 'current' : '', pc.online ? '' : 'offline', busy || pc.status?.status === 'forbidden' ? 'blocked' : ''].filter(Boolean).join(' ')
         return (
           <li key={pc.id}>
+            {showGroup && <div className="remote-pc-group">📂 {pc.group}</div>}
             <button type="button" className={cls} disabled={!pc.online} title={pc.name} onClick={() => switchTo(pc.id)}>
               <span className={`dot ${pc.online ? 'on' : 'off'}`} />
               <span className="ellipsis">{pc.name}</span>
