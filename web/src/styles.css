@@ -3049,6 +3049,14 @@ tr.drop-into > td,
   white-space: nowrap;
 }
 
+/* 자세히 보기: 칸이 좁으면 겹치지 않고 … 로 줄인다 */
+.details-table td,
+.details-table th {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* 정렬 가능한 열 머리글 */
 th.sortable {
   cursor: pointer;

@@ -10,7 +10,19 @@ import { Icon } from './Icon'
 import { copyText, type FileClipboard, FILES_MIME, type FilesDragPayload, newId, PANE_MIME } from './pcGroups'
 
 const COL_WIDTH_KEY = 'explorer.colWidths'
-import { fileTypeLabel, type PaneController, sortEntries, type SortKey, type ViewMode } from './paneController'
+const COLUMNS_KEY = 'explorer.columns'
+const COLUMNS_EVENT = 'explorer-columns'
+const DEFAULT_COLUMNS: ColumnVisibility = { modified: true, type: true, size: true }
+
+function loadColumns(): ColumnVisibility {
+  try {
+    const saved = localStorage.getItem(COLUMNS_KEY)
+    return saved ? { ...DEFAULT_COLUMNS, ...JSON.parse(saved) } : DEFAULT_COLUMNS
+  } catch {
+    return DEFAULT_COLUMNS
+  }
+}
+import { fileTypeLabel, type PaneController, sortEntries, type SortKey, type ViewMode, type ColumnVisibility, type OptionalColumn } from './paneController'
 import { SplitCompressModal } from './SplitCompressModal'
 import { RemoteModal } from './RemoteModal'
 import { TerminalModal } from './TerminalModal'
@@ -131,6 +143,23 @@ export function ExplorerPane({
   accessRef.current = { pcStatus, remoteUser }
   const [splitTargets, setSplitTargets] = useState<FileEntry[] | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; targets: FileEntry[]; folder: string | null; items?: MenuItem[] } | null>(null)
+  // 자세히 보기에 표시할 열 (모든 창 공통, 상단 '보기' 메뉴에서 변경)
+  const [columns, setColumns] = useState<ColumnVisibility>(loadColumns)
+  useEffect(() => {
+    const sync = () => setColumns(loadColumns())
+    window.addEventListener(COLUMNS_EVENT, sync)
+    return () => window.removeEventListener(COLUMNS_EVENT, sync)
+  }, [])
+  const toggleColumn = (column: OptionalColumn) => {
+    const next = { ...loadColumns(), [column]: !columns[column] }
+    try {
+      localStorage.setItem(COLUMNS_KEY, JSON.stringify(next))
+    } catch {
+      // 무시
+    }
+    setColumns(next)
+    window.dispatchEvent(new Event(COLUMNS_EVENT))
+  }
   // 자세히 보기 열 너비 (px). 이름은 지정 전까지 남는 폭을 차지한다
   const [colWidths, setColWidths] = useState<{ name?: number; modified: number; type: number; size: number }>(() => {
     try {
@@ -587,6 +616,8 @@ export function ExplorerPane({
     fetchSelected: () => fetchFiles(selectedEntries()),
     setSort: applySort,
     setView,
+    columns,
+    toggleColumn,
     setSearch,
     openTerminal: () => setTerminal(true),
     openRemote: () => {
@@ -945,13 +976,31 @@ export function ExplorerPane({
           ) : view === 'details' ? (
             <table
               className="noselect details-table"
-              style={colWidths.name ? { width: colWidths.name + colWidths.modified + colWidths.type + colWidths.size, minWidth: '100%' } : undefined}
+              style={
+                colWidths.name
+                  ? {
+                      width:
+                        colWidths.name +
+                        (columns.modified ? colWidths.modified : 0) +
+                        (columns.type ? colWidths.type : 0) +
+                        (columns.size ? colWidths.size : 0),
+                      minWidth: '100%',
+                    }
+                  : {
+                      // 이름 열이 아주 좁아지지 않게 최소 폭 보장 (그보다 좁으면 가로 스크롤)
+                      minWidth:
+                        140 +
+                        (columns.modified ? colWidths.modified : 0) +
+                        (columns.type ? colWidths.type : 0) +
+                        (columns.size ? colWidths.size : 0),
+                    }
+              }
             >
               <colgroup>
                 <col style={colWidths.name ? { width: colWidths.name } : undefined} />
-                <col style={{ width: colWidths.modified }} />
-                <col style={{ width: colWidths.type }} />
-                <col style={{ width: colWidths.size }} />
+                {columns.modified && <col style={{ width: colWidths.modified }} />}
+                {columns.type && <col style={{ width: colWidths.type }} />}
+                {columns.size && <col style={{ width: colWidths.size }} />}
               </colgroup>
               <thead>
                 <tr>
@@ -962,7 +1011,7 @@ export function ExplorerPane({
                       ['type', '유형'],
                       ['size', '크기'],
                     ] as const
-                  ).map(([key, label]) => (
+                  ).filter(([key]) => key === 'name' || columns[key]).map(([key, label]) => (
                     <th key={key} className="sortable" onClick={() => applySort(key)}>
                       {label}
                       {sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''}
@@ -1006,9 +1055,9 @@ export function ExplorerPane({
                         <Icon name={iconFor(entry)} className="file-icon" />
                         {entry.name}
                       </td>
-                      <td className="col-date">{entry.modifiedAt ? formatFileDate(entry.modifiedAt) : ''}</td>
-                      <td className="ellipsis">{fileTypeLabel(entry)}</td>
-                      <td className="col-size">{entry.isDirectory ? '' : formatBytes(entry.size)}</td>
+                      {columns.modified && <td className="col-date">{entry.modifiedAt ? formatFileDate(entry.modifiedAt) : ''}</td>}
+                      {columns.type && <td className="ellipsis">{fileTypeLabel(entry)}</td>}
+                      {columns.size && <td className="col-size">{entry.isDirectory ? '' : formatBytes(entry.size)}</td>}
                     </tr>
                   )
                 })}

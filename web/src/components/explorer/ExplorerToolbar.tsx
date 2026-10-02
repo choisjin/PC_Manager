@@ -54,6 +54,11 @@ export function ExplorerToolbar({ controller }: Props) {
     openMenuAt(e, [
       { label: `${c.view === 'icons' ? '● ' : ''}큰 아이콘`, onClick: () => c.setView('icons') },
       { label: `${c.view === 'details' ? '● ' : ''}자세히`, onClick: () => c.setView('details') },
+      { separator: true },
+      { label: '표시할 열 (자세히 보기)', disabled: true, onClick: () => {} },
+      { label: `${c.columns.modified ? '☑' : '☐'} 수정한 날짜`, onClick: () => c.toggleColumn('modified') },
+      { label: `${c.columns.type ? '☑' : '☐'} 유형`, onClick: () => c.toggleColumn('type') },
+      { label: `${c.columns.size ? '☑' : '☐'} 크기`, onClick: () => c.toggleColumn('size') },
     ])
   }
 

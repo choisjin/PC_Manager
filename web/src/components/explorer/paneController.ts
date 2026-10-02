@@ -2,6 +2,9 @@ import type { FileEntry } from '../../api'
 
 export type SortKey = 'name' | 'size' | 'modified' | 'type'
 export type ViewMode = 'details' | 'icons'
+/** 자세히 보기에서 켜고 끌 수 있는 열 (이름은 항상 표시) */
+export type OptionalColumn = 'modified' | 'type' | 'size'
+export type ColumnVisibility = Record<OptionalColumn, boolean>
 
 /** 상단 통합 툴바가 현재 활성 창을 조작하기 위한 핸들 */
 export interface PaneController {
@@ -19,6 +22,7 @@ export interface PaneController {
   view: ViewMode
   sortKey: SortKey
   sortAsc: boolean
+  columns: ColumnVisibility
   search: string
   // 동작 (항상 최신 상태에 적용)
   navigate: (path: string) => void
@@ -35,6 +39,7 @@ export interface PaneController {
   fetchSelected: () => void
   setSort: (key: SortKey) => void
   setView: (view: ViewMode) => void
+  toggleColumn: (column: OptionalColumn) => void
   setSearch: (q: string) => void
   openTerminal: () => void
   openRemote: () => void
