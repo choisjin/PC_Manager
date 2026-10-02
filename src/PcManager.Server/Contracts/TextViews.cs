@@ -21,3 +21,8 @@ public record EncodeTextRequest(string Content, string? Encoding, string? Newlin
 public record ExtractFilesRequest(string? ArchivePath, IReadOnlyList<string>? EntryPaths, string? DestinationFolder);
 
 public record ArchivePasswordRequest(string? ArchivePath, string? Password);
+
+/// <param name="EditorAgentId">대시보드를 연 PC의 에이전트 (그 PC 프로그램으로 연다)</param>
+/// <param name="Label">편집 폴더 이름에 쓸 원래 PC 표시 이름</param>
+/// <param name="ReadOnly">압축 안 파일 등: 열기만 하고 되돌려 저장하지 않음</param>
+public record OpenLocalRequest(string? Path, string? EditorAgentId, string? Label, bool ReadOnly);

@@ -13,6 +13,7 @@ public class AgentWorker(
     AgentIdentity identity,
     CommandRunner runner,
     FileTransferService files,
+    LocalEditService edits,
     AgentUpdater updater,
     Remote.RemoteControlService remote,
     ServerCertificateTrust certificateTrust,
@@ -127,6 +128,11 @@ public class AgentWorker(
         connection.On<DownloadFileRequest>(nameof(IAgentClient.DownloadFile), files.StartDownload);
         connection.On<CompressRequest>(nameof(IAgentClient.Compress), files.StartCompress);
         connection.On<ExtractRequest>(nameof(IAgentClient.Extract), files.StartExtract);
+        // 다른 PC 파일을 이 PC 프로그램으로 열기 (대시보드를 연 PC)
+        connection.On<string, string, string>(AgentClientMethods.PrepareEdit,
+            (label, name) => Task.Run(() => edits.Prepare(label, name)));
+        connection.On<OpenEditRequest, string?>(AgentClientMethods.OpenEdit, edits.OpenAsync);
+        connection.On<string, string?>(AgentClientMethods.LaunchFile, path => Task.Run(() => edits.LaunchInPlace(path)));
         connection.On<CommitReplaceRequest, string?>(AgentClientMethods.CommitReplace, files.CommitReplaceAsync);
         connection.On<string, string, bool>(AgentClientMethods.SetArchivePassword,
             (archivePath, password) => { ArchiveBrowser.SetPassword(archivePath, password); return true; });

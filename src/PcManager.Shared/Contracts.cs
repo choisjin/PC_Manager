@@ -104,7 +104,21 @@ public static class AgentTransferPaths
 
     /// <summary>GET: 서버 → 에이전트로 보낼 파일 내용</summary>
     public static string Content(string transferId) => $"/api/agent/transfers/{transferId}/content";
+
+    /// <summary>POST: 내 PC 프로그램으로 편집한 파일을 원래 PC로 저장. 쿼리 source, path, baseHash / 본문 = 파일 내용</summary>
+    public const string EditSave = "/api/agent/edit/save";
 }
+
+/// <summary>
+/// 원격 PC 파일을 대시보드를 연 PC(편집 PC)의 프로그램으로 열기: 서버가 파일을 편집 PC 에이전트로 보내고(PrepareEdit·WriteChunk),
+/// OpenEdit로 확정하면 에이전트가 사용자 권한으로 기본 프로그램을 실행하고 저장을 감시해 EditSave로 되돌려 보낸다.
+/// </summary>
+/// <param name="BaseHash">보낸 내용의 SHA-256. 저장할 때 원래 파일이 그 사이 바뀌었는지 비교한다</param>
+/// <param name="ReadOnly">압축 안 파일 등 되돌려 저장할 수 없는 파일 (열기만)</param>
+public record OpenEditRequest(string WriteId, string SourceAgentId, string SourcePath, string BaseHash, bool ReadOnly);
+
+/// <param name="Conflict">편집하는 동안 원래 파일이 바뀌어 옆에 새 이름으로 저장했다 (SavedPath)</param>
+public record EditSaveResult(bool Success, string? Error, string? Hash, string? SavedPath, bool Conflict);
 
 /// <summary>원격조작 WebSocket 경로</summary>
 public static class AgentRemotePaths
@@ -209,6 +223,15 @@ public static class AgentClientMethods
 
     /// <summary>(string archivePath, string password) → bool. 암호 걸린 압축 파일의 암호를 기억시킨다</summary>
     public const string SetArchivePassword = "SetArchivePassword";
+
+    /// <summary>(string folderLabel, string fileName) → string writeId. 편집 PC: 편집 폴더에 받을 준비 (이후 WriteChunk)</summary>
+    public const string PrepareEdit = "PrepareEdit";
+
+    /// <summary>OpenEditRequest → string? 오류. 편집 PC: 받은 파일을 확정하고 기본 프로그램으로 열어 저장을 감시</summary>
+    public const string OpenEdit = "OpenEdit";
+
+    /// <summary>string path → string? 오류. 이 PC의 파일을 그 자리에서 기본 프로그램으로 연다 (대시보드를 연 PC 자신의 파일)</summary>
+    public const string LaunchFile = "LaunchFile";
 
     /// <summary>string sessionId → string? 오류. 사용자 세션에 원격조작 프로세스를 띄워 AgentRemotePaths.Session으로 접속시킨다</summary>
     public const string StartRemote = "StartRemote";

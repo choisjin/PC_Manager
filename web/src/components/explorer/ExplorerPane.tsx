@@ -49,6 +49,8 @@ interface Props {
   agentId: string
   machineName: string
   online: boolean
+  /** 대시보드를 연 PC의 에이전트(온라인일 때만). 있으면 파일 더블클릭 = 그 PC 프로그램으로 열기 */
+  selfAgentId: string | null
   active: boolean
   onActivate: () => void
   onControllerChange: (controller: PaneController) => void
@@ -112,7 +114,7 @@ const isExecutable = (name: string) => {
 export function ExplorerPane({
   paneId,
   agentId,
-  machineName,
+  machineName, selfAgentId,
   online,
   active,
   onActivate,
@@ -509,11 +511,33 @@ export function ExplorerPane({
     if (dest?.trim()) extract(archive, entries, dest.trim())
   }
 
+  /** 내 PC 프로그램(엑셀 등)으로 열기. 저장하면 이 PC의 원래 경로로 되돌아간다 (압축 안 파일은 열기만) */
+  const openLocal = (entry: FileEntry) => {
+    if (!selfAgentId) return
+    if (entry.size > 500 * 1024 * 1024 && !window.confirm(`'${entry.name}'은(는) ${formatBytes(entry.size)}입니다. 내 PC로 받아서 열까요?`)) return
+    setError(null)
+    setNotice(selfAgentId === agentId ? `'${entry.name}'을(를) 여는 중…` : `'${entry.name}'을(를) 내 PC로 받아 여는 중…${inArchive ? ' (압축 안 파일: 저장해도 되돌아가지 않음)' : ' 저장하면 이 PC의 원래 위치에 저장됩니다.'}`)
+    api.openLocal(agentId, entry.fullPath, selfAgentId, machineName, inArchive).then(
+      () =>
+        setNotice(
+          selfAgentId === agentId || inArchive
+            ? `'${entry.name}'을(를) 열었습니다.`
+            : `'${entry.name}'을(를) 내 PC 프로그램으로 열었습니다. 저장하면 ${machineName}의 원래 위치에 저장됩니다 (원본은 .bak).`,
+        ),
+      (err) => {
+        setNotice(null)
+        setError(toMessage(err))
+      },
+    )
+  }
+
   const openEntry = (entry: FileEntry) => {
     const kind = entry.isDirectory ? null : viewerKind(entry.name)
     if (entry.isDirectory) navigate(entry.fullPath)
     // 압축 파일은 폴더처럼 들어간다 (압축 안의 압축은 풀어서 열어야 함)
     else if (!inArchive && isArchiveFile(entry.name)) navigate(entry.fullPath)
+    // 기본: 내 PC 프로그램으로 열기 (내 PC에 에이전트가 있을 때)
+    else if (selfAgentId) openLocal(entry)
     else if (isVideoFile(entry.name)) setPlaying({ path: entry.fullPath, name: entry.name })
     else if (kind) openViewer(entry, kind)
     else {
@@ -809,6 +833,7 @@ export function ExplorerPane({
     const items: MenuItem[] = []
     if (targets.length === 1 && !targets[0].isDirectory) {
       const kind = viewerKind(targets[0].name)
+      if (selfAgentId) items.push({ label: '내 PC 프로그램으로 열기 (읽기 전용 복사본)', onClick: () => openLocal(targets[0]) })
       if (kind) items.push({ label: kind === 'text' ? '보기 (읽기 전용)' : '보기', onClick: () => openViewer(targets[0], kind) })
       if (isVideoFile(targets[0].name)) items.push({ label: '재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
     }
@@ -836,7 +861,9 @@ export function ExplorerPane({
     if (targets.length === 1 && !targets[0].isDirectory) {
       const t = targets[0]
       const kind = viewerKind(t.name)
-      if (kind) items.push({ label: kind === 'text' ? '열기 (보기·편집)' : '보기', onClick: () => openViewer(t, kind) })
+      if (selfAgentId && !isArchiveFile(t.name))
+        items.push({ label: '내 PC 프로그램으로 열기 (저장하면 이 PC에 저장)', onClick: () => openLocal(t) })
+      if (kind) items.push({ label: kind === 'text' ? '브라우저에서 보기·편집' : '브라우저에서 보기', onClick: () => openViewer(t, kind) })
       else if (t.size <= 5 * 1024 * 1024 && !isArchiveFile(t.name) && !isVideoFile(t.name))
         items.push({ label: '텍스트로 열기', onClick: () => openViewer(t, 'text') })
       if (isArchiveFile(t.name)) {

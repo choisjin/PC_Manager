@@ -505,6 +505,12 @@ export const api = {
     if (!res.ok) throw new Error(errorMessage(res.status, await res.text()))
     return res.blob()
   },
+  /** 내 PC 프로그램으로 열기: editorAgentId(대시보드를 연 PC의 에이전트)로 보내 열고, 저장하면 원래 경로로 되돌린다 */
+  openLocal: (agentId: string, path: string, editorAgentId: string, label: string, readOnly: boolean) =>
+    request<void>(`/api/agents/${agentId}/open-local`, {
+      method: 'POST',
+      body: JSON.stringify({ path, editorAgentId, label, readOnly }),
+    }),
   /** 압축 풀기 (같은 PC). entryPaths가 비면 전부 */
   extractFiles: (agentId: string, archivePath: string, entryPaths: string[], destinationFolder: string) =>
     request<Transfer>(`/api/agents/${agentId}/files/extract`, {

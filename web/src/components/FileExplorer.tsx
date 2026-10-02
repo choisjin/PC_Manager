@@ -78,6 +78,15 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   )
   // Remote 모드에서는 서버 PC와, 지금 대시보드를 보고 있는 이 PC를 숨긴다 (자기 화면을 원격하면 화면이 무한히 겹친다).
   // Browser·파일 작업에는 그대로 둔다
+  // 대시보드를 연 PC의 에이전트 ('내 PC 프로그램으로 열기'에 쓴다):
+  // 런처가 알려 준 PC 이름 → 접속 IP → 서버 PC에서 localhost로 연 경우 서버 PC
+  const selfAgentId = useMemo(() => {
+    const byName = (name: string | null) => (name ? agents.find((a) => a.machineName.toLowerCase() === name.toLowerCase()) : undefined)
+    const found = byName(selfPc) ?? (clientIp ? agents.find((a) => a.ipAddresses.includes(clientIp)) : byName(serverHostName))
+    return found?.id ?? null
+  }, [agents, selfPc, clientIp, serverHostName])
+  const selfOnline = !!selfAgentId && agents.some((a) => a.id === selfAgentId && a.online)
+
   const remoteAgents = useMemo(
     () =>
       visibleAgents.filter((a) => {
@@ -325,6 +334,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
                 agentId={pane.agentId}
                 machineName={sourceName(pane.agentId)}
                 online={sourceOnline(pane.agentId)}
+                selfAgentId={selfOnline ? selfAgentId : null}
                 active={pane.paneId === activePaneId}
                 onActivate={() => setActivePaneId(pane.paneId)}
                 onControllerChange={handleController}

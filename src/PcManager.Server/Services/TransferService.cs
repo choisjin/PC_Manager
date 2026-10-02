@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using PcManager.Server.Contracts;
@@ -122,6 +123,173 @@ public class TransferService(
         }
 
         return new FileOpResult(true, null, finalPath);
+    }
+
+    // ── 내 PC 프로그램으로 열기 (편집 PC로 보내고, 저장되면 원래 PC로 되돌림) ──
+
+    /// <summary>
+    /// 원래 PC(또는 공유 폴더)의 파일을 편집 PC(대시보드를 연 PC)의 에이전트로 보내 기본 프로그램으로 연다.
+    /// 편집 PC 자신의 파일이면 그 자리에서 연다.
+    /// </summary>
+    /// <returns>오류 문구. 성공하면 null</returns>
+    public async Task<string?> OpenLocalAsync(string sourceId, string sourcePath, string editorId, string label, bool readOnly, CancellationToken ct)
+    {
+        if (!registry.TryGetConnection(editorId, out var editorConn))
+            return "내 PC의 에이전트가 오프라인입니다.";
+        var editor = agentHubRaw.Clients.Client(editorConn);
+        var fileName = Path.GetFileName(sourcePath.TrimEnd('\\', '/'));
+        if (string.IsNullOrEmpty(fileName))
+            return "잘못된 파일 경로입니다.";
+
+        try
+        {
+            // 내 PC의 파일: 복사하지 않고 그대로 연다 (압축 안 파일은 아래처럼 꺼내서 연다)
+            if (sourceId == editorId && !readOnly)
+                return await editor.InvokeAsync<string?>(AgentClientMethods.LaunchFile, sourcePath, ct);
+
+            CopySource source;
+            try
+            {
+                source = await OpenSourceAsync(sourceId, sourcePath, ct);
+            }
+            catch (CopyException ex)
+            {
+                return ex.Message;
+            }
+            using (source)
+            {
+                if (source.Size < 0)
+                    return "파일을 찾을 수 없습니다.";
+
+                var transfer = NewTransfer(editorId, TransferKind.Push, $"{label}\\{fileName}");
+                transfer.TotalBytes = source.Size;
+                await using (var db = await dbFactory.CreateDbContextAsync(ct))
+                {
+                    db.Transfers.Add(transfer);
+                    await db.SaveChangesAsync(ct);
+                }
+                await dashboard.Clients.All.TransferUpdated(transfer.ToView() with { Percent = 0 });
+
+                string? failure = null;
+                var writeId = await editor.InvokeAsync<string>(AgentClientMethods.PrepareEdit, label, fileName, ct);
+                try
+                {
+                    using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                    long offset = 0;
+                    var lastPercent = -1;
+                    while (offset < source.Size)
+                    {
+                        var data = await source.ReadAsync(offset, (int)Math.Min(CrossCopyChunkSize, source.Size - offset), ct);
+                        if (data.Length == 0)
+                            break;
+                        sha.AppendData(data);
+                        await editor.InvokeAsync<int>(AgentClientMethods.WriteChunk, writeId, data, ct);
+                        offset += data.Length;
+                        var percent = source.Size > 0 ? (int)(offset * 100 / source.Size) : 100;
+                        if (percent != lastPercent)
+                        {
+                            lastPercent = percent;
+                            await dashboard.Clients.All.TransferUpdated(transfer.ToView() with { Percent = percent });
+                        }
+                    }
+                    var hash = Convert.ToHexString(sha.GetHashAndReset());
+                    failure = await editor.InvokeAsync<string?>(
+                        AgentClientMethods.OpenEdit, new OpenEditRequest(writeId, sourceId, sourcePath, hash, readOnly), ct);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    try { await editor.InvokeAsync<bool>(AgentClientMethods.AbortWrite, writeId, CancellationToken.None); }
+                    catch { /* 정리 실패는 무시 */ }
+                    failure = ex.Message;
+                }
+                await MarkCrossCopyResultAsync(transfer.Id, failure is null, source.Size, failure);
+                return failure;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return Api.TextEndpoints.OldAgentMessage(ex);
+        }
+    }
+
+    /// <summary>
+    /// 편집 PC에서 저장한 내용을 원래 PC의 원래 경로에 쓴다 (원본은 .bak).
+    /// 편집하는 동안 원래 파일이 바뀌었으면 덮어쓰지 않고 옆에 "이름 (충돌 날짜).확장자"로 저장한다.
+    /// </summary>
+    public async Task<EditSaveResult> SaveEditAsync(string sourceId, string sourcePath, string? baseHash, byte[] content, CancellationToken ct)
+    {
+        var newHash = Convert.ToHexString(SHA256.HashData(content));
+        var current = await HashSourceAsync(sourceId, sourcePath, ct);
+        if (current == newHash)
+            return new EditSaveResult(true, null, newHash, sourcePath, false);
+
+        string? error;
+        var savedPath = sourcePath;
+        var conflict = baseHash is not null && current is not null && current != baseHash;
+        if (conflict)
+        {
+            var folder = Path.GetDirectoryName(sourcePath) ?? "";
+            var name = $"{Path.GetFileNameWithoutExtension(sourcePath)} (충돌 {DateTime.Now:yyyyMMdd-HHmmss}){Path.GetExtension(sourcePath)}";
+            try
+            {
+                var target = OpenTarget(sourceId);
+                await target.BeginAsync(folder, name, ct);
+                for (var offset = 0; offset < content.Length; offset += CrossCopyChunkSize)
+                    await target.WriteAsync(content[offset..Math.Min(content.Length, offset + CrossCopyChunkSize)], ct);
+                savedPath = await target.CommitAsync(ct);
+                error = null;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                error = ex.Message;
+            }
+        }
+        else if (shares.TryGet(sourceId, out var share))
+        {
+            error = localShare.ReplaceFile(share, sourcePath, content, backup: true);
+        }
+        else
+        {
+            error = await Api.TextEndpoints.WriteToAgentAsync(sourceId, sourcePath, content, backup: true, registry, agentHubRaw, ct);
+        }
+
+        // 저장 기록 (전송 기록·PiP에 보이게)
+        var transfer = NewTransfer(sourceId, TransferKind.Push, savedPath);
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
+        {
+            db.Transfers.Add(transfer);
+            await db.SaveChangesAsync(ct);
+        }
+        await MarkCrossCopyResultAsync(transfer.Id, error is null, content.Length, error);
+        if (error is not null)
+            logger.LogWarning("편집 저장 실패 {Path}: {Error}", sourcePath, error);
+        return new EditSaveResult(error is null, error, error is null ? newHash : null, savedPath, conflict && error is null);
+    }
+
+    /// <summary>원래 파일의 SHA-256. 없거나 못 읽으면 null</summary>
+    private async Task<string?> HashSourceAsync(string id, string path, CancellationToken ct)
+    {
+        try
+        {
+            using var source = await OpenSourceAsync(id, path, ct);
+            if (source.Size < 0)
+                return null;
+            using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            long offset = 0;
+            while (offset < source.Size)
+            {
+                var data = await source.ReadAsync(offset, (int)Math.Min(CrossCopyChunkSize * 4, source.Size - offset), ct);
+                if (data.Length == 0)
+                    break;
+                sha.AppendData(data);
+                offset += data.Length;
+            }
+            return Convert.ToHexString(sha.GetHashAndReset());
+        }
+        catch (Exception ex) when (ex is CopyException or IOException or HubException)
+        {
+            return null;
+        }
     }
 
     private sealed class CopyException(string message) : Exception(message);

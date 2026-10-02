@@ -241,6 +241,16 @@ public class FileTransferService(
         return session.FinalPath;
     }
 
+    /// <summary>쓰기 세션을 닫고 임시 파일 경로를 돌려준다 (호출한 쪽이 옮긴다).</summary>
+    public async Task<string> FinishWriteToTempAsync(string writeId)
+    {
+        if (!_writes.TryRemove(writeId, out var session))
+            throw new InvalidOperationException("쓰기 세션이 없습니다.");
+        await session.Stream.FlushAsync();
+        await session.Stream.DisposeAsync();
+        return session.TempPath;
+    }
+
     /// <summary>실패·취소 시 임시 파일을 정리한다.</summary>
     public async Task<bool> AbortWriteAsync(string writeId)
     {

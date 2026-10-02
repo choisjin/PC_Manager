@@ -276,4 +276,42 @@ internal static class SessionProcess
 
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool SetTokenInformation(IntPtr token, int infoClass, ref int info, int length);
+
+    /// <summary>사용자가 지금 쓰는 세션 (콘솔 우선, 없으면 첫 활성 세션). 로그인 전이면 null</summary>
+    public static int? GetInteractiveUserSessionId()
+    {
+        var active = GetActiveSessionIds();
+        if (active.Count == 0)
+            return null;
+        return GetConsoleSessionId() is { } c && active.Contains(c) ? c : active[0];
+    }
+
+    /// <summary>세션 사용자의 '문서' 폴더 (OneDrive로 옮겨 둔 경우도 그 위치). SYSTEM 계정에서만 동작한다.</summary>
+    public static string GetUserDocumentsFolder(int sessionId)
+    {
+        if (!WTSQueryUserToken(sessionId, out var userToken))
+            throw new Win32Exception();
+        try
+        {
+            var documents = new Guid("FDD39AD0-238F-46AF-ADB4-6C85480369C7");
+            var hr = SHGetKnownFolderPath(documents, 0, userToken, out var pathPtr);
+            if (hr != 0)
+                throw new Win32Exception(hr);
+            try
+            {
+                return Marshal.PtrToStringUni(pathPtr)!;
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(pathPtr);
+            }
+        }
+        finally
+        {
+            CloseHandle(userToken);
+        }
+    }
+
+    [DllImport("shell32.dll")]
+    private static extern int SHGetKnownFolderPath([MarshalAs(UnmanagedType.LPStruct)] Guid folderId, uint flags, IntPtr token, out IntPtr path);
 }

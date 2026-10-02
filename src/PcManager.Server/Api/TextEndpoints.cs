@@ -59,6 +59,24 @@ public static class TextEndpoints
                 : new SaveTextResult(false, false, error, null));
         });
 
+        // 내 PC 프로그램으로 열기: editorAgentId = 대시보드를 연 PC의 에이전트
+        api.MapPost("/agents/{agentId}/open-local", async (string agentId, OpenLocalRequest request, TransferService transfers, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.Path) || string.IsNullOrWhiteSpace(request.EditorAgentId))
+                return Results.BadRequest("파일 경로와 내 PC가 필요합니다.");
+            var error = await transfers.OpenLocalAsync(agentId, request.Path!, request.EditorAgentId!,
+                string.IsNullOrWhiteSpace(request.Label) ? agentId : request.Label!, request.ReadOnly, ct);
+            return error is null ? Results.NoContent() : Results.BadRequest(error);
+        });
+
+        // 편집 PC 에이전트 → 저장한 내용을 원래 PC로 (토큰 검사는 /api/agent 미들웨어)
+        app.MapPost(AgentTransferPaths.EditSave, async (string source, string path, string? baseHash, HttpRequest http, TransferService transfers, CancellationToken ct) =>
+        {
+            using var memory = new MemoryStream();
+            await http.Body.CopyToAsync(memory, ct);
+            return Results.Ok(await transfers.SaveEditAsync(source, path, string.IsNullOrEmpty(baseHash) ? null : baseHash, memory.ToArray(), ct));
+        }).WithMetadata(new Microsoft.AspNetCore.Mvc.DisableRequestSizeLimitAttribute());
+
         // 편집 중인 내용을 원래 인코딩으로 내려받기 (내 PC에 저장)
         api.MapPost("/text/encode", (EncodeTextRequest request) =>
             Results.File(TextCodec.Encode(request.Content ?? "", request.Encoding, request.Newline), "application/octet-stream"));
@@ -172,7 +190,7 @@ public static class TextEndpoints
             StatusCodes.Status413PayloadTooLarge);
 
     /// <summary>에이전트에 임시 파일로 보낸 뒤 원래 파일과 바꾼다. 실패하면 오류 문구.</summary>
-    private static async Task<string?> WriteToAgentAsync(
+    internal static async Task<string?> WriteToAgentAsync(
         string agentId, string path, byte[] bytes, bool backup, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct)
     {
         if (!registry.TryGetConnection(agentId, out var connectionId))
@@ -201,7 +219,7 @@ public static class TextEndpoints
     }
 
     // 옛 에이전트에는 새 핸들러가 없어 메서드 오류가 난다
-    private static string OldAgentMessage(Exception ex) =>
+    internal static string OldAgentMessage(Exception ex) =>
         ex.Message.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
         || ex.Message.Contains("parse argument", StringComparison.OrdinalIgnoreCase)
         || ex.Message.Contains("No client method", StringComparison.OrdinalIgnoreCase)
