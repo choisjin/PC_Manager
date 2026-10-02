@@ -105,10 +105,14 @@ export function buildTree(
     else roots.push(node)
   }
 
+  // 화면에 보이는 이름(별칭, 없으면 hostname) 순. 숫자는 크기대로(PC2 < PC10), 대소문자 무시
+  const byName = (a: Agent, b: Agent) =>
+    displayName(a, groups).localeCompare(displayName(b, groups), 'ko', { numeric: true, sensitivity: 'base' })
+
   const sortNodes = (nodes: FolderNode[]) => {
     nodes.sort((a, b) => a.folder.order - b.folder.order || a.folder.name.localeCompare(b.folder.name))
     for (const n of nodes) {
-      n.agents.sort((a, b) => a.machineName.localeCompare(b.machineName))
+      n.agents.sort(byName)
       sortNodes(n.children)
     }
   }
@@ -116,7 +120,7 @@ export function buildTree(
 
   const ungrouped = agents
     .filter((a) => !groups.assignments[a.id] || !byId.has(groups.assignments[a.id]))
-    .sort((a, b) => a.machineName.localeCompare(b.machineName))
+    .sort(byName)
 
   return { roots, ungrouped }
 }
