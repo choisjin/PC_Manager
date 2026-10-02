@@ -114,7 +114,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         online: a.online,
         status: pcStatuses[a.id] ?? null,
         inUseBy: remoteUsage[a.id]?.userId ?? null,
-      })),
+      })).sort((x, y) => x.name.localeCompare(y.name, 'ko', { numeric: true, sensitivity: 'base' })),
       userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
     }),
     [remoteAgents, pcGroups, pcStatuses, remoteUsage, org.users],

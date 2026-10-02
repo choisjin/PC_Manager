@@ -70,7 +70,9 @@ export function RemoteGrid({ agents, groupName, displayName, thumbnails, watchTh
       </div>
       {agents.length === 0 && <div className="muted small remote-grid-empty">이 그룹에 PC가 없습니다. 왼쪽에서 폴더를 선택하세요.</div>}
       <div className="remote-grid">
-        {agents.map((agent) => {
+        {[...agents]
+          .sort((a, b) => displayName(a).localeCompare(displayName(b), 'ko', { numeric: true, sensitivity: 'base' }))
+          .map((agent) => {
           const t = thumbnails[agent.id]
           const st = pcStatuses[agent.id]
           const by = remoteUsage[agent.id]?.userId
