@@ -51,7 +51,8 @@ $ServiceAccount = 'LocalSystem'
 $LocalServiceSid = '*S-1-5-19'
 
 function Write-Step([string] $Message) {
-    Write-Host "==> $Message" -ForegroundColor Cyan
+    # 창 없이 실행될 때(대시보드의 서버 업데이트) 색 지정이 실패할 수 있어 그때는 그냥 기록만 한다
+    try { Write-Host "==> $Message" -ForegroundColor Cyan } catch { Write-Output "==> $Message" }
 }
 
 # 진행 기록: 대시보드의 '서버 업데이트'는 창 없이 실행되므로 어디서 멈췄는지 이 파일로 확인한다

@@ -77,6 +77,40 @@ public class UpdateService
     [System.Reflection.Obfuscation(Exclude = true, ApplyToMembers = true)]
     private sealed record PendingUpdate(string TargetVersion, DateTime StartedAt);
 
+    /// <summary>
+    /// 설치기는 곧 이 서비스를 멈춰야 한다. 3분이 지나도 계속 실행 중이면 설치기가 실패한 것이므로
+    /// '재시작 중'에 멈춰 있지 않게 실패와 설치 기록 끝부분을 대시보드에 알린다.
+    /// </summary>
+    private async Task WatchInstallerAsync()
+    {
+        await Task.Delay(TimeSpan.FromMinutes(3));
+        if (_serverPhase != UpdatePhase.Restarting)
+            return;
+        try { File.Delete(PendingMarkerPath); } catch (IOException) { }
+        var tail = ReadInstallLogTail();
+        await SetServerPhaseAsync(UpdatePhase.Failed,
+            "설치 스크립트가 서버를 다시 시작하지 못했습니다 (3분 경과)."
+            + (tail.Length > 0 ? $" 설치 기록: {tail}" : " 설치 기록이 없습니다 — 스크립트가 실행되지 않았을 수 있습니다.")
+            + $" 서버 PC에서 install-server.ps1을 직접 실행하세요. (기록: {InstallLogPath})");
+    }
+
+    private static string ReadInstallLogTail()
+    {
+        try
+        {
+            if (!File.Exists(InstallLogPath))
+                return "";
+            var lines = File.ReadAllLines(InstallLogPath)
+                .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("**", StringComparison.Ordinal))
+                .TakeLast(4);
+            return string.Join(" / ", lines);
+        }
+        catch (IOException)
+        {
+            return "";
+        }
+    }
+
     /// <summary>이전 자가 업데이트 결과를 확인한다: 새 버전으로 떴으면 성공, 아니면 설치 기록 끝부분과 함께 실패로 표시</summary>
     private void ReportPreviousUpdate()
     {
@@ -92,14 +126,7 @@ public class UpdateService
                 return;
             }
 
-            var tail = "";
-            if (File.Exists(InstallLogPath))
-            {
-                var lines = File.ReadAllLines(InstallLogPath)
-                    .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("**", StringComparison.Ordinal))
-                    .TakeLast(4);
-                tail = string.Join(" / ", lines);
-            }
+            var tail = ReadInstallLogTail();
             _serverPhase = UpdatePhase.Failed;
             _serverError = $"{pending.TargetVersion} 설치에 실패해 {CurrentVersion.ToString(3)}(으)로 다시 시작했습니다."
                 + (tail.Length > 0 ? $" 설치 기록: {tail}" : "")
@@ -317,6 +344,7 @@ public class UpdateService
             await File.WriteAllTextAsync(PendingMarkerPath, JsonSerializer.Serialize(new PendingUpdate(target, DateTime.UtcNow), Json));
             _logger.LogInformation("서버 설치기 실행: {Installer} (곧 서비스가 재시작됩니다)", installer);
             DetachedProcess.Start(powershell, $"-NoProfile -ExecutionPolicy Bypass -File \"{installer}\"", Path.GetDirectoryName(installer));
+            _ = WatchInstallerAsync();
             // 여기서 반환하면 곧 설치기가 이 서비스를 멈춘다. 새 버전이 다시 시작한다.
         }
         catch (Exception ex)
