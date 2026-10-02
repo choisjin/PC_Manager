@@ -1,4 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { useTopLayer } from '../useTopLayer'
 import type { ChatMessage, OrgUser, Transfer } from '../api'
 import { formatBytes } from '../format'
 import { kindLabel } from './explorer/useTransfers'
@@ -381,8 +383,39 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
     window.addEventListener('mouseup', onUp)
   }
 
-  return (
+  // 원격조작 창·전체 화면처럼 브라우저 최상위 층이 열려 있으면 그 안에 그려야 위에 보인다
+  const layer = useTopLayer()
+
+  // 펼치거나 크기·내용이 바뀌어 화면 밖으로 넘치면 전체가 보이게 위치를 당긴다 (창 크기 변경 포함)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const fitIntoView = () => {
+    const el = rootRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    // 높이 제한(maxHeight)에 눌리기 전의 원래 높이: 화면에 그려지기 전에 잠깐 제한을 풀고 잰다
+    const cap = el.style.maxHeight
+    el.style.maxHeight = 'none'
+    const needed = el.offsetHeight
+    el.style.maxHeight = cap
+    setPos((p) => {
+      let { x, b } = p
+      if (p.b + needed > window.innerHeight - 8) b = Math.max(4, window.innerHeight - 8 - needed)
+      if (rect.right > window.innerWidth - 4) x = Math.max(4, x - (rect.right - (window.innerWidth - 4)))
+      if (b === p.b && x === p.x) return p
+      const next = clampPos({ x, b })
+      savePos(next)
+      return next
+    })
+  }
+  useLayoutEffect(fitIntoView, [collapsed, tab, size, layer])
+  useEffect(() => {
+    window.addEventListener('resize', fitIntoView)
+    return () => window.removeEventListener('resize', fitIntoView)
+  }, [])
+
+  return createPortal(
     <div
+      ref={rootRef}
       className={`pip${collapsed ? ' collapsed' : ''}`}
       style={{ left: pos.x, bottom: pos.b, maxHeight: `calc(100vh - ${pos.b + 8}px)`, ...(size && !collapsed ? { width: size.w } : {}) }}
     >
@@ -556,6 +589,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
           )}
         </div>
       )}
-</div>
+</div>,
+    layer,
   )
 }

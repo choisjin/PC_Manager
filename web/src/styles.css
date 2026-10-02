@@ -2452,7 +2452,8 @@ tr.drop-into > td,
 /* ===== 전송 진행률·알림 PiP 위젯 ===== */
 .pip {
   position: fixed;
-  z-index: 1400;
+  /* 원격 화면·대화상자 안에 옮겨 그릴 때도 그 안의 모든 것보다 위 */
+  z-index: 2147483000;
   display: flex;
   flex-direction: column;
   width: 290px;
