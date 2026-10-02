@@ -7,7 +7,7 @@ import { FileViewer, type ViewerKind } from '../FileViewer'
 import { VideoViewer } from '../VideoViewer'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DriveTree } from './DriveTree'
-import { Icon } from './Icon'
+import { FileIcon, Icon } from './Icon'
 import { copyText, type FileClipboard, FILES_MIME, type FilesDragPayload, newId, PANE_MIME } from './pcGroups'
 
 const COL_WIDTH_KEY = 'explorer.colWidths'
@@ -994,7 +994,6 @@ export function ExplorerPane({
 
   const rowClass = (entry: FileEntry, isSel: boolean, cut: boolean) =>
     `${entry.isDirectory ? 'dir' : isVideoFile(entry.name) ? 'file video' : 'file'}${isSel ? ' selected' : ''}${cut ? ' cut' : ''}${entry.hidden ? ' hidden-entry' : ''}`
-  const iconFor = (entry: FileEntry) => (entry.isDirectory ? 'folder' : isVideoFile(entry.name) ? 'video' : 'file')
   const isCut = (entry: FileEntry) =>
     clipboard?.mode === 'cut' && clipboard.agentId === agentId && clipboard.items.some((i) => i.path === entry.fullPath)
 
@@ -1222,7 +1221,7 @@ export function ExplorerPane({
                       } : undefined}
                     >
                       <td className="ellipsis">
-                        <Icon name={iconFor(entry)} className="file-icon" />
+                        {entry.isDirectory ? <Icon name="folder" className="file-icon" /> : <FileIcon name={entry.name} className="file-icon" />}
                         {entry.name}
                       </td>
                       {columns.modified && <td className="col-date">{entry.modifiedAt ? formatFileDate(entry.modifiedAt) : ''}</td>}
@@ -1266,7 +1265,7 @@ export function ExplorerPane({
                       }
                     } : undefined}
                   >
-                    <Icon name={iconFor(entry)} size={44} className="icon-tile-ico" />
+                    {entry.isDirectory ? <Icon name="folder" size={44} className="icon-tile-ico" /> : <FileIcon name={entry.name} size={44} className="icon-tile-ico" />}
                     <span className="icon-tile-name ellipsis-2">{entry.name}</span>
                   </div>
                 )

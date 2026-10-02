@@ -69,3 +69,29 @@ export function saveBackupSetting(value: boolean) {
   }
   window.dispatchEvent(new Event(BACKUP_SETTING_EVENT))
 }
+
+/** 탐색기 아이콘용 파일 종류 */
+export type FileKind =
+  | 'image' | 'video' | 'audio' | 'text' | 'code' | 'excel' | 'word' | 'powerpoint' | 'pdf' | 'archive' | 'program' | 'other'
+
+const KIND_BY_EXT: Record<string, FileKind> = {}
+const kinds: [FileKind, string[]][] = [
+  ['image', ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico', 'tif', 'tiff', 'heic', 'raw']],
+  ['video', ['mp4', 'm4v', 'webm', 'ogv', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'ts', 'mpg', 'mpeg', 'm2ts', '3gp']],
+  ['audio', ['mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'wma', 'opus']],
+  ['excel', ['xls', 'xlsx', 'xlsm', 'xlsb', 'csv', 'tsv', 'ods']],
+  ['word', ['doc', 'docx', 'docm', 'rtf', 'odt', 'hwp', 'hwpx']],
+  ['powerpoint', ['ppt', 'pptx', 'pptm', 'odp']],
+  ['pdf', ['pdf']],
+  ['archive', ['zip', '7z', 'rar', 'tar', 'gz', 'tgz', 'bz2', 'xz', 'cab', 'iso', '001']],
+  ['program', ['exe', 'msi', 'dll', 'sys', 'appx', 'msix', 'apk']],
+  ['code', ['bat', 'cmd', 'ps1', 'psm1', 'sh', 'py', 'js', 'ts', 'tsx', 'jsx', 'c', 'h', 'cpp', 'hpp', 'cs', 'java', 'go', 'rs', 'sql', 'html', 'htm', 'css', 'vbs', 'json', 'jsonl', 'xml', 'yaml', 'yml', 'toml', 'csproj', 'sln', 'props', 'targets']],
+  ['text', ['txt', 'log', 'ini', 'cfg', 'conf', 'config', 'md', 'properties', 'reg', 'srt', 'inf', 'env']],
+]
+for (const [kind, exts] of kinds) for (const ext of exts) KIND_BY_EXT[ext] = kind
+
+export function fileKind(name: string): FileKind {
+  // 분할 압축 a.zip.001 · a.tar.gz 같은 이중 확장자는 압축으로
+  if (isArchiveFile(name)) return 'archive'
+  return KIND_BY_EXT[extensionOf(name)] ?? 'other'
+}

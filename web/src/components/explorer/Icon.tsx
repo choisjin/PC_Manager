@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { extensionOf, fileKind, type FileKind } from '../../fileTypes'
 
 // 윈도우 11 Fluent 스타일의 자체 제작 라인 아이콘 (SVG).
 // 마이크로소프트의 독점 Windows .ico/Segoe Fluent 글꼴을 배포하지 않기 위해 직접 그린 아이콘을 쓴다.
@@ -92,6 +93,77 @@ export function Icon({ name, size = 16, className }: Props) {
   return (
     <svg {...common} fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
       {LINE[name]}
+    </svg>
+  )
+}
+
+// 파일 종류별 색 (윈도우·오피스에서 익숙한 색 계열)
+const KIND_COLOR: Record<FileKind, string | null> = {
+  image: '#1f9e8f',
+  video: '#7048e8',
+  audio: '#d6336c',
+  text: '#6b7480',
+  code: '#3b5bdb',
+  excel: '#1d7044',
+  word: '#2b579a',
+  powerpoint: '#c4472b',
+  pdf: '#d0312d',
+  archive: '#b07219',
+  program: '#495057',
+  other: null,
+}
+
+/**
+ * 탐색기 파일 아이콘: 종이 모양에 종류별 색 라벨(확장자)을 붙여 이미지·영상·엑셀·압축 등을 한눈에 구분한다.
+ * 작게(16px) 그려도 라벨 색으로 구분되고, 크게(큰 아이콘 보기) 그리면 확장자 글자가 보인다.
+ */
+export function FileIcon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {
+  const kind = fileKind(name)
+  const color = KIND_COLOR[kind]
+  const ext = (kind === 'archive' && /\.\d{3}$/.test(name) ? 'ZIP' : extensionOf(name)).toUpperCase().slice(0, 4)
+  const label = ext.length > 0 ? ext : ''
+  const fontSize = label.length >= 4 ? 4.4 : label.length === 3 ? 5.2 : 6
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true" focusable="false" fill="none">
+      <title>{name}</title>
+      {/* 종이 */}
+      <path
+        d="M6.5 2.5h7.8l4.7 4.7v13.3a1 1 0 0 1-1 1h-11.5a1 1 0 0 1-1-1v-17a1 1 0 0 1 1-1z"
+        fill="var(--file-page, #fff)"
+        stroke={color ?? '#9aa3ad'}
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+      />
+      <path d="M14.3 2.5v3.7a1 1 0 0 0 1 1h3.7" stroke={color ?? '#9aa3ad'} strokeWidth="1.1" strokeLinejoin="round" />
+      {color ? (
+        <>
+          {/* 종류별 무늬 (종이 윗부분) */}
+          {kind === 'image' && <path d="M8 11.5l2.2-2.6 1.7 1.9 1.2-1.2 2 1.9z" fill={color} />}
+          {kind === 'video' && <path d="M10.2 7.6v4l3.3-2z" fill={color} />}
+          {kind === 'audio' && <path d="M12.5 6.5v4.3a1.3 1.3 0 1 1-.9-1.2V6.5h2.2" stroke={color} strokeWidth="1" />}
+          {kind === 'archive' && <path d="M11 3v1.3h1.2v1.3H11v1.3h1.2v1.3H11v1.3h1.2" stroke={color} strokeWidth="1" />}
+          {(kind === 'text' || kind === 'code') && <path d="M8 7.5h5M8 9.5h7M8 11.5h4" stroke={color} strokeWidth="1" strokeLinecap="round" />}
+          {(kind === 'excel' || kind === 'word' || kind === 'powerpoint' || kind === 'pdf' || kind === 'program') && (
+            <path d="M8 7.5h7M8 9.5h7M8 11.5h5" stroke={color} strokeWidth="0.9" strokeLinecap="round" opacity="0.55" />
+          )}
+          {/* 확장자 라벨 */}
+          <rect x="2.5" y="13" width="15.5" height="7" rx="1.3" fill={color} />
+          <text
+            x="10.25"
+            y="18.15"
+            textAnchor="middle"
+            fontSize={fontSize}
+            fontWeight="700"
+            fontFamily="Segoe UI, Arial, sans-serif"
+            fill="#fff"
+            letterSpacing="0.1"
+          >
+            {label}
+          </text>
+        </>
+      ) : (
+        <path d="M8 11h8M8 14h8M8 17h5" stroke="#b4bcc5" strokeWidth="1" strokeLinecap="round" />
+      )}
     </svg>
   )
 }
