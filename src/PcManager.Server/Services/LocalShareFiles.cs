@@ -29,8 +29,8 @@ public class LocalShareFiles(ILogger<LocalShareFiles> logger)
                     AttributesToSkip = FileAttributes.System,
                 })
                 .Select(info => info is FileInfo file
-                    ? new FileEntry(file.Name, file.FullName, false, file.Length, file.LastWriteTimeUtc)
-                    : new FileEntry(info.Name, info.FullName, true, 0, info.LastWriteTimeUtc))
+                    ? new FileEntry(file.Name, file.FullName, false, file.Length, file.LastWriteTimeUtc, (file.Attributes & FileAttributes.Hidden) != 0)
+                    : new FileEntry(info.Name, info.FullName, true, 0, info.LastWriteTimeUtc, (info.Attributes & FileAttributes.Hidden) != 0))
                 .Take(MaxListEntries)
                 .OrderByDescending(e => e.IsDirectory)
                 .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)

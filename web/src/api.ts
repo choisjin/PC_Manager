@@ -144,6 +144,8 @@ export interface FileEntry {
   isDirectory: boolean
   size: number
   modifiedAt: string | null
+  /** 숨김 속성 (이전 에이전트는 보내지 않음 → 보통 파일로 취급) */
+  hidden?: boolean
 }
 
 export type FileOpKind = 'Copy' | 'Move' | 'Delete' | 'CreateDirectory' | 'Rename'

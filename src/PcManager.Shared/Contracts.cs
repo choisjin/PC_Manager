@@ -146,7 +146,8 @@ public record TransferCompleted(string TransferId, bool Success, int FileCount, 
 /// <summary>오래 걸리는 전송(압축 등)의 진행 상황 보고</summary>
 public record TransferProgressReport(string TransferId, int FileCount, long BytesDone, int Percent);
 
-public record FileEntry(string Name, string FullPath, bool IsDirectory, long Size, DateTime? ModifiedAt);
+/// <param name="Hidden">숨김 속성 (대시보드 '숨김 항목 보기'를 끄면 감춘다)</param>
+public record FileEntry(string Name, string FullPath, bool IsDirectory, long Size, DateTime? ModifiedAt, bool Hidden = false);
 
 /// <param name="Path">빈 문자열이면 드라이브 목록</param>
 public record DirectoryListing(string Path, string? ParentPath, IReadOnlyList<FileEntry> Entries, string? Error);

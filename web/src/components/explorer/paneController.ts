@@ -23,6 +23,7 @@ export interface PaneController {
   sortKey: SortKey
   sortAsc: boolean
   columns: ColumnVisibility
+  showHidden: boolean
   search: string
   // 동작 (항상 최신 상태에 적용)
   navigate: (path: string) => void
@@ -40,6 +41,7 @@ export interface PaneController {
   setSort: (key: SortKey) => void
   setView: (view: ViewMode) => void
   toggleColumn: (column: OptionalColumn) => void
+  toggleHidden: () => void
   setSearch: (q: string) => void
   openTerminal: () => void
   openRemote: () => void

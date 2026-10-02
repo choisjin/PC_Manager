@@ -3591,3 +3591,8 @@ th.sortable:hover {
   font-weight: 700;
   opacity: 0.75;
 }
+
+/* 숨김 항목 (보이게 했을 때 흐리게) */
+.hidden-entry {
+  opacity: 0.55;
+}

@@ -13,6 +13,15 @@ const COL_WIDTH_KEY = 'explorer.colWidths'
 const COLUMNS_KEY = 'explorer.columns'
 const COLUMNS_EVENT = 'explorer-columns'
 const DEFAULT_COLUMNS: ColumnVisibility = { modified: true, type: true, size: true }
+const HIDDEN_KEY = 'explorer.showHidden'
+
+function loadShowHidden(): boolean {
+  try {
+    return localStorage.getItem(HIDDEN_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 
 function loadColumns(): ColumnVisibility {
   try {
@@ -150,6 +159,23 @@ export function ExplorerPane({
     window.addEventListener(COLUMNS_EVENT, sync)
     return () => window.removeEventListener(COLUMNS_EVENT, sync)
   }, [])
+  // 숨김 항목 보기 (모든 창 공통, 기본 숨김 — 윈도우 탐색기와 같다)
+  const [showHidden, setShowHidden] = useState(loadShowHidden)
+  useEffect(() => {
+    const sync = () => setShowHidden(loadShowHidden())
+    window.addEventListener(COLUMNS_EVENT, sync)
+    return () => window.removeEventListener(COLUMNS_EVENT, sync)
+  }, [])
+  const toggleHidden = () => {
+    const next = !showHidden
+    try {
+      localStorage.setItem(HIDDEN_KEY, next ? '1' : '0')
+    } catch {
+      // 무시
+    }
+    setShowHidden(next)
+    window.dispatchEvent(new Event(COLUMNS_EVENT))
+  }
   const toggleColumn = (column: OptionalColumn) => {
     const next = { ...loadColumns(), [column]: !columns[column] }
     try {
@@ -407,11 +433,12 @@ export function ExplorerPane({
 
   // 검색·정렬을 적용한 화면 표시용 목록
   const displayed = useMemo(() => {
-    const entries = listing?.entries ?? []
+    const all = listing?.entries ?? []
+    const entries = showHidden ? all : all.filter((e) => !e.hidden)
     const q = search.trim().toLowerCase()
     const filtered = q ? entries.filter((e) => e.name.toLowerCase().includes(q)) : entries
     return sortEntries(filtered, sortKey, sortAsc)
-  }, [listing, search, sortKey, sortAsc])
+  }, [listing, search, sortKey, sortAsc, showHidden])
 
   const selectClick = (e: React.MouseEvent, entry: FileEntry, index: number) => {
     if (e.shiftKey && anchorRef.current >= 0) {
@@ -618,6 +645,8 @@ export function ExplorerPane({
     setView,
     columns,
     toggleColumn,
+    showHidden,
+    toggleHidden,
     setSearch,
     openTerminal: () => setTerminal(true),
     openRemote: () => {
@@ -823,7 +852,7 @@ export function ExplorerPane({
   const style = width && height ? { width, height } : undefined
 
   const rowClass = (entry: FileEntry, isSel: boolean, cut: boolean) =>
-    `${entry.isDirectory ? 'dir' : isVideoFile(entry.name) ? 'file video' : 'file'}${isSel ? ' selected' : ''}${cut ? ' cut' : ''}`
+    `${entry.isDirectory ? 'dir' : isVideoFile(entry.name) ? 'file video' : 'file'}${isSel ? ' selected' : ''}${cut ? ' cut' : ''}${entry.hidden ? ' hidden-entry' : ''}`
   const iconFor = (entry: FileEntry) => (entry.isDirectory ? 'folder' : isVideoFile(entry.name) ? 'video' : 'file')
   const isCut = (entry: FileEntry) =>
     clipboard?.mode === 'cut' && clipboard.agentId === agentId && clipboard.items.some((i) => i.path === entry.fullPath)
