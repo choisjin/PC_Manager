@@ -2,8 +2,15 @@ import { useEffect, useState } from 'react'
 import { type Agent, PC_STATUS_LABEL, type PcStatus, type RemoteUsage, type Thumbnail } from '../api'
 import { RemoteModal } from './explorer/RemoteModal'
 
-interface Props {
+/** 그룹(폴더) 하나의 PC들. 하위 폴더는 "상위 / 하위" 이름의 별도 구역 */
+export interface RemoteSection {
+  key: string
+  name: string
   agents: Agent[]
+}
+
+interface Props {
+  sections: RemoteSection[]
   /** 선택한 폴더 이름 (없으면 전체) */
   groupName: string | null
   displayName: (agent: Agent) => string
@@ -26,8 +33,10 @@ function idleText(seconds: number): string {
 }
 
 /** Remote 모드: 그룹 안 PC들의 화면 미리보기 카드. 클릭하면 원격조작 */
-export function RemoteGrid({ agents, groupName, displayName, thumbnails, watchThumbnails, pcStatuses, remoteUsage, selfUserId, userName }: Props) {
+export function RemoteGrid({ sections, groupName, displayName, thumbnails, watchThumbnails, pcStatuses, remoteUsage, selfUserId, userName }: Props) {
   const [remote, setRemote] = useState<Agent | null>(null)
+  const agents = sections.flatMap((s) => s.agents)
+  const byName = (a: Agent, b: Agent) => displayName(a).localeCompare(displayName(b), 'ko', { numeric: true, sensitivity: 'base' })
   const [notice, setNotice] = useState<string | null>(null)
 
   // 보고 있는 PC 목록을 서버에 알린다 (온라인만). 화면을 떠나면 해제
@@ -69,9 +78,19 @@ export function RemoteGrid({ agents, groupName, displayName, thumbnails, watchTh
         {notice && <span className="remote-grid-notice small">{notice}</span>}
       </div>
       {agents.length === 0 && <div className="muted small remote-grid-empty">이 그룹에 PC가 없습니다. 왼쪽에서 폴더를 선택하세요.</div>}
+      {sections.map((section) => (
+      <section key={section.key} className="remote-section">
+      {(sections.length > 1 || !groupName || section.name !== groupName) && (
+        <div className="remote-section-head">
+          <span className="remote-section-name">📂 {section.name}</span>
+          <span className="muted small">
+            {section.agents.length}대 · 온라인 {section.agents.filter((a) => a.online).length}
+          </span>
+        </div>
+      )}
       <div className="remote-grid">
-        {[...agents]
-          .sort((a, b) => displayName(a).localeCompare(displayName(b), 'ko', { numeric: true, sensitivity: 'base' }))
+        {[...section.agents]
+          .sort(byName)
           .map((agent) => {
           const t = thumbnails[agent.id]
           const st = pcStatuses[agent.id]
@@ -103,6 +122,8 @@ export function RemoteGrid({ agents, groupName, displayName, thumbnails, watchTh
           )
         })}
       </div>
+      </section>
+      ))}
 
       {remote && <RemoteModal agentId={remote.id} machineName={displayName(remote)} userId={selfUserId} onClose={() => setRemote(null)} />}
     </div>

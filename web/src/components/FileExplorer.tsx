@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Agent, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder, Thumbnail } from '../api'
-import { RemoteGrid } from './RemoteGrid'
+import { RemoteGrid, type RemoteSection } from './RemoteGrid'
 import { RemoteContext, type RemoteContextValue } from './remote/RemoteContext'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
@@ -120,10 +120,27 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
     [remoteAgents, pcGroups, pcStatuses, remoteUsage, org.users],
   )
 
-  // Remote 모드 대상: 선택한 폴더(하위 포함)의 PC, 없으면 보이는 PC 전체
+  // Remote 모드 대상: 선택한 폴더(하위 포함), 없으면 전체. 폴더(그룹)별 구역으로 나눠 보여 준다
   const remoteTargets = useMemo(() => {
-    if (!selectedFolderId) return { name: null as string | null, agents: remoteAgents }
-    const { roots } = buildTree(pcGroups, remoteAgents)
+    // 트리와 같은 규칙: 다른 프로젝트에 배정된 폴더는 숨긴다
+    const folderVisible = (folderId: string) => {
+      const pid = org.folderProjects?.[folderId]
+      if (!pid) return true
+      if (filterProjectId) return pid === filterProjectId
+      return selfUserId ? (org.projectUsers[pid] ?? []).includes(selfUserId) : true
+    }
+    const { roots, ungrouped } = buildTree(pcGroups, remoteAgents)
+    const sections: RemoteSection[] = []
+    const walk = (n: FolderNode, path: string) => {
+      if (!folderVisible(n.folder.id)) return
+      if (n.agents.length > 0) sections.push({ key: n.folder.id, name: path, agents: n.agents })
+      for (const c of n.children) walk(c, `${path} / ${c.folder.name}`)
+    }
+    if (!selectedFolderId) {
+      for (const r of roots) walk(r, r.folder.name)
+      if (ungrouped.length > 0) sections.push({ key: 'ungrouped', name: '미분류', agents: ungrouped })
+      return { name: null as string | null, sections }
+    }
     const find = (nodes: FolderNode[]): FolderNode | null => {
       for (const n of nodes) {
         if (n.folder.id === selectedFolderId) return n
@@ -133,10 +150,14 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       return null
     }
     const node = find(roots)
-    if (!node) return { name: null as string | null, agents: remoteAgents }
-    const collect = (n: FolderNode): Agent[] => [...n.agents, ...n.children.flatMap(collect)]
-    return { name: node.folder.name, agents: collect(node) }
-  }, [selectedFolderId, pcGroups, remoteAgents])
+    if (!node) {
+      for (const r of roots) walk(r, r.folder.name)
+      if (ungrouped.length > 0) sections.push({ key: 'ungrouped', name: '미분류', agents: ungrouped })
+      return { name: null as string | null, sections }
+    }
+    walk(node, node.folder.name)
+    return { name: node.folder.name, sections }
+  }, [selectedFolderId, pcGroups, remoteAgents, org.folderProjects, org.projectUsers, filterProjectId, selfUserId])
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
 
@@ -238,7 +259,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       <div className="explorer-main">
         {mode === 'remote' ? (
           <RemoteGrid
-            agents={remoteTargets.agents}
+            sections={remoteTargets.sections}
             groupName={remoteTargets.name}
             displayName={(a) => displayName(a, pcGroups)}
             thumbnails={thumbnails}

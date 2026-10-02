@@ -3557,3 +3557,21 @@ th.sortable:hover {
     transform: none;
   }
 }
+
+/* Remote 모드 그룹 구역 */
+.remote-section + .remote-section {
+  margin-top: 6px;
+}
+
+.remote-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 2px 0 6px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--border);
+}
+
+.remote-section-name {
+  font-weight: 700;
+}
