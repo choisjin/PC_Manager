@@ -28,7 +28,7 @@ public class TransferService(
     /// <summary>
     /// PC 간 파일 붙여넣기: 원본 PC에서 읽은 조각을 서버 디스크에 저장하지 않고 곧바로 대상 PC로 흘려보낸다.
     /// (에이전트는 서버로 아웃바운드 연결만 하므로 P2P 대신 서버가 조각을 중계한다.)
-    /// 단일 파일만 지원한다. 잘라내기면 완료 후 원본을 지운다.
+    /// 폴더면 하위까지 통째로 복사한다. 잘라내기면 완료 후 원본을 지운다.
     /// </summary>
     public async Task<FileOpResult> CrossCopyAsync(
         string sourceAgentId, string sourcePath, string destAgentId, string destFolder, bool move, CancellationToken ct)
@@ -51,8 +51,9 @@ public class TransferService(
         }
         if (source.Size < 0)
         {
+            // 파일이 아니면 폴더인지 보고 폴더째 복사한다
             source.Dispose();
-            return new FileOpResult(false, "원본 파일을 찾을 수 없습니다 (폴더는 PC 간 복사를 지원하지 않습니다).", null);
+            return await CrossCopyFolderAsync(sourceAgentId, sourcePath, destAgentId, destFolder, move, ct);
         }
         var size = source.Size;
 
@@ -290,6 +291,164 @@ public class TransferService(
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// PC·공유 폴더 사이 폴더 복사: 원본 폴더 트리를 훑어 대상에 같은 구조로 만들고 파일을 하나씩 중계한다.
+    /// 대상에 같은 이름이 있으면 "이름 (2)"로 만든다. 잘라내기면 다 옮긴 뒤 원본 폴더를 지운다.
+    /// </summary>
+    private async Task<FileOpResult> CrossCopyFolderAsync(
+        string sourceId, string sourcePath, string destId, string destFolder, bool move, CancellationToken ct)
+    {
+        var folderName = Path.GetFileName(sourcePath.TrimEnd('\\', '/'));
+        var root = await ListAsync(sourceId, sourcePath, ct);
+        if (root is null || root.Error is not null)
+            return new FileOpResult(false, "원본을 찾을 수 없습니다" + (root?.Error is { } e ? $": {e}" : "."), null);
+
+        // 원본 트리 훑기: (원본 전체 경로, 대상 기준 상대 경로, 크기)
+        var files = new List<(string Source, string Relative, long Size)>();
+        var dirs = new List<string>();
+        var pending = new Queue<(DirectoryListing Listing, string Relative)>();
+        pending.Enqueue((root, ""));
+        while (pending.Count > 0)
+        {
+            var (listing, relative) = pending.Dequeue();
+            foreach (var entry in listing.Entries)
+            {
+                var childRelative = relative.Length == 0 ? entry.Name : relative + "\\" + entry.Name;
+                if (entry.IsDirectory)
+                {
+                    dirs.Add(childRelative);
+                    var child = await ListAsync(sourceId, entry.FullPath, ct);
+                    if (child is null || child.Error is not null)
+                        return new FileOpResult(false, $"폴더를 읽을 수 없습니다: {entry.FullPath}", null);
+                    pending.Enqueue((child, childRelative));
+                }
+                else
+                {
+                    files.Add((entry.FullPath, childRelative, entry.Size));
+                }
+            }
+        }
+
+        // 대상 최상위 폴더 (같은 이름이 있으면 새 이름)
+        FileOpResult created;
+        try
+        {
+            created = await DestFileOpAsync(destId, new FileOpRequest(FileOpKind.CreateDirectory, destFolder, folderName), ct);
+        }
+        catch (CopyException ex)
+        {
+            return new FileOpResult(false, ex.Message, null);
+        }
+        if (!created.Success || created.ResultPath is null)
+            return new FileOpResult(false, "대상 폴더를 만들지 못했습니다: " + created.Error, null);
+        var destRoot = created.ResultPath;
+
+        var total = files.Sum(f => Math.Max(0, f.Size));
+        var transfer = NewTransfer(destId, TransferKind.Push, destRoot);
+        transfer.TotalBytes = total;
+        await using (var db = await dbFactory.CreateDbContextAsync(ct))
+        {
+            db.Transfers.Add(transfer);
+            await db.SaveChangesAsync(ct);
+        }
+        await dashboard.Clients.All.TransferUpdated(transfer.ToView() with { Percent = 0 });
+
+        string? failure = null;
+        long done = 0;
+        var lastPercent = -1;
+        try
+        {
+            // 빈 폴더도 남도록 하위 폴더를 먼저 만든다 (상위부터)
+            foreach (var dir in dirs)
+            {
+                var parent = Path.GetDirectoryName(dir);
+                var result = await DestFileOpAsync(destId, new FileOpRequest(FileOpKind.CreateDirectory,
+                    string.IsNullOrEmpty(parent) ? destRoot : destRoot + "\\" + parent, Path.GetFileName(dir)), ct);
+                if (!result.Success)
+                    throw new IOException($"폴더를 만들지 못했습니다: {dir} ({result.Error})");
+            }
+
+            foreach (var (sourceFile, relative, _) in files)
+            {
+                using var source = await OpenSourceAsync(sourceId, sourceFile, ct);
+                if (source.Size < 0)
+                    throw new IOException($"파일을 읽을 수 없습니다: {sourceFile}");
+                var target = OpenTarget(destId);
+                var parent = Path.GetDirectoryName(relative);
+                await target.BeginAsync(string.IsNullOrEmpty(parent) ? destRoot : destRoot + "\\" + parent, Path.GetFileName(relative), ct);
+                try
+                {
+                    long offset = 0;
+                    while (offset < source.Size)
+                    {
+                        var data = await source.ReadAsync(offset, (int)Math.Min(CrossCopyChunkSize, source.Size - offset), ct);
+                        if (data.Length == 0)
+                            break;
+                        await target.WriteAsync(data, ct);
+                        offset += data.Length;
+                        done += data.Length;
+                        var percent = total > 0 ? (int)(done * 100 / total) : 100;
+                        if (percent != lastPercent)
+                        {
+                            lastPercent = percent;
+                            await dashboard.Clients.All.TransferUpdated(transfer.ToView() with { Percent = percent, FileCount = 0 });
+                        }
+                    }
+                    await target.CommitAsync(ct);
+                }
+                catch
+                {
+                    try { await target.AbortAsync(); }
+                    catch { /* 정리 실패는 무시 */ }
+                    throw;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            failure = ex is CopyException or IOException ? ex.Message : Api.TextEndpoints.OldAgentMessage(ex);
+        }
+
+        await MarkCrossCopyResultAsync(transfer.Id, failure is null, done, failure);
+        if (failure is not null)
+            return new FileOpResult(false, $"폴더 복사 중 실패 ({files.Count}개 중 일부만 복사됨): {failure}", destRoot);
+
+        if (move)
+        {
+            var del = await DeleteSourceAsync(sourceId, sourcePath, ct);
+            if (del is not null)
+                return new FileOpResult(true, "복사는 완료됐지만 원본 삭제 실패: " + del, destRoot);
+        }
+        return new FileOpResult(true, null, destRoot);
+    }
+
+    /// <summary>PC 또는 공유 폴더의 목록 (압축 안 폴더 포함). 없으면 null</summary>
+    private async Task<DirectoryListing?> ListAsync(string id, string path, CancellationToken ct)
+    {
+        if (shares.TryGet(id, out var share))
+            return localShare.ListDirectory(share, path);
+        if (!registry.TryGetConnection(id, out var conn))
+            throw new CopyException("원본 PC가 오프라인입니다.");
+        try
+        {
+            return await agentHubRaw.Clients.Client(conn).InvokeAsync<DirectoryListing>(AgentClientMethods.ListDirectory, path, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new DirectoryListing(path, null, [], ex.Message);
+        }
+    }
+
+    /// <summary>대상(PC 또는 공유 폴더)에서 파일 조작 (폴더 만들기 등)</summary>
+    private async Task<FileOpResult> DestFileOpAsync(string id, FileOpRequest request, CancellationToken ct)
+    {
+        if (shares.TryGet(id, out var share))
+            return localShare.PerformFileOp(share, request);
+        if (!registry.TryGetConnection(id, out var conn))
+            throw new CopyException("대상 PC가 오프라인입니다.");
+        return await agentHubRaw.Clients.Client(conn).InvokeAsync<FileOpResult>(AgentClientMethods.FileOp, request, ct);
     }
 
     private sealed class CopyException(string message) : Exception(message);
