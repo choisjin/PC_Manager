@@ -127,7 +127,13 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
     saveGroups(setAlias(groups, agent.id, alias))
   }
 
-  const renderAgent = (agent: Agent) => {
+  // 트리 들여쓰기: 한 단계 10px. PC는 같은 단계 폴더의 아이콘 위치(펼침 화살표 칸 다음)에 맞춘다
+  const INDENT = 10
+  const CARET = 18
+  const folderPad = (depth: number) => 3 + depth * INDENT
+  const agentPad = (depth: number) => 3 + depth * INDENT + CARET
+
+  const renderAgent = (agent: Agent, depth: number) => {
     const alias = groups.aliases?.[agent.id]?.trim()
     const viewers = viewersOf(agent.id)
     const status = pcStatuses[agent.id]
@@ -137,6 +143,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
       <li
         key={agent.id}
         className={`tree-agent${agent.online ? '' : ' offline'}`}
+        style={{ paddingLeft: agentPad(depth) }}
         draggable
         onDragStart={(e) => {
           e.dataTransfer.setData(AGENT_MIME, agent.id)
@@ -173,7 +180,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
       <li key={node.folder.id}>
         <div
           className={`tree-folder${isDrop ? ' drop-active' : ''}${selectedFolderId === node.folder.id ? ' selected' : ''}`}
-          style={{ paddingLeft: 8 + depth * 14 }}
+          style={{ paddingLeft: folderPad(depth) }}
           onClick={() => onSelectFolder(selectedFolderId === node.folder.id ? null : node.folder.id)}
           onContextMenu={(e) => {
             e.preventDefault()
@@ -229,7 +236,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         {isOpen && (
           <ul className="tree-children">
             {node.children.map((child) => renderFolder(child, depth + 1))}
-            {node.agents.map(renderAgent)}
+            {node.agents.map((agent) => renderAgent(agent, depth + 1))}
           </ul>
         )}
       </li>
@@ -271,6 +278,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         <li>
           <div
             className={`tree-folder ungrouped${dropTarget === 'root' ? ' drop-active' : ''}`}
+            style={{ paddingLeft: folderPad(0) }}
             onDragOver={(e) => allowAgentDrop(e, 'root')}
             onDragLeave={() => setDropTarget((t) => (t === 'root' ? null : t))}
             onDrop={(e) => handleDropAgent(e, null)}
@@ -278,7 +286,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
             <span className="tree-caret">·</span>
             <span className="tree-folder-name muted">미분류 ({ungrouped.length})</span>
           </div>
-          <ul className="tree-children">{ungrouped.map(renderAgent)}</ul>
+          <ul className="tree-children">{ungrouped.map((agent) => renderAgent(agent, 1))}</ul>
         </li>
 
         {agents.length === 0 && <li className="placeholder small">등록된 PC가 없습니다</li>}
