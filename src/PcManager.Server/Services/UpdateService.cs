@@ -59,7 +59,15 @@ public class UpdateService
         _http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PcManagerServer", CurrentVersion.ToString(3)));
         _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        if (!string.IsNullOrWhiteSpace(_options.GitHubToken))
+            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _options.GitHubToken.Trim());
+
+        // API가 막혔을 때 쓰는 웹 확인: 리디렉션을 따라가지 않고 Location에서 태그를 읽는다
+        _web = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) };
+        _web.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PcManagerServer", CurrentVersion.ToString(3)));
     }
+
+    private readonly HttpClient _web;
 
     public UpdateStatusView GetStatus()
     {
@@ -90,12 +98,21 @@ public class UpdateService
         {
             var url = $"https://api.github.com/repos/{_options.UpdateRepo}/releases/latest";
             using var response = await _http.GetAsync(url, ct);
-            response.EnsureSuccessStatusCode();
-            await using var stream = await response.Content.ReadAsStreamAsync(ct);
-            var release = await JsonSerializer.DeserializeAsync<GitHubRelease>(stream, Json, ct)
-                ?? throw new InvalidOperationException("릴리스 응답이 비었습니다.");
-
-            var info = ReleaseInfo.From(release);
+            ReleaseInfo? info;
+            if (response.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.TooManyRequests)
+            {
+                // GitHub API 요청 한도 초과(로그인 없이 IP당 시간 60회) → 웹 주소로 확인
+                _logger.LogInformation("GitHub API 요청 한도 초과 → 웹 주소로 최신 버전 확인");
+                info = await CheckViaWebAsync(ct);
+            }
+            else
+            {
+                response.EnsureSuccessStatusCode();
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                var release = await JsonSerializer.DeserializeAsync<GitHubRelease>(stream, Json, ct)
+                    ?? throw new InvalidOperationException("릴리스 응답이 비었습니다.");
+                info = ReleaseInfo.From(release);
+            }
             lock (_lock)
             {
                 _latest = info;
@@ -116,6 +133,33 @@ public class UpdateService
         var status = GetStatus();
         await _dashboard.Clients.All.UpdateStatusChanged(status);
         return status;
+    }
+
+    /// <summary>
+    /// API 없이 최신 릴리스 확인: github.com/{repo}/releases/latest 가 /releases/tag/v1.2.3 으로 리디렉션되는 것을 이용한다.
+    /// 릴리스 노트는 못 받으므로 같은 버전을 이미 알고 있으면 그 노트를 쓴다. 서버 설치 파일 주소는 이름 규칙으로 만든다.
+    /// </summary>
+    private async Task<ReleaseInfo?> CheckViaWebAsync(CancellationToken ct)
+    {
+        using var response = await _web.GetAsync($"https://github.com/{_options.UpdateRepo}/releases/latest", ct);
+        var location = response.Headers.Location?.ToString();
+        if (location is null || !location.Contains("/releases/tag/", StringComparison.Ordinal))
+            throw new InvalidOperationException($"GitHub API 요청 한도 초과, 웹 확인도 실패 ({(int)response.StatusCode}). 잠시 뒤 다시 확인하세요.");
+        var tag = Uri.UnescapeDataString(location[(location.LastIndexOf('/') + 1)..]);
+        if (!TryParseTag(tag, out var version))
+            return null;
+
+        ReleaseInfo? known;
+        lock (_lock)
+        {
+            known = _latest;
+        }
+        if (known is not null && known.Version == version)
+            return known;
+        var htmlUrl = location.StartsWith("http", StringComparison.Ordinal) ? location : $"https://github.com{location}";
+        var serverAsset = $"https://github.com/{_options.UpdateRepo}/releases/download/{tag}/PcManager-Server-{version.ToString(3)}{ServerAssetSuffix}";
+        return new ReleaseInfo(version, tag, "(GitHub API 요청 한도 때문에 릴리스 노트를 가져오지 못했습니다. 릴리스 페이지에서 확인하세요.)",
+            htmlUrl, null, serverAsset);
     }
 
     /// <summary>온라인이면서 서버보다 구버전인 에이전트에 업데이트 명령을 보낸다.</summary>

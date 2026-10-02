@@ -18,6 +18,12 @@ public class ServerOptions
     /// <summary>업데이트 확인에 쓰는 GitHub 저장소 (owner/repo)</summary>
     public string UpdateRepo { get; set; } = "choisjin/PC_Manager";
 
+    /// <summary>
+    /// GitHub 토큰 (선택). 넣으면 API 요청 한도가 IP당 시간 60회 → 5000회로 늘어난다.
+    /// 없어도 API가 막히면 웹 주소로 최신 버전을 확인한다 (릴리스 노트만 못 받음)
+    /// </summary>
+    public string? GitHubToken { get; set; }
+
     /// <summary>업데이트 자동 확인 주기(분). 0이면 자동 확인 안 함(수동 확인만)</summary>
     public int UpdateCheckIntervalMinutes { get; set; } = 180;
 
