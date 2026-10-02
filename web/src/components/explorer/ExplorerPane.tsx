@@ -733,6 +733,11 @@ export function ExplorerPane({
     },
     remove: () => void remove(selectedEntries()),
     fetchSelected: () => fetchFiles(selectedEntries()),
+    shareSelected: () => {
+      const [entry] = selectedEntries()
+      if (entry && !entry.isDirectory) void createDownloadLink(entry)
+    },
+    canShare: selected.size === 1 && displayed.some((e) => selected.has(e.fullPath) && !e.isDirectory),
     setSort: applySort,
     setView,
     columns,

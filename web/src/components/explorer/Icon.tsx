@@ -7,7 +7,7 @@ export type IconName =
   | 'back' | 'forward' | 'up' | 'refresh'
   | 'new-folder' | 'cut' | 'copy' | 'paste' | 'rename' | 'download' | 'delete'
   | 'sort' | 'view-grid' | 'view-details' | 'terminal' | 'remote' | 'upload' | 'search'
-  | 'folder' | 'file' | 'video' | 'pc' | 'drive' | 'star' | 'chevron' | 'close' | 'plus'
+  | 'folder' | 'file' | 'video' | 'pc' | 'drive' | 'star' | 'chevron' | 'close' | 'plus' | 'share'
   // 원격조작 특수 키
   | 'keyboard' | 'three-keys' | 'alt-tab' | 'play' | 'lock' | 'chart' | 'close-window' | 'camera' | 'text' | 'fullscreen' | 'fullscreen-exit'
 
@@ -54,6 +54,7 @@ const LINE: Partial<Record<IconName, ReactNode>> = {
   fullscreen: <><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" /></>,
   'fullscreen-exit': <><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
+  share: <><path d="M14 5h5v5" /><path d="M19 5l-6.5 6.5" /><path d="M10 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-4" /></>,
 }
 
 export function Icon({ name, size = 16, className }: Props) {

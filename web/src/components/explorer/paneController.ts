@@ -40,6 +40,10 @@ export interface PaneController {
   rename: () => void
   remove: () => void
   fetchSelected: () => void
+  /** 공유: 선택한 파일 1개의 다운로드 링크를 만들어 복사 */
+  shareSelected: () => void
+  /** 파일 1개(폴더 아님)를 골랐을 때만 공유 가능 */
+  canShare: boolean
   setSort: (key: SortKey) => void
   setView: (view: ViewMode) => void
   toggleColumn: (column: OptionalColumn) => void

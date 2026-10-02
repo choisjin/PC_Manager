@@ -157,6 +157,7 @@ export function ExplorerToolbar({ controller }: Props) {
         <button type="button" className="win-cmd icon-only" title="붙여넣기" disabled={readOnly || !c?.canPaste} onClick={() => c?.paste()}><Icon name="paste" /></button>
         <button type="button" className="win-cmd icon-only" title="이름 바꾸기" disabled={readOnly || !one} onClick={() => c?.rename()}><Icon name="rename" /></button>
         <button type="button" className="win-cmd icon-only" title="가져오기(다운로드)" disabled={disabled || noSel} onClick={() => c?.fetchSelected()}><Icon name="download" /></button>
+        <button type="button" className="win-cmd icon-only" title="공유 — 다운로드 링크 만들기·복사 (파일 1개)" disabled={disabled || !c?.canShare} onClick={() => c?.shareSelected()}><Icon name="share" /></button>
         <button type="button" className="win-cmd icon-only" title="삭제" disabled={readOnly || noSel} onClick={() => c?.remove()}><Icon name="delete" /></button>
         <span className="win-sep" />
         <button type="button" className="win-cmd" disabled={!c} onClick={sortMenu}><Icon name="sort" /> 정렬</button>
