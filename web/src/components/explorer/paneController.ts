@@ -19,6 +19,8 @@ export interface PaneController {
   itemCount: number
   selectionCount: number
   canPaste: boolean
+  /** 압축 파일 안을 보고 있음 (읽기 전용: 만들기·붙여넣기·이름 바꾸기·삭제·올리기 불가) */
+  inArchive: boolean
   view: ViewMode
   sortKey: SortKey
   sortAsc: boolean

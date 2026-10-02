@@ -3596,3 +3596,104 @@ th.sortable:hover {
 .hidden-entry {
   opacity: 0.55;
 }
+
+/* 파일 보기/편집 (텍스트·이미지·PDF) */
+.viewer-dialog {
+  width: min(1100px, calc(100vw - 32px));
+}
+
+.viewer-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  height: min(820px, calc(100vh - 48px));
+}
+
+.viewer-dialog .dialog-head {
+  gap: 8px;
+}
+
+.viewer-meta {
+  flex: none;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.viewer-dirty {
+  color: var(--accent);
+}
+
+.viewer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.viewer-check {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.viewer-error {
+  margin: 4px 8px 0;
+}
+
+.viewer-notice {
+  padding: 2px 8px;
+  color: var(--ok, #1a7f37);
+}
+
+.viewer-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.viewer-text {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 6px 8px;
+  font-family: Consolas, 'D2Coding', monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre;
+  tab-size: 4;
+  resize: none;
+  background: var(--panel);
+  border: 0;
+  outline: none;
+}
+
+.viewer-text.wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.viewer-loading {
+  padding: 12px;
+}
+
+.viewer-image {
+  max-width: 100%;
+  max-height: 100%;
+  margin: auto;
+  object-fit: contain;
+}
+
+.viewer-kind-image .viewer-body {
+  background: repeating-conic-gradient(#8881 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+}
+
+.viewer-pdf {
+  flex: 1;
+  width: 100%;
+  border: 0;
+}

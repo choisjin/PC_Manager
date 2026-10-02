@@ -76,6 +76,11 @@ public class FileTransferService(
             var file = new FileInfo(ReadablePath(path));
             return file.Exists ? file.Length : -1;
         }
+        catch (IOException ex) when (ex.Message.StartsWith(ArchiveBrowser.PasswordRequiredPrefix, StringComparison.Ordinal))
+        {
+            // 압축 암호가 필요하다는 것은 서버·대시보드까지 알려야 암호를 물을 수 있다
+            throw new Microsoft.AspNetCore.SignalR.HubException(ex.Message);
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
             return -1;

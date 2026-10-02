@@ -27,6 +27,8 @@ export function ExplorerToolbar({ controller }: Props) {
 
   const c = controller
   const disabled = !c || !c.online
+  // 압축 파일 안은 읽기 전용
+  const readOnly = disabled || !!c?.inArchive
   const noSel = !c || c.selectionCount === 0
   const one = c?.selectionCount === 1
 
@@ -145,23 +147,23 @@ export function ExplorerToolbar({ controller }: Props) {
 
       {/* 2행: 명령 바 */}
       <div className="win-row win-cmd-row">
-        <button type="button" className="win-cmd" disabled={disabled || !c?.path} onClick={() => c?.newFolder()}>
+        <button type="button" className="win-cmd" disabled={readOnly || !c?.path} onClick={() => c?.newFolder()}>
           <Icon name="new-folder" /> 새로 만들기
         </button>
         <span className="win-sep" />
-        <button type="button" className="win-cmd icon-only" title="잘라내기" disabled={disabled || noSel} onClick={() => c?.cut()}><Icon name="cut" /></button>
+        <button type="button" className="win-cmd icon-only" title="잘라내기" disabled={readOnly || noSel} onClick={() => c?.cut()}><Icon name="cut" /></button>
         <button type="button" className="win-cmd icon-only" title="복사" disabled={disabled || noSel} onClick={() => c?.copy()}><Icon name="copy" /></button>
-        <button type="button" className="win-cmd icon-only" title="붙여넣기" disabled={disabled || !c?.canPaste} onClick={() => c?.paste()}><Icon name="paste" /></button>
-        <button type="button" className="win-cmd icon-only" title="이름 바꾸기" disabled={disabled || !one} onClick={() => c?.rename()}><Icon name="rename" /></button>
+        <button type="button" className="win-cmd icon-only" title="붙여넣기" disabled={readOnly || !c?.canPaste} onClick={() => c?.paste()}><Icon name="paste" /></button>
+        <button type="button" className="win-cmd icon-only" title="이름 바꾸기" disabled={readOnly || !one} onClick={() => c?.rename()}><Icon name="rename" /></button>
         <button type="button" className="win-cmd icon-only" title="가져오기(다운로드)" disabled={disabled || noSel} onClick={() => c?.fetchSelected()}><Icon name="download" /></button>
-        <button type="button" className="win-cmd icon-only" title="삭제" disabled={disabled || noSel} onClick={() => c?.remove()}><Icon name="delete" /></button>
+        <button type="button" className="win-cmd icon-only" title="삭제" disabled={readOnly || noSel} onClick={() => c?.remove()}><Icon name="delete" /></button>
         <span className="win-sep" />
         <button type="button" className="win-cmd" disabled={!c} onClick={sortMenu}><Icon name="sort" /> 정렬</button>
         <button type="button" className="win-cmd" disabled={!c} onClick={viewMenu}><Icon name={c?.view === 'icons' ? 'view-grid' : 'view-details'} /> 보기</button>
         <span className="win-spacer" />
         <button type="button" className="win-cmd icon-only" title="원격조작" disabled={disabled} onClick={() => c?.openRemote()}><Icon name="remote" /></button>
         <button type="button" className="win-cmd icon-only" title="터미널 열기" disabled={disabled} onClick={() => c?.openTerminal()}><Icon name="terminal" /></button>
-        <button type="button" className="win-cmd icon-only" title="올리기(업로드)" disabled={disabled || !c?.path} onClick={() => c?.upload()}><Icon name="upload" /></button>
+        <button type="button" className="win-cmd icon-only" title="올리기(업로드)" disabled={readOnly || !c?.path} onClick={() => c?.upload()}><Icon name="upload" /></button>
       </div>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}

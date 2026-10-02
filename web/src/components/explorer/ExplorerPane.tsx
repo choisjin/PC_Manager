@@ -1,8 +1,9 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
-import { api, type DirectoryListing, type FileEntry, type PcStatus, type Transfer } from '../../api'
-import { isVideoFile } from '../../fileTypes'
+import { ARCHIVE_PASSWORD_PREFIX, api, type DirectoryListing, type FileEntry, type PcStatus, type Transfer } from '../../api'
+import { archiveBaseName, isArchiveFile, isImageFile, isPdfFile, isTextFile, isVideoFile } from '../../fileTypes'
 import { formatBytes } from '../../format'
 import type { SubscribeTransfers, WatchRun } from '../../useDashboard'
+import { FileViewer, type ViewerKind } from '../FileViewer'
 import { VideoViewer } from '../VideoViewer'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DriveTree } from './DriveTree'
@@ -146,6 +147,8 @@ export function ExplorerPane({
   const [sortAsc, setSortAsc] = useState(true)
   const [search, setSearch] = useState('')
   const [playing, setPlaying] = useState<{ path: string; name: string } | null>(null)
+  // 텍스트·이미지·PDF 바로 보기 (텍스트는 편집·저장)
+  const [viewing, setViewing] = useState<{ path: string; name: string; kind: ViewerKind; readOnly: boolean } | null>(null)
   const [terminal, setTerminal] = useState(false)
   const [remote, setRemote] = useState(false)
   const accessRef = useRef({ pcStatus, remoteUser })
@@ -227,6 +230,14 @@ export function ExplorerPane({
     if (requestId !== requestRef.current) return
     setLoading(false)
     if (result.error) {
+      if (result.archivePath && result.error.startsWith(ARCHIVE_PASSWORD_PREFIX)) {
+        const archive = result.archivePath
+        void askArchivePassword(archive).then((ok) => {
+          if (ok) load(result.path)
+          else setError(result.error)
+        })
+        return
+      }
       setError(result.error)
       return
     }
@@ -303,7 +314,7 @@ export function ExplorerPane({
   }, [activeTabId])
 
   const onTransferUpdated = useEffectEvent((transfer: Transfer) => {
-    if (transfer.agentId === agentId && (transfer.kind === 'Push' || transfer.kind === 'Compress') && transfer.state === 'Succeeded' && path) load(path)
+    if (transfer.agentId === agentId && (transfer.kind === 'Push' || transfer.kind === 'Compress' || transfer.kind === 'Extract') && transfer.state === 'Succeeded' && path) load(path)
   })
   useEffect(() => {
     const unsubscribe = subscribeTransfers((transfer) => onTransferUpdated(transfer))
@@ -458,9 +469,53 @@ export function ExplorerPane({
     }
   }
 
+  // 압축 파일 안을 보고 있으면 그 압축 파일 경로
+  const archivePath = listing?.archivePath ?? null
+  const inArchive = !!archivePath
+
+  /** 압축 암호를 물어 그 PC에 알려 준다. 넣었으면 true */
+  const askArchivePassword = async (archive: string) => {
+    const name = archive.split('\\').pop() ?? archive
+    const password = window.prompt(`'${name}'은(는) 암호가 걸린 압축 파일입니다.\n암호를 입력하세요.`)
+    if (!password) return false
+    try {
+      await api.setArchivePassword(agentId, archive, password)
+      return true
+    } catch (err) {
+      setError(toMessage(err))
+      return false
+    }
+  }
+
+  /** 텍스트·이미지·PDF는 바로 보기. 해당 없으면 null */
+  const viewerKind = (name: string): ViewerKind | null =>
+    isTextFile(name) ? 'text' : isImageFile(name) ? 'image' : isPdfFile(name) ? 'pdf' : null
+  const openViewer = (entry: FileEntry, kind: ViewerKind) =>
+    setViewing({ path: entry.fullPath, name: entry.name, kind, readOnly: inArchive })
+
+  /** 압축 풀기 (같은 PC). entries가 비면 압축 파일 전체 */
+  const extract = (archive: string, entries: FileEntry[], destination: string) => {
+    setError(null)
+    setNotice(null)
+    api.extractFiles(agentId, archive, entries.map((e) => e.fullPath), destination).then(
+      () => setNotice(`압축 풀기를 시작했습니다 → ${destination}`),
+      (err) => setError(toMessage(err)),
+    )
+  }
+  /** 다른 폴더로 압축 풀기: 경로를 입력받는다 */
+  const extractTo = (archive: string, entries: FileEntry[]) => {
+    const parent = archive.slice(0, archive.lastIndexOf('\\')) || archive
+    const dest = window.prompt('압축을 풀 폴더 (이 PC 안의 경로, 없으면 만듭니다)', parent)
+    if (dest?.trim()) extract(archive, entries, dest.trim())
+  }
+
   const openEntry = (entry: FileEntry) => {
+    const kind = entry.isDirectory ? null : viewerKind(entry.name)
     if (entry.isDirectory) navigate(entry.fullPath)
+    // 압축 파일은 폴더처럼 들어간다 (압축 안의 압축은 풀어서 열어야 함)
+    else if (!inArchive && isArchiveFile(entry.name)) navigate(entry.fullPath)
     else if (isVideoFile(entry.name)) setPlaying({ path: entry.fullPath, name: entry.name })
+    else if (kind) openViewer(entry, kind)
     else {
       // 파일 더블클릭 = 가져오기(다운로드 폴더로). 실행 파일이면 실행 안내.
       fetchFiles([entry])
@@ -472,6 +527,10 @@ export function ExplorerPane({
 
   const paste = async (targetFolder: string) => {
     if (!clipboard || !targetFolder) return
+    if (inArchive) {
+      setError('압축 파일 안에는 붙여넣을 수 없습니다.')
+      return
+    }
     setError(null)
     const errors: string[] = []
     for (const item of clipboard.items) {
@@ -621,7 +680,8 @@ export function ExplorerPane({
     canForward: activeTab.idx < activeTab.stack.length - 1,
     itemCount: listing?.entries.length ?? 0,
     selectionCount: selected.size,
-    canPaste: !!clipboard && !!path,
+    canPaste: !!clipboard && !!path && !inArchive,
+    inArchive,
     view,
     sortKey,
     sortAsc,
@@ -741,10 +801,54 @@ export function ExplorerPane({
     return () => window.removeEventListener('keydown', handler)
   }, [active])
 
+  // 압축 파일 안: 읽기 전용 메뉴 (보기, 압축 풀기, 가져오기, 복사)
+  const buildArchiveMenu = (targets: FileEntry[]): MenuItem[] => {
+    const archive = archivePath!
+    const files = targets.filter((t) => !t.isDirectory)
+    const archiveFolder = archive.slice(0, archive.lastIndexOf('\\')) || archive
+    const items: MenuItem[] = []
+    if (targets.length === 1 && !targets[0].isDirectory) {
+      const kind = viewerKind(targets[0].name)
+      if (kind) items.push({ label: kind === 'text' ? '보기 (읽기 전용)' : '보기', onClick: () => openViewer(targets[0], kind) })
+      if (isVideoFile(targets[0].name)) items.push({ label: '재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
+    }
+    const what = targets.length ? `선택 ${targets.length}개` : '전체'
+    items.push({ label: `압축 풀기: ${what} → 압축 파일이 있는 폴더`, onClick: () => extract(archive, targets, archiveFolder) })
+    items.push({ label: `압축 풀기: ${what} → 다른 폴더…`, onClick: () => extractTo(archive, targets) })
+    if (files.length > 0) items.push({ label: `내 PC로 가져오기${files.length > 1 ? ` (${files.length})` : ''}`, onClick: () => fetchFiles(files) })
+    if (targets.length > 0) {
+      items.push({ separator: true })
+      items.push({
+        label: `복사${targets.length > 1 ? ` (${targets.length})` : ''} — 다른 폴더·PC에 붙여넣기`,
+        onClick: () => setClip(targets, 'copy'),
+      })
+      items.push({ label: '경로 복사', onClick: () => void copyText(targets.map((t) => t.fullPath).join('\n')) })
+    }
+    return items
+  }
+
   const buildMenu = (targets: FileEntry[], folder: string | null): MenuItem[] => {
+    if (inArchive) return buildArchiveMenu(targets)
     const pasteTarget = folder ?? path
     const files = targets.filter((t) => !t.isDirectory)
     const items: MenuItem[] = []
+    // 보기·편집 / 압축 파일 열기·풀기
+    if (targets.length === 1 && !targets[0].isDirectory) {
+      const t = targets[0]
+      const kind = viewerKind(t.name)
+      if (kind) items.push({ label: kind === 'text' ? '열기 (보기·편집)' : '보기', onClick: () => openViewer(t, kind) })
+      else if (t.size <= 5 * 1024 * 1024 && !isArchiveFile(t.name) && !isVideoFile(t.name))
+        items.push({ label: '텍스트로 열기', onClick: () => openViewer(t, 'text') })
+      if (isArchiveFile(t.name)) {
+        const folderOf = t.fullPath.slice(0, t.fullPath.lastIndexOf('\\'))
+        const sub = `${folderOf}\\${archiveBaseName(t.name)}`
+        items.push({ label: '압축 파일 열기 (폴더처럼 보기)', onClick: () => navigate(t.fullPath) })
+        items.push({ label: `압축 풀기 → '${archiveBaseName(t.name)}' 폴더에`, onClick: () => extract(t.fullPath, [], sub) })
+        items.push({ label: '압축 풀기 → 여기에', onClick: () => extract(t.fullPath, [], folderOf) })
+        items.push({ label: '압축 풀기 → 다른 폴더…', onClick: () => extractTo(t.fullPath, []) })
+      }
+      if (items.length) items.push({ separator: true })
+    }
     if (targets.length > 0) {
       items.push({ label: `복사${targets.length > 1 ? ` (${targets.length})` : ''}`, onClick: () => setClip(targets, 'copy') })
       items.push({ label: `잘라내기${targets.length > 1 ? ` (${targets.length})` : ''}`, onClick: () => setClip(targets, 'cut') })
@@ -1139,6 +1243,24 @@ export function ExplorerPane({
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items ?? buildMenu(menu.targets, menu.folder)} onClose={() => setMenu(null)} />}
 
+      {viewing && (
+        <FileViewer
+          agentId={agentId}
+          path={viewing.path}
+          name={viewing.name}
+          kind={viewing.kind}
+          readOnly={viewing.readOnly}
+          onFetch={() => fetchFiles([{ fullPath: viewing.path, name: viewing.name, isDirectory: false, size: 0, modifiedAt: null }])}
+          onSaved={() => {
+            if (path) load(path)
+          }}
+          onPasswordNeeded={() => {
+            const archive = listing?.archivePath
+            return archive ? askArchivePassword(archive) : Promise.resolve(false)
+          }}
+          onClose={() => setViewing(null)}
+        />
+      )}
       {playing && (
         <VideoViewer agentId={agentId} path={playing.path} name={playing.name} onFetch={() => fetchFiles([{ fullPath: playing.path, name: playing.name, isDirectory: false, size: 0, modifiedAt: null }])} onClose={() => setPlaying(null)} />
       )}
