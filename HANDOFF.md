@@ -32,6 +32,11 @@
 - **업데이트**: GitHub API 한도 초과 시 웹 리디렉션으로 확인, 설치 기록(`C:\ProgramData\PcManager\Server\install.log`)·실패 표시
 - **난독화**: Obfuscar (배포 빌드만)
 - 기타: 공유 아이콘(다운로드 링크), PC 트리 들여쓰기·별칭 이름순 정렬
+- **채팅방 (0.8.18 이후)**: 전체 채팅을 없애고 PiP 채팅 탭에 왼쪽 방 목록(1:1·그룹) + 오른쪽 대화. 다른 프로젝트 사용자와도 대화.
+  그룹은 만들 때 이름 입력, 초대는 구성원 누구나, 강퇴·이름 변경은 방장만(방장이 나가면 가장 먼저 들어온 사람이 방장).
+  알림은 '[방 이름] 보낸 사람 | 내용'. 서버: `ChatRoomStore`(chat-rooms.json, chat-room-messages.jsonl), `Api/ChatEndpoints.cs`,
+  메시지·변경은 Hub 그룹 `chat:사용자id`로 구성원에게만. 대시보드: `ChatPanel.tsx`, `useDashboard`의 chatRooms/chatActions/subscribeChat.
+  예전 전체 채팅(chat.jsonl)은 더 이상 읽지 않음
 
 ---
 

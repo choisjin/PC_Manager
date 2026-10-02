@@ -311,15 +311,32 @@ export interface RemoteUsage {
   inUseBy: Record<string, { userId: string; since: string }>
 }
 
+/** 채팅방 메시지. userId가 null이면 시스템 안내(초대·강퇴·나가기 등) */
 export interface ChatMessage {
   id: number
-  userId: string
+  roomId: string
+  userId: string | null
   text: string
   at: string
   /** @로 호출한 userId 목록 */
-  mentions?: string[]
-  /** 읽음 처리한 userId 목록 */
-  readBy?: string[]
+  mentions?: string[] | null
+}
+
+/** 채팅방: direct(1:1) | group */
+export interface ChatRoom {
+  id: string
+  kind: 'direct' | 'group'
+  /** 그룹 방 이름 (1:1은 null → 상대 이름으로 표시) */
+  name: string | null
+  /** 그룹 방장 (강퇴 가능) */
+  ownerId: string | null
+  members: { userId: string; joinedAt: string }[]
+  createdAt: string
+  /** 사용자별 마지막으로 읽은 메시지 번호 */
+  reads: Record<string, number>
+  lastMessage: ChatMessage | null
+  /** 내가 안 읽은 메시지 수 */
+  unread: number
 }
 
 /** Remote 화면용 PC 미리보기 */
@@ -471,7 +488,22 @@ export const api = {
   setPcStatus: (agentId: string, status: PcStatusValue, note: string | null) =>
     request<PcStatuses>(`/api/agents/${agentId}/status`, { method: 'PUT', body: JSON.stringify({ status, note }) }),
   remoteUsage: () => request<RemoteUsage>('/api/remote-usage'),
-  chat: (take = 100) => request<ChatMessage[]>(`/api/chat?take=${take}`),
+  chatRooms: () => request<ChatRoom[]>('/api/chat/rooms'),
+  chatMessages: (roomId: string, take = 200) => request<ChatMessage[]>(`/api/chat/rooms/${encodeURIComponent(roomId)}/messages?take=${take}`),
+  createChatGroup: (name: string, memberIds: string[]) =>
+    request<ChatRoom>('/api/chat/rooms', { method: 'POST', body: JSON.stringify({ name, memberIds }) }),
+  openDirectChat: (userId: string) => request<ChatRoom>('/api/chat/direct', { method: 'POST', body: JSON.stringify({ userId }) }),
+  inviteChat: (roomId: string, userIds: string[]) =>
+    request<ChatRoom>(`/api/chat/rooms/${encodeURIComponent(roomId)}/invite`, { method: 'POST', body: JSON.stringify({ userIds }) }),
+  kickChat: (roomId: string, userId: string) =>
+    request<ChatRoom>(`/api/chat/rooms/${encodeURIComponent(roomId)}/kick/${encodeURIComponent(userId)}`, { method: 'POST' }),
+  leaveChat: (roomId: string) => request<void>(`/api/chat/rooms/${encodeURIComponent(roomId)}/leave`, { method: 'POST' }),
+  renameChat: (roomId: string, name: string) =>
+    request<ChatRoom>(`/api/chat/rooms/${encodeURIComponent(roomId)}/name`, { method: 'PUT', body: JSON.stringify({ name }) }),
+  sendChat: (roomId: string, text: string, mentions: string[]) =>
+    request<ChatMessage>(`/api/chat/rooms/${encodeURIComponent(roomId)}/messages`, { method: 'POST', body: JSON.stringify({ text, mentions }) }),
+  readChat: (roomId: string, messageId: number) =>
+    request<void>(`/api/chat/rooms/${encodeURIComponent(roomId)}/read`, { method: 'POST', body: JSON.stringify({ messageId }) }),
 
   updateStatus: () => request<UpdateStatus>('/api/update'),
   checkUpdate: () => request<UpdateStatus>('/api/update/check', { method: 'POST' }),

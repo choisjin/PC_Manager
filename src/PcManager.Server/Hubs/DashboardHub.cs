@@ -22,20 +22,23 @@ public interface IDashboardClient
     Task PresenceChanged(IReadOnlyDictionary<string, IReadOnlyList<string>> viewers);
     Task PcStatusesChanged(PcStatusesView statuses);
     Task RemoteUsageChanged(RemoteUsageView usage);
-    Task ChatMessage(ChatMessageView message);
-    Task ChatReadChanged(ChatReadView read);
+    Task ChatRoomChanged(ChatRoomView room);
+    Task ChatRoomRemoved(string roomId);
+    Task ChatRoomMessage(ChatRoomMessageView message);
+    Task ChatRoomRead(string roomId, string userId, long messageId);
     Task ThumbnailUpdated(ThumbnailView thumbnail);
 }
 
 /// <summary>웹 대시보드가 접속하는 Hub. 출력은 보고 있는 실행에만 전달한다.</summary>
-public class DashboardHub(PresenceRegistry presence, ChatStore chat, ThumbnailService thumbnails) : Hub<IDashboardClient>
+public class DashboardHub(PresenceRegistry presence, ThumbnailService thumbnails) : Hub<IDashboardClient>
 {
-    /// <summary>메시지 읽음 처리 (호출받은 사람이 확인 버튼을 누름)</summary>
-    public async Task MarkChatRead(string userId, long messageId)
+    /// <summary>이 접속이 받을 채팅 사용자 (그 사용자가 속한 방의 메시지·변경만 받는다). 사용자를 바꾸면 다시 부른다</summary>
+    public async Task JoinChat(string? previousUserId, string? userId)
     {
-        if (string.IsNullOrWhiteSpace(userId))
-            return;
-        await Clients.All.ChatReadChanged(chat.MarkRead(messageId, userId));
+        if (!string.IsNullOrWhiteSpace(previousUserId))
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, Api.ChatEndpoints.UserGroup(previousUserId));
+        if (!string.IsNullOrWhiteSpace(userId))
+            await Groups.AddToGroupAsync(Context.ConnectionId, Api.ChatEndpoints.UserGroup(userId));
     }
 
     /// <summary>Remote 화면에서 보고 싶은 PC 목록 (빈 목록이면 구독 해제). 마지막 썸네일은 바로 보내 준다</summary>
@@ -49,16 +52,6 @@ public class DashboardHub(PresenceRegistry presence, ChatStore chat, ThumbnailSe
         thumbnails.SetWants(Context.ConnectionId, ids);
         foreach (var t in thumbnails.Latest.Where(t => ids.Contains(t.AgentId)))
             await Clients.Caller.ThumbnailUpdated(t);
-    }
-
-    /// <summary>사용자 간 채팅 메시지 (모든 대시보드에 전달)</summary>
-    /// <param name="mentions">@로 호출한 userId 목록 (선택)</param>
-    public async Task SendChat(string userId, string text, IReadOnlyList<string>? mentions = null)
-    {
-        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(text))
-            return;
-        var message = chat.Add(userId, text, mentions);
-        await Clients.All.ChatMessage(message);
     }
 
     public static string RunGroup(string runId) => $"run:{runId}";

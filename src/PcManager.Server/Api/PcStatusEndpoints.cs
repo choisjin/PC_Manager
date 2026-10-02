@@ -31,7 +31,6 @@ public static class PcStatusEndpoints
 
         app.MapGet("/api/remote-usage", (RemoteUsageRegistry usage) => usage.Snapshot());
 
-        app.MapGet("/api/chat", (int? take, ChatStore chat) => chat.Recent(Math.Clamp(take ?? 100, 1, 500)));
     }
 
     private static string? UserId(HttpRequest request)

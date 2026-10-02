@@ -1,9 +1,10 @@
 import * as signalR from '@microsoft/signalr'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import {
   api,
   type Agent,
   type ChatMessage,
+  type ChatRoom,
   type PcStatus,
   type PcStatuses,
   type PcStatusValue,
@@ -118,7 +119,11 @@ export function useDashboard() {
   const [serverHostName, setServerHostName] = useState<string | null>(null)
   const [clientIp, setClientIp] = useState<string | null>(null)
   const [remoteUsage, setRemoteUsage] = useState<RemoteUsage['inUseBy']>({})
-  const [chat, setChat] = useState<ChatMessage[]>([])
+  // 채팅방(1:1·그룹)과 방별 메시지 (방을 열 때 불러온다)
+  const [chatRooms, setChatRooms] = useState<ChatRoom[]>([])
+  const [chatMessages, setChatMessages] = useState<Record<string, ChatMessage[]>>({})
+  const chatUserRef = useRef<string | null>(null)
+  const chatListenersRef = useRef(new Set<(message: ChatMessage) => void>())
   const [thumbnails, setThumbnails] = useState<Record<string, Thumbnail>>({})
   const thumbWantsRef = useRef<string[]>([])
   const [connected, setConnected] = useState(false)
@@ -181,11 +186,48 @@ export function useDashboard() {
     connection.on('PresenceChanged', (viewers: Record<string, string[]>) => setPresence(viewers))
     connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
     connection.on('RemoteUsageChanged', (v: RemoteUsage) => setRemoteUsage(v.inUseBy))
-    connection.on('ChatReadChanged', (r: { messageId: number; readBy: string[] }) =>
-      setChat((prev) => prev.map((m) => (m.id === r.messageId ? { ...m, readBy: r.readBy } : m))),
+    // 채팅: 서버는 내가 속한 방의 것만 보낸다
+    const sortRooms = (list: ChatRoom[]) =>
+      [...list].sort((a, b) => (b.lastMessage?.at ?? b.createdAt).localeCompare(a.lastMessage?.at ?? a.createdAt))
+    connection.on('ChatRoomChanged', (room: ChatRoom) =>
+      setChatRooms((prev) => sortRooms([...prev.filter((r) => r.id !== room.id), room])),
     )
+    connection.on('ChatRoomRemoved', (roomId: string) => {
+      setChatRooms((prev) => prev.filter((r) => r.id !== roomId))
+      setChatMessages((prev) => {
+        const next = { ...prev }
+        delete next[roomId]
+        return next
+      })
+    })
+    connection.on('ChatRoomMessage', (m: ChatMessage) => {
+      const self = chatUserRef.current
+      setChatMessages((prev) => (prev[m.roomId] && !prev[m.roomId].some((x) => x.id === m.id) ? { ...prev, [m.roomId]: [...prev[m.roomId], m].slice(-500) } : prev))
+      setChatRooms((prev) =>
+        sortRooms(
+          prev.map((r) =>
+            r.id === m.roomId
+              ? { ...r, lastMessage: m, unread: m.userId && m.userId !== self ? r.unread + 1 : r.unread }
+              : r,
+          ),
+        ),
+      )
+      for (const listener of chatListenersRef.current) listener(m)
+    })
+    connection.on('ChatRoomRead', (roomId: string, userId: string, messageId: number) => {
+      const self = chatUserRef.current
+      setChatRooms((prev) =>
+        prev.map((r) => {
+          if (r.id !== roomId) return r
+          const reads = { ...r.reads, [userId]: Math.max(r.reads[userId] ?? 0, messageId) }
+          // 내가 (다른 창에서라도) 읽었으면 그 이후 메시지만 안 읽음
+          const unread =
+            userId === self ? (chatMessagesRef.current[roomId] ?? []).filter((x) => x.id > messageId && x.userId && x.userId !== self).length : r.unread
+          return { ...r, reads, unread: userId === self ? Math.min(unread, r.unread) : r.unread }
+        }),
+      )
+    })
     connection.on('ThumbnailUpdated', (t: Thumbnail) => setThumbnails((prev) => ({ ...prev, [t.agentId]: t })))
-    connection.on('ChatMessage', (m: ChatMessage) => setChat((prev) => (prev.some((x) => x.id === m.id) ? prev : [...prev, m].slice(-500))))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
     const sync = async () => {
@@ -201,7 +243,9 @@ export function useDashboard() {
       const orgData = await api.org().catch(() => null)
       const statuses = await api.pcStatuses().catch(() => null)
       const usage = await api.remoteUsage().catch(() => null)
-      const chatList = await api.chat().catch(() => null)
+      // 채팅: 이 접속이 받을 사용자를 다시 알리고(재연결 후 그룹 복구) 내 방 목록을 받는다
+      if (chatUserRef.current) await connection.invoke('JoinChat', null, chatUserRef.current).catch(() => {})
+      const rooms = chatUserRef.current ? await api.chatRooms().catch(() => null) : null
       const install = await api.installInfo().catch(() => null)
       if (disposed) return
       if (install) {
@@ -210,7 +254,7 @@ export function useDashboard() {
       }
       if (statuses) setPcStatuses(statuses.statuses)
       if (usage) setRemoteUsage(usage.inUseBy)
-      if (chatList) setChat(chatList)
+      if (rooms) setChatRooms(rooms)
       setAgents(agentList.sort(byMachineName))
       setRuns(runList)
       setJobs(jobList)
@@ -379,15 +423,74 @@ export function useDashboard() {
     connectionRef.current?.invoke('WatchThumbnails', agentIds).catch(() => {})
   }, [])
 
-  const markChatRead = useCallback((userId: string, messageId: number) => {
-    connectionRef.current?.invoke('MarkChatRead', userId, messageId).catch((err) => console.error('읽음 처리 실패', err))
+  // ── 채팅 ──
+  const chatMessagesRef = useRef(chatMessages)
+  chatMessagesRef.current = chatMessages
+
+  /** 이 대시보드의 채팅 사용자 (로그인한 사용자). 바꾸면 그 사용자의 방만 받는다 */
+  const joinChat = useCallback((userId: string | null) => {
+    const previous = chatUserRef.current
+    chatUserRef.current = userId
+    setChatRooms([])
+    setChatMessages({})
+    connectionRef.current?.invoke('JoinChat', previous, userId).catch(() => {})
+    if (userId) api.chatRooms().then(setChatRooms).catch(() => {})
   }, [])
 
-  const sendChat = useCallback((userId: string, text: string, mentions: string[] = []) => {
-    connectionRef.current?.invoke('SendChat', userId, text, mentions).catch((err) => console.error('채팅 전송 실패', err))
+  const loadChatMessages = useCallback(async (roomId: string) => {
+    const list = await api.chatMessages(roomId)
+    setChatMessages((prev) => ({ ...prev, [roomId]: list }))
+    return list
   }, [])
 
-  // 지금 보고 있는 PC를 서버에 알린다 (실시간 프레즌스)
+  /** 방을 보고 있음: 마지막 메시지까지 읽음 처리 */
+  const readChatRoom = useCallback((roomId: string) => {
+    const self = chatUserRef.current
+    const list = chatMessagesRef.current[roomId] ?? []
+    const last = list[list.length - 1]
+    setChatRooms((prev) => prev.map((r) => (r.id === roomId ? { ...r, unread: 0 } : r)))
+    if (!self || !last) return
+    setChatRooms((prev) => prev.map((r) => (r.id === roomId && (r.reads[self] ?? 0) < last.id ? { ...r, reads: { ...r.reads, [self]: last.id } } : r)))
+    api.readChat(roomId, last.id).catch(() => {})
+  }, [])
+
+  const upsertRoom = (room: ChatRoom) =>
+    setChatRooms((prev) => (prev.some((r) => r.id === room.id) ? prev.map((r) => (r.id === room.id ? room : r)) : [room, ...prev]))
+
+  const chatActions = useMemo(
+    () => ({
+      load: loadChatMessages,
+      read: readChatRoom,
+      send: (roomId: string, text: string, mentions: string[]) => api.sendChat(roomId, text, mentions),
+      createGroup: async (name: string, memberIds: string[]) => {
+        const room = await api.createChatGroup(name, memberIds)
+        upsertRoom(room)
+        return room
+      },
+      openDirect: async (userId: string) => {
+        const room = await api.openDirectChat(userId)
+        upsertRoom(room)
+        return room
+      },
+      invite: async (roomId: string, userIds: string[]) => upsertRoom(await api.inviteChat(roomId, userIds)),
+      kick: async (roomId: string, userId: string) => upsertRoom(await api.kickChat(roomId, userId)),
+      leave: async (roomId: string) => {
+        await api.leaveChat(roomId)
+        setChatRooms((prev) => prev.filter((r) => r.id !== roomId))
+      },
+      rename: async (roomId: string, name: string) => upsertRoom(await api.renameChat(roomId, name)),
+    }),
+    [loadChatMessages, readChatRoom],
+  )
+
+  /** 새 채팅 메시지 알림 받기 (알림 표시용) */
+  const subscribeChat = useCallback((listener: (message: ChatMessage) => void) => {
+    chatListenersRef.current.add(listener)
+    return () => {
+      chatListenersRef.current.delete(listener)
+    }
+  }, [])
+
   const announcePresence = useCallback((userId: string, agentIds: string[]) => {
     presenceRef.current = { userId, agentIds }
     connectionRef.current?.invoke('SetPresence', userId, agentIds).catch(() => {})
@@ -418,9 +521,11 @@ export function useDashboard() {
     serverHostName,
     clientIp,
     remoteUsage,
-    chat,
-    sendChat,
-    markChatRead,
+    chatRooms,
+    chatMessages,
+    chatActions,
+    joinChat,
+    subscribeChat,
     thumbnails,
     watchThumbnails,
     connected,

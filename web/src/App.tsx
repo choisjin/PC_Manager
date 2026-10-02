@@ -76,9 +76,11 @@ export default function App() {
     serverHostName,
     clientIp,
     remoteUsage,
-    chat,
-    sendChat,
-    markChatRead,
+    chatRooms,
+    chatMessages,
+    chatActions,
+    joinChat,
+    subscribeChat,
     thumbnails,
     watchThumbnails,
     watchRun,
@@ -105,7 +107,9 @@ export default function App() {
   useEffect(() => {
     setCurrentUser(identity?.userId ?? null)
     reloadShares()
-  }, [identity?.userId, reloadShares])
+    // 채팅: 이 사용자의 방만 받는다
+    joinChat(identity?.userId ?? null)
+  }, [identity?.userId, reloadShares, joinChat])
 
   // id → 이름 해석 (PC/공유, 사용자)
   const nameById = useMemo(() => {
@@ -223,7 +227,17 @@ export default function App() {
       </main>
 
       {/* 어디서든 보이는 전송 진행률·알림 위젯 */}
-      <TransfersPip transfers={transfers} machineName={machineName} userName={userName} chat={chat} users={org.users} selfUserId={identity.userId} onSendChat={sendChat} onMarkRead={markChatRead} />
+      <TransfersPip
+        transfers={transfers}
+        machineName={machineName}
+        userName={userName}
+        org={org}
+        selfUserId={identity.userId}
+        chatRooms={chatRooms}
+        chatMessages={chatMessages}
+        chatActions={chatActions}
+        subscribeChat={subscribeChat}
+      />
     </div>
   )
 }

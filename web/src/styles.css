@@ -3773,3 +3773,205 @@ th.sortable:hover {
 .pip:not(.collapsed) .pip-head {
   padding-right: 16px;
 }
+
+/* 채팅: 왼쪽 방 목록 + 오른쪽 대화 (PiP 안) */
+.pip-body.pip-chat {
+  display: flex;
+  padding: 0;
+}
+
+.chat-panel {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chat-rooms {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 1px;
+  width: 150px;
+  padding: 3px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.chat-new {
+  margin-bottom: 3px;
+  padding: 3px 4px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.chat-room-item {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 4px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.chat-room-item:hover {
+  background: var(--hover);
+}
+
+.chat-room-item.active {
+  background: var(--selected);
+}
+
+.chat-room-item.unread .chat-room-name {
+  font-weight: 700;
+}
+
+.chat-room-icon {
+  flex: none;
+  font-size: 13px;
+}
+
+.chat-room-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.chat-room-name {
+  font-size: 12px;
+}
+
+.chat-room-last {
+  font-size: 11px;
+}
+
+.chat-main {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chat-main .pip-chat-list {
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-main-head {
+  display: flex;
+  flex: none;
+  gap: 3px;
+  align-items: center;
+  padding: 3px 5px;
+  border-bottom: 1px solid var(--border);
+}
+
+.chat-main-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.chat-head-btn {
+  flex: none;
+  padding: 1px 6px;
+  font-size: 11px;
+}
+
+.chat-head-btn.danger {
+  color: var(--danger, #c92a2a);
+}
+
+.chat-system {
+  margin: 4px 0;
+  text-align: center;
+}
+
+.chat-owner {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.chat-error {
+  padding: 2px 6px;
+  color: var(--danger, #c92a2a);
+}
+
+/* 새 대화·초대·구성원 겹침 창 */
+.chat-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--panel);
+}
+
+.chat-overlay-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-overlay-input {
+  width: 100%;
+}
+
+.chat-pick-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.chat-pick-list > li {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 3px;
+  border-radius: 6px;
+}
+
+.chat-pick-list > li:hover {
+  background: var(--hover);
+}
+
+.chat-pick {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.chat-proj {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+}
+
+.chat-overlay-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}

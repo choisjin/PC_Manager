@@ -27,11 +27,7 @@ public record RemoteUsageView(IReadOnlyDictionary<string, RemoteUserView> InUseB
 
 public record RemoteUserView(string UserId, DateTime Since);
 
-/// <param name="Mentions">@로 호출한 userId 목록 (없으면 빈 목록)</param>
-/// <param name="ReadBy">읽음 처리한 userId 목록</param>
-public record ChatMessageView(long Id, string UserId, string Text, DateTime At, IReadOnlyList<string>? Mentions = null, IReadOnlyList<string>? ReadBy = null);
 
-public record ChatReadView(long MessageId, IReadOnlyList<string> ReadBy);
 
 /// <param name="Jpeg">base64 JPEG (약 320px 폭)</param>
 /// <param name="IdleSeconds">시계를 뺀 화면이 바뀌지 않은 시간(초)</param>

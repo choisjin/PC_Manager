@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTopLayer } from '../useTopLayer'
-import type { ChatMessage, OrgUser, Transfer } from '../api'
+import type { ChatMessage, ChatRoom, Org, Transfer } from '../api'
+import { roomTitle } from '../chatRoom'
+import { type ChatActions, ChatPanel } from './ChatPanel'
 import { formatBytes } from '../format'
 import { kindLabel } from './explorer/useTransfers'
 
@@ -9,55 +11,27 @@ interface Props {
   transfers: Transfer[]
   machineName: (agentId: string) => string
   userName: (userId: string | null | undefined) => string | null
-  chat: ChatMessage[]
-  users: OrgUser[]
+  org: Org
   selfUserId: string | null
-  onSendChat: (userId: string, text: string, mentions: string[]) => void
-  onMarkRead: (userId: string, messageId: number) => void
+  chatRooms: ChatRoom[]
+  chatMessages: Record<string, ChatMessage[]>
+  chatActions: ChatActions
+  subscribeChat: (listener: (message: ChatMessage) => void) => () => void
 }
 
-const SIZE_KEY = 'pcm.pip.size'
-const MIN_W = 240
-const MIN_H = 180
+const SIZE_KEY = 'pcm.pip.size2'
+const MIN_W = 380
+const MIN_H = 220
+// 기본 크기: 왼쪽 방 목록 + 오른쪽 대화가 함께 보이게
+const DEFAULT_SIZE = { w: 560, h: 420 }
 
-function loadSize(): { w: number; h: number } | null {
+function loadSize(): { w: number; h: number } {
   try {
     const raw = localStorage.getItem(SIZE_KEY)
-    return raw ? (JSON.parse(raw) as { w: number; h: number }) : null
+    return raw ? (JSON.parse(raw) as { w: number; h: number }) : DEFAULT_SIZE
   } catch {
-    return null
+    return DEFAULT_SIZE
   }
-}
-
-/** 커서 앞의 "@이름" 입력 조각 (드롭다운 표시용) */
-const mentionToken = (text: string, caret: number) => {
-  const before = text.slice(0, caret)
-  const m = /(?:^|\s)@([^\s@]*)$/.exec(before)
-  return m ? { query: m[1], start: before.length - m[1].length - 1 } : null
-}
-
-/** 텍스트 안의 @이름을 사용자 id로 (이름이 긴 것부터 매칭) */
-const findMentions = (text: string, users: OrgUser[]) => {
-  const sorted = [...users].sort((a, b) => b.name.length - a.name.length)
-  const ids = new Set<string>()
-  for (const u of sorted) if (text.includes(`@${u.name}`)) ids.add(u.id)
-  return [...ids]
-}
-
-/** @이름 부분을 강조해서 렌더 */
-const renderText = (text: string, users: OrgUser[]) => {
-  const names = [...users].sort((a, b) => b.name.length - a.name.length).map((u) => u.name)
-  if (names.length === 0) return text
-  const re = new RegExp(`@(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'g')
-  const out: (string | React.JSX.Element)[] = []
-  let last = 0
-  for (const m of text.matchAll(re)) {
-    if (m.index > last) out.push(text.slice(last, m.index))
-    out.push(<span key={m.index} className="chat-mention">{m[0]}</span>)
-    last = m.index + m[0].length
-  }
-  if (last < text.length) out.push(text.slice(last))
-  return out
 }
 
 /** 짧은 알림음 (사용자 조작 이후에만 소리가 난다) */
@@ -79,11 +53,6 @@ const beep = () => {
 
 type PipTab = 'transfers' | 'chat'
 const TAB_KEY = 'pcm.pip.tab'
-
-const timeText = (iso: string) => {
-  const d = new Date(iso)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
 
 const leafOf = (path: string | null) => path?.split(/[\\/]/).filter(Boolean).pop() ?? ''
 
@@ -125,10 +94,10 @@ function savePos(p: PipPos) {
 }
 
 /** 전송 진행률·알림을 띄우는 떠 있는 위젯 (드래그 이동 + 펴고 접기) */
-export function TransfersPip({ transfers, machineName, userName, chat, users, selfUserId, onSendChat, onMarkRead }: Props) {
+export function TransfersPip({ transfers, machineName, userName, org, selfUserId, chatRooms, chatMessages, chatActions, subscribeChat }: Props) {
   const [pos, setPos] = useState(loadPos)
   // 위젯 크기 (오른쪽 아래 모서리를 끌어 조절). null이면 기본
-  const [size, setSize] = useState<{ w: number; h: number } | null>(loadSize)
+  const [size, setSize] = useState<{ w: number; h: number }>(loadSize)
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -151,7 +120,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
       window.removeEventListener('mouseup', onUp)
       setSize((s) => {
         try {
-          if (s) localStorage.setItem(SIZE_KEY, JSON.stringify(s))
+          localStorage.setItem(SIZE_KEY, JSON.stringify(s))
         } catch {
           // 무시
         }
@@ -166,7 +135,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
     window.addEventListener('mouseup', onUp)
   }
   const HEAD_H = 30
-  const bodyStyle = size ? { height: size.h - HEAD_H, maxHeight: 'none' as const } : undefined
+  const bodyStyle = { height: size.h - HEAD_H, maxHeight: 'none' as const }
   const [tab, setTab] = useState<PipTab>(() => {
     try {
       return localStorage.getItem(TAB_KEY) === 'chat' ? 'chat' : 'transfers'
@@ -174,28 +143,54 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
       return 'transfers'
     }
   })
-  const [draft, setDraft] = useState('')
-  const [caret, setCaret] = useState(0)
-  const [pick, setPick] = useState(0)
-  const inputRef = useRef<HTMLInputElement>(null)
   const titleTimerRef = useRef<number>(0)
   const baseTitleRef = useRef(document.title)
-
-  // 브라우저 알림 권한 (사용자 조작 시점에 요청)
-  const askNotify = () => {
-    if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
+  // 지금 보고 있는 채팅방 (사용자별로 기억)
+  const roomKey = `pcm.chat.room.${selfUserId ?? 'anon'}`
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(roomKey)
+    } catch {
+      return null
+    }
+  })
+  useEffect(() => {
+    try {
+      setActiveRoomId(localStorage.getItem(roomKey))
+    } catch {
+      setActiveRoomId(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selfUserId])
+  const changeRoom = (roomId: string | null) => {
+    setActiveRoomId(roomId)
+    try {
+      if (roomId) localStorage.setItem(roomKey, roomId)
+      else localStorage.removeItem(roomKey)
+    } catch {
+      // 무시
+    }
   }
 
-  // 창이 뒤에 있거나 내려가 있을 때: 윈도우 알림 + 탭 제목 깜빡임 + 알림음
-  const notify = (m: ChatMessage, mentioned: boolean) => {
-    const who = userName(m.userId) ?? '알 수 없음'
+  // 알림 구독은 한 번만 걸리므로 이름 찾기는 항상 최신 사용자 목록을 쓰도록 ref로
+  const userNameRef = useRef(userName)
+  userNameRef.current = userName
+  const nameOf = (id: string | null | undefined) => (id ? userNameRef.current(id) ?? '(삭제된 사용자)' : '')
+
+  // 창이 뒤에 있거나 그 방을 안 보고 있을 때: 윈도우 알림([방 이름] 보낸 사람: 내용) + 탭 제목 깜빡임 + 알림음
+  const notify = (m: ChatMessage, room: ChatRoom | undefined, mentioned: boolean) => {
+    const title = room ? roomTitle(room, selfUserId, (id) => nameOf(id)) : '채팅'
+    const who = nameOf(m.userId)
     const body = m.text.length > 120 ? m.text.slice(0, 120) + '…' : m.text
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
-        const n = new Notification(mentioned ? `${who}님이 나를 호출했습니다` : `${who}의 메시지`, { body, tag: `pcm-chat-${m.id}`, silent: true })
+        const head = room?.kind === 'group' ? `[${title}] ${who}${mentioned ? '님이 나를 호출했습니다' : ''}` : `${who}${mentioned ? '님이 나를 호출했습니다' : ''}`
+        const n = new Notification(head, { body, tag: `pcm-chat-${m.roomId}`, silent: true })
         n.onclick = () => {
           window.focus()
           switchTab('chat')
+          setCollapsed(false)
+          changeRoom(m.roomId)
           n.close()
         }
       } catch {
@@ -207,7 +202,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
       let on = false
       titleTimerRef.current = window.setInterval(() => {
         on = !on
-        document.title = on ? (mentioned ? '📣 나를 호출했습니다' : '💬 새 메시지') : baseTitleRef.current
+        document.title = on ? (mentioned ? `📣 ${title}` : `💬 ${title}`) : baseTitleRef.current
       }, 900)
     }
   }
@@ -229,27 +224,6 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  // 채팅 탭을 안 보고 있을 때 새로 온 메시지 수
-  const [unread, setUnread] = useState(0)
-  // 마지막으로 본/알린 메시지 번호는 사용자별로 브라우저에 기억한다 (새로 열 때 옛 메시지를 다시 알리지 않도록)
-  const markKey = (kind: 'seen' | 'notified') => `pcm.chat.${kind}.${selfUserId ?? 'anon'}`
-  const loadMark = (kind: 'seen' | 'notified') => {
-    try {
-      return Number(localStorage.getItem(markKey(kind))) || 0
-    } catch {
-      return 0
-    }
-  }
-  const saveMark = (kind: 'seen' | 'notified', id: number) => {
-    try {
-      localStorage.setItem(markKey(kind), String(id))
-    } catch {
-      // 무시
-    }
-  }
-  const seenRef = useRef<number>(loadMark('seen'))
-  const marksForRef = useRef<string | null>(selfUserId)
-  const chatBodyRef = useRef<HTMLDivElement>(null)
 
   const switchTab = (next: PipTab) => {
     setTab(next)
@@ -270,91 +244,42 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
   const activeList = transfers.filter((t) => t.state === 'Pending')
   const recent = transfers.filter((t) => t.state !== 'Pending').slice(0, 5)
 
-  const isMentionToMe = (m: ChatMessage) => !!selfUserId && m.userId !== selfUserId && (m.mentions ?? []).includes(selfUserId)
-  const isUnreadMention = (m: ChatMessage) => isMentionToMe(m) && !(m.readBy ?? []).includes(selfUserId!)
-  const unreadMentions = chat.filter(isUnreadMention)
-  // 읽음 처리 전까지 탭 제목에 표시 (깜빡임이 끝나도 남는다)
+  // 안 읽은 메시지 합계 → 채팅 탭 배지·브라우저 탭 제목
+  const unread = chatRooms.reduce((sum, r) => sum + r.unread, 0)
   useEffect(() => {
-    baseTitleRef.current = unreadMentions.length > 0 ? `(📣${unreadMentions.length}) Don't Move` : "Don't Move"
+    baseTitleRef.current = unread > 0 ? `(💬${unread}) Don't Move` : "Don't Move"
     if (!titleTimerRef.current) document.title = baseTitleRef.current
-  }, [unreadMentions.length])
-  // 새로 열었을 때 읽지 않은 호출이 있으면 다시 알린다 (읽음 처리해야 멈춘다)
-  const remindedRef = useRef(false)
+  }, [unread])
+
+  // 새 메시지 알림: 내 메시지·시스템 안내는 빼고, 창이 뒤에 있거나 그 방을 보고 있지 않으면 알린다
+  const [focused, setFocused] = useState(() => document.hasFocus() && !document.hidden)
   useEffect(() => {
-    if (remindedRef.current || chat.length === 0) return
-    remindedRef.current = true
-    const pending = chat.filter(isUnreadMention)
-    if (pending.length > 0) notify(pending[pending.length - 1], true)
+    const update = () => setFocused(document.hasFocus() && !document.hidden)
+    window.addEventListener('focus', update)
+    window.addEventListener('blur', update)
+    document.addEventListener('visibilitychange', update)
+    return () => {
+      window.removeEventListener('focus', update)
+      window.removeEventListener('blur', update)
+      document.removeEventListener('visibilitychange', update)
+    }
+  }, [])
+  const chatVisible = tab === 'chat' && !collapsed
+  const stateRef = useRef({ chatRooms, activeRoomId, chatVisible, selfUserId })
+  stateRef.current = { chatRooms, activeRoomId, chatVisible, selfUserId }
+  useEffect(
+    () =>
+      subscribeChat((m) => {
+        const st = stateRef.current
+        if (!m.userId || m.userId === st.selfUserId) return
+        const away = document.hidden || !document.hasFocus()
+        const watching = st.chatVisible && st.activeRoomId === m.roomId
+        const mentioned = !!st.selfUserId && (m.mentions ?? []).includes(st.selfUserId)
+        if (away || !watching) notify(m, st.chatRooms.find((r) => r.id === m.roomId), mentioned)
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.length])
-
-  const notifiedRef = useRef<number>(loadMark('notified'))
-  useEffect(() => {
-    if (chat.length === 0) return
-    // 사용자가 바뀌면 그 사용자의 기록으로 다시 읽는다
-    if (marksForRef.current !== selfUserId) {
-      marksForRef.current = selfUserId
-      seenRef.current = loadMark('seen')
-      notifiedRef.current = loadMark('notified')
-    }
-    const last = chat[chat.length - 1]?.id ?? 0
-    // 이 브라우저에서 처음 보는 기록(저장된 기준 없음)은 이미 지난 대화로 보고 알리지 않는다
-    if (notifiedRef.current === 0) {
-      notifiedRef.current = last
-      saveMark('notified', last)
-      if (seenRef.current === 0) {
-        seenRef.current = last
-        saveMark('seen', last)
-      }
-    }
-    // 새로 온 남의 메시지: 창이 뒤에 있거나(포커스 없음/숨김) 채팅 탭이 안 보이면 알린다. 나를 호출했으면 항상
-    const fresh = chat.filter((m) => m.id > notifiedRef.current && m.userId !== selfUserId)
-    if (last > notifiedRef.current) {
-      notifiedRef.current = last
-      saveMark('notified', last)
-    }
-    const away = document.hidden || !document.hasFocus()
-    const chatVisible = tab === 'chat' && !collapsed
-    for (const m of fresh) {
-      const mentioned = !!selfUserId && (m.mentions ?? []).includes(selfUserId)
-      if (mentioned || away || !chatVisible) notify(m, mentioned)
-    }
-    if (chatVisible && !away && last > seenRef.current) {
-      seenRef.current = last
-      saveMark('seen', last)
-    }
-    // 배지 = 아직 안 본 남의 메시지 + 읽음 처리 안 한 호출
-    setUnread(chat.filter((m) => m.userId !== selfUserId && (m.id > seenRef.current || isUnreadMention(m))).length)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat, tab, collapsed, selfUserId])
-
-  useLayoutEffect(() => {
-    const el = chatBodyRef.current
-    if (el && tab === 'chat') el.scrollTop = el.scrollHeight
-  }, [chat, tab, collapsed])
-
-  const send = () => {
-    const text = draft.trim()
-    if (!text || !selfUserId) return
-    askNotify()
-    onSendChat(selfUserId, text, findMentions(text, users))
-    setDraft('')
-  }
-
-  // @ 드롭다운 후보
-  const token = mentionToken(draft, caret)
-  const candidates = token ? users.filter((u) => u.name.toLowerCase().includes(token.query.toLowerCase())).slice(0, 8) : []
-  const choose = (u: OrgUser) => {
-    if (!token) return
-    const next = `${draft.slice(0, token.start)}@${u.name} ${draft.slice(caret)}`
-    setDraft(next)
-    const pos = token.start + u.name.length + 2
-    requestAnimationFrame(() => {
-      inputRef.current?.focus()
-      inputRef.current?.setSelectionRange(pos, pos)
-      setCaret(pos)
-    })
-  }
+    [subscribeChat],
+  )
 
   const toggleCollapsed = () => {
     setCollapsed((v) => {
@@ -417,7 +342,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
     <div
       ref={rootRef}
       className={`pip${collapsed ? ' collapsed' : ''}`}
-      style={{ left: pos.x, bottom: pos.b, maxHeight: `calc(100vh - ${pos.b + 8}px)`, ...(size && !collapsed ? { width: size.w } : {}) }}
+      style={{ left: pos.x, bottom: pos.b, maxHeight: `calc(100vh - ${pos.b + 8}px)`, ...(!collapsed ? { width: size.w } : {}) }}
     >
       {!collapsed && <div className="pip-resize" title="드래그해서 크기 조절" onMouseDown={startResize} />}
       <div
@@ -450,104 +375,16 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
 
       {!collapsed && tab === 'chat' && (
         <div className="pip-body pip-chat" style={bodyStyle}>
-          <div className="pip-chat-list" ref={chatBodyRef}>
-            {chat.length === 0 && <div className="pip-empty muted small">아직 메시지가 없습니다</div>}
-            {chat.map((m) => {
-              const mine = m.userId === selfUserId
-              return (
-                <div key={m.id} className={`chat-msg${mine ? ' mine' : ''}${isMentionToMe(m) ? (isUnreadMention(m) ? ' to-me unread' : ' to-me') : ''}`}>
-                  <div className="chat-meta small muted">
-                    {mine ? '나' : userName(m.userId) ?? '알 수 없음'} · {timeText(m.at)}
-                  </div>
-                  <div className="chat-text">{renderText(m.text, users)}</div>
-                  {isMentionToMe(m) && (
-                    <div className="chat-read small">
-                      {isUnreadMention(m) ? (
-                        <button type="button" className="chat-read-btn" onClick={() => selfUserId && onMarkRead(selfUserId, m.id)}>
-                          읽음 처리
-                        </button>
-                      ) : (
-                        <span className="muted">✓ 읽음</span>
-                      )}
-                    </div>
-                  )}
-                  {mine && (m.mentions ?? []).length > 0 && (
-                    <div className="chat-read small muted">
-                      {(() => {
-                        const read = (m.mentions ?? []).filter((id) => (m.readBy ?? []).includes(id)).map((id) => userName(id) ?? '?')
-                        const wait = (m.mentions ?? []).filter((id) => !(m.readBy ?? []).includes(id)).map((id) => userName(id) ?? '?')
-                        return `${read.length ? `✓ 읽음: ${read.join(', ')}` : ''}${read.length && wait.length ? ' · ' : ''}${wait.length ? `안 읽음: ${wait.join(', ')}` : ''}`
-                      })()}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-          <div className="pip-chat-input">
-            {candidates.length > 0 && (
-              <ul className="chat-mention-list" role="listbox">
-                {candidates.map((u, i) => (
-                  <li
-                    key={u.id}
-                    role="option"
-                    aria-selected={i === pick}
-                    className={i === pick ? 'active' : ''}
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      choose(u)
-                    }}
-                  >
-                    @{u.name}
-                  </li>
-                ))}
-              </ul>
-            )}
-            <input
-              ref={inputRef}
-              value={draft}
-              placeholder={selfUserId ? '메시지 입력 후 Enter · @이름으로 호출' : '사용자를 선택해야 보낼 수 있습니다'}
-              disabled={!selfUserId}
-              onFocus={askNotify}
-              onChange={(e) => {
-                setDraft(e.target.value)
-                setCaret(e.target.selectionStart ?? e.target.value.length)
-                setPick(0)
-              }}
-              onSelect={(e) => setCaret((e.target as HTMLInputElement).selectionStart ?? 0)}
-              onKeyDown={(e) => {
-                if (e.nativeEvent.isComposing) return
-                if (candidates.length > 0) {
-                  if (e.key === 'ArrowDown') {
-                    e.preventDefault()
-                    setPick((p) => (p + 1) % candidates.length)
-                    return
-                  }
-                  if (e.key === 'ArrowUp') {
-                    e.preventDefault()
-                    setPick((p) => (p - 1 + candidates.length) % candidates.length)
-                    return
-                  }
-                  if (e.key === 'Enter' || e.key === 'Tab') {
-                    e.preventDefault()
-                    choose(candidates[pick] ?? candidates[0])
-                    return
-                  }
-                  if (e.key === 'Escape') {
-                    setDraft((d) => d) // 드롭다운은 토큰이 사라져야 닫힌다: 공백 추가
-                    return
-                  }
-                }
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  send()
-                }
-              }}
-            />
-            <button type="button" className="primary" disabled={!selfUserId || !draft.trim()} onClick={send}>
-              보내기
-            </button>
-          </div>
+          <ChatPanel
+            rooms={chatRooms}
+            messages={chatMessages}
+            actions={chatActions}
+            org={org}
+            selfUserId={selfUserId}
+            activeRoomId={activeRoomId}
+            onActiveRoomChange={changeRoom}
+            visible={chatVisible && focused}
+          />
         </div>
       )}
 
