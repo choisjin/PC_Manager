@@ -92,17 +92,34 @@ const flowText = (t: Transfer, machine: string) => {
   return `${machine} 내부` // 압축
 }
 
-const POS_KEY = 'pcm.pip.pos'
+// 위치: 왼쪽(x)과 화면 아래에서 위젯 아래 모서리까지의 거리(b).
+// 아래 모서리를 고정해 펼치면 위로 늘어나고 접으면 아래로 줄어든다
+const POS_KEY = 'pcm.pip.pos2'
 const COLLAPSED_KEY = 'pcm.pip.collapsed'
 
-function loadPos(): { x: number; y: number } {
+type PipPos = { x: number; b: number }
+
+const clampPos = (p: PipPos): PipPos => ({
+  x: Math.max(4, Math.min(window.innerWidth - 60, p.x)),
+  b: Math.max(4, Math.min(window.innerHeight - 40, p.b)),
+})
+
+function loadPos(): PipPos {
   try {
     const raw = localStorage.getItem(POS_KEY)
-    if (raw) return JSON.parse(raw) as { x: number; y: number }
+    if (raw) return clampPos(JSON.parse(raw) as PipPos)
   } catch {
     // 무시
   }
-  return { x: Math.max(12, window.innerWidth - 320), y: Math.max(12, window.innerHeight - 280) }
+  return { x: Math.max(12, window.innerWidth - 320), b: 12 }
+}
+
+function savePos(p: PipPos) {
+  try {
+    localStorage.setItem(POS_KEY, JSON.stringify(p))
+  } catch {
+    // 무시
+  }
 }
 
 /** 전송 진행률·알림을 띄우는 떠 있는 위젯 (드래그 이동 + 펴고 접기) */
@@ -121,13 +138,11 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
     const startPos = pos
     const onMove = (ev: MouseEvent) => {
       const w = Math.max(MIN_W, Math.min(window.innerWidth - 8, startW + ev.clientX - startX))
-      const h = Math.max(MIN_H, Math.min(window.innerHeight - 8, startH + ev.clientY - startY))
+      // 위로 끌면 커진다 (아래 모서리 고정). 화면 위를 넘지 않게
+      const h = Math.max(MIN_H, Math.min(window.innerHeight - startPos.b - 8, startH - (ev.clientY - startY)))
       setSize({ w, h })
-      // 화면 가장자리에 붙어 있으면 키우는 만큼 왼쪽/위로 밀어 준다
-      setPos({
-        x: Math.min(startPos.x, Math.max(4, window.innerWidth - 4 - w)),
-        y: Math.min(startPos.y, Math.max(4, window.innerHeight - 4 - h)),
-      })
+      // 오른쪽 화면 끝에 붙어 있으면 넓히는 만큼 왼쪽으로 밀어 준다
+      setPos({ x: Math.min(startPos.x, Math.max(4, window.innerWidth - 4 - w)), b: startPos.b })
     }
     const onUp = () => {
       window.removeEventListener('mousemove', onMove)
@@ -141,11 +156,7 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
         return s
       })
       setPos((p) => {
-        try {
-          localStorage.setItem(POS_KEY, JSON.stringify(p))
-        } catch {
-          // 무시
-        }
+        savePos(p)
         return p
       })
     }
@@ -359,46 +370,48 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
     const startX = e.clientX
     const startY = e.clientY
     const base = pos
-    const onMove = (ev: MouseEvent) => {
-      const x = Math.max(4, Math.min(window.innerWidth - 60, base.x + ev.clientX - startX))
-      const y = Math.max(4, Math.min(window.innerHeight - 40, base.y + ev.clientY - startY))
-      setPos({ x, y })
-    }
+    const at = (ev: MouseEvent) => clampPos({ x: base.x + ev.clientX - startX, b: base.b - (ev.clientY - startY) })
+    const onMove = (ev: MouseEvent) => setPos(at(ev))
     const onUp = (ev: MouseEvent) => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
-      const next = {
-        x: Math.max(4, Math.min(window.innerWidth - 60, base.x + ev.clientX - startX)),
-        y: Math.max(4, Math.min(window.innerHeight - 40, base.y + ev.clientY - startY)),
-      }
-      try {
-        localStorage.setItem(POS_KEY, JSON.stringify(next))
-      } catch {
-        // 무시
-      }
+      savePos(at(ev))
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
   }
 
   return (
-    <div className={`pip${collapsed ? ' collapsed' : ''}`} style={{ left: pos.x, top: pos.y, ...(size && !collapsed ? { width: size.w } : {}) }}>
-      <div className="pip-head" onMouseDown={startDrag}>
+    <div
+      className={`pip${collapsed ? ' collapsed' : ''}`}
+      style={{ left: pos.x, bottom: pos.b, maxHeight: `calc(100vh - ${pos.b + 8}px)`, ...(size && !collapsed ? { width: size.w } : {}) }}
+    >
+      {!collapsed && <div className="pip-resize" title="드래그해서 크기 조절" onMouseDown={startResize} />}
+      <div
+        className="pip-head"
+        onMouseDown={startDrag}
+        onDoubleClick={(e) => {
+          // 탭·버튼 더블클릭은 제외
+          if ((e.target as HTMLElement).closest('button')) return
+          toggleCollapsed()
+        }}
+        title="끌어서 이동 · 더블클릭으로 펴고 접기"
+      >
         <span className="pip-title">
           <span className="pip-grip" aria-hidden="true">⠿</span>
           <span className="pip-tabs" role="tablist" onMouseDown={(e) => e.stopPropagation()}>
-            <button type="button" role="tab" aria-selected={tab === 'transfers'} className={tab === 'transfers' ? 'active' : ''} onClick={() => switchTab('transfers')}>
-              파일 전송
-              {activeList.length > 0 && <span className="pip-count">{activeList.length}</span>}
-            </button>
             <button type="button" role="tab" aria-selected={tab === 'chat'} className={tab === 'chat' ? 'active' : ''} onClick={() => switchTab('chat')}>
               채팅
               {unread > 0 && <span className="pip-count chat">{unread}</span>}
             </button>
+            <button type="button" role="tab" aria-selected={tab === 'transfers'} className={tab === 'transfers' ? 'active' : ''} onClick={() => switchTab('transfers')}>
+              파일 전송
+              {activeList.length > 0 && <span className="pip-count">{activeList.length}</span>}
+            </button>
           </span>
         </span>
-        <button type="button" className="pip-toggle" title={collapsed ? '펼치기' : '접기'} onMouseDown={(e) => e.stopPropagation()} onClick={toggleCollapsed}>
-          {collapsed ? '▸' : '▾'}
+        <button type="button" className="pip-toggle" title={collapsed ? '펼치기 (위로)' : '접기'} onMouseDown={(e) => e.stopPropagation()} onClick={toggleCollapsed}>
+          {collapsed ? '▴' : '▾'}
         </button>
       </div>
 
@@ -543,7 +556,6 @@ export function TransfersPip({ transfers, machineName, userName, chat, users, se
           )}
         </div>
       )}
-          {!collapsed && <div className="pip-resize" title="드래그해서 크기 조절" onMouseDown={startResize} />}
 </div>
   )
 }
