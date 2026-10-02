@@ -22,6 +22,24 @@ function cmpVersion(a: string, b: string) {
 }
 
 const IDENTITY_KEY = 'pcm.identity'
+const SELF_PC_KEY = 'pcm.selfPc'
+
+/** 에이전트 런처가 연 대시보드면 주소에 ?pc=<이 PC 이름>이 붙는다. 기억해 두고 주소에서는 지운다 */
+function loadSelfPc(): string | null {
+  try {
+    const url = new URL(window.location.href)
+    const fromUrl = url.searchParams.get('pc')
+    if (fromUrl) {
+      localStorage.setItem(SELF_PC_KEY, fromUrl)
+      url.searchParams.delete('pc')
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash)
+      return fromUrl
+    }
+    return localStorage.getItem(SELF_PC_KEY)
+  } catch {
+    return null
+  }
+}
 
 function loadIdentity(): Identity | null {
   try {
@@ -68,6 +86,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showGate, setShowGate] = useState(false)
   const [page, setPage] = useState<Page>('files')
+  const [selfPc] = useState(loadSelfPc)
 
   // 전송 기록/PiP 공용 데이터 (한 번만 구독)
   const { transfers, artifactByTransfer } = useTransfers(subscribeTransfers)
@@ -178,6 +197,7 @@ export default function App() {
             watchThumbnails={watchThumbnails}
             serverHostName={serverHostName}
             clientIp={clientIp}
+            selfPc={selfPc}
             announcePresence={announcePresence}
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}

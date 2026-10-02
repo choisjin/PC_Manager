@@ -32,6 +32,8 @@ interface Props {
   serverHostName: string | null
   /** 대시보드를 연 이 PC의 IP. 이 IP의 에이전트도 Remote 모드에서 숨긴다 */
   clientIp: string | null
+  /** 에이전트 런처가 알려 준 이 PC의 이름 (가장 정확). Remote 모드에서 숨긴다 */
+  selfPc: string | null
   filterProjectId: string | null
   selfUserId: string | null
   announcePresence: (userId: string, agentIds: string[]) => void
@@ -60,7 +62,7 @@ const MODE_KEY = 'explorer.mode'
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, clientIp, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, clientIp, selfPc, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   // 선택한 프로젝트의 에이전트 + 아직 미배정 에이전트를 노출 (다른 프로젝트 전용은 숨김). 전체 보기면 모두.
   const visibleAgents = useMemo(
@@ -79,10 +81,11 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
     () =>
       visibleAgents.filter((a) => {
         if (serverHostName && a.machineName.toLowerCase() === serverHostName.toLowerCase()) return false
+        if (selfPc && a.machineName.toLowerCase() === selfPc.toLowerCase()) return false
         if (clientIp && a.ipAddresses.includes(clientIp)) return false
         return true
       }),
-    [visibleAgents, serverHostName, clientIp],
+    [visibleAgents, serverHostName, clientIp, selfPc],
   )
   const shareById = useMemo(() => new Map(shares.map((s) => [s.id, s])), [shares])
   // 창 제목·온라인 상태: 에이전트면 별칭, 공유 폴더면 공유 이름
