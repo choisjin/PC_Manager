@@ -54,6 +54,25 @@ function Write-Step([string] $Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+# 진행 기록: 대시보드의 '서버 업데이트'는 창 없이 실행되므로 어디서 멈췄는지 이 파일로 확인한다
+$LogPath = Join-Path $ConfigDir 'install.log'
+New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
+try { Start-Transcript -Path $LogPath -Force | Out-Null } catch { }
+
+# 도중에 실패해도 서버가 꺼진 채로 남지 않게 서비스를 다시 켠다 (파일이 안 바뀌었으면 이전 버전으로)
+trap {
+    Write-Host "설치 실패: $_" -ForegroundColor Red
+    try {
+        if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
+            Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
+            Write-Host '서비스를 다시 시작했습니다.'
+        }
+    }
+    catch { }
+    try { Stop-Transcript | Out-Null } catch { }
+    exit 1
+}
+
 function Get-AllIPv4 {
     Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
         Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
@@ -136,8 +155,16 @@ $token = $AgentToken
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing -and $existing.Status -ne 'Stopped') {
     Write-Step '기존 서버 서비스 중지 (업그레이드)'
-    Stop-Service -Name $ServiceName -Force
-    $existing.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+    # 오래 열린 연결(원격조작·썸네일 등)이 많으면 멈추는 데 시간이 걸린다. 90초까지 기다리고, 그래도 안 멈추면 강제 종료
+    Stop-Service -Name $ServiceName -Force -NoWait
+    for ($i = 0; $i -lt 90 -and (Get-Service -Name $ServiceName).Status -ne 'Stopped'; $i++) {
+        Start-Sleep -Seconds 1
+    }
+    if ((Get-Service -Name $ServiceName).Status -ne 'Stopped') {
+        Write-Step '서비스가 멈추지 않아 프로세스를 강제 종료합니다'
+        Get-Process -Name ([IO.Path]::GetFileNameWithoutExtension($ExeName)) -ErrorAction SilentlyContinue | Stop-Process -Force
+        Start-Sleep -Seconds 3
+    }
 }
 
 Write-Step "파일 복사: $InstallDir"
@@ -248,3 +275,4 @@ Write-Host "HTTPS 인증서  : 이 PC와 에이전트 PC는 자동 신뢰. 그 �
 Write-Host "설정 파일     : $ConfigPath (변경 후 'Restart-Service $ServiceName')"
 Write-Host ''
 Write-Warning '현재 버전은 대시보드 로그인이 없습니다. 신뢰할 수 있는 내부망에서만 사용하세요.'
+try { Stop-Transcript | Out-Null } catch { }

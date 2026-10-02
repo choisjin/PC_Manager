@@ -65,6 +65,49 @@ public class UpdateService
         // API가 막혔을 때 쓰는 웹 확인: 리디렉션을 따라가지 않고 Location에서 태그를 읽는다
         _web = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) };
         _web.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("PcManagerServer", CurrentVersion.ToString(3)));
+        ReportPreviousUpdate();
+    }
+
+    // 서버 자가 업데이트 직전에 남기는 표시. 다시 시작했을 때 버전이 그대로면 실패로 알린다
+    private string PendingMarkerPath => Path.Combine(_paths.DataDirectory, "update", "pending.json");
+
+    private static string InstallLogPath => Path.Combine(Path.GetDirectoryName(ServerOptions.InstalledConfigPath)!, "install.log");
+
+    private sealed record PendingUpdate(string TargetVersion, DateTime StartedAt);
+
+    /// <summary>이전 자가 업데이트 결과를 확인한다: 새 버전으로 떴으면 성공, 아니면 설치 기록 끝부분과 함께 실패로 표시</summary>
+    private void ReportPreviousUpdate()
+    {
+        try
+        {
+            if (!File.Exists(PendingMarkerPath))
+                return;
+            var pending = JsonSerializer.Deserialize<PendingUpdate>(File.ReadAllText(PendingMarkerPath), Json);
+            File.Delete(PendingMarkerPath);
+            if (pending is null || !TryParseTag(pending.TargetVersion, out var target) || CurrentVersion >= target)
+            {
+                _logger.LogInformation("서버 업데이트 완료: {Version}", CurrentVersion.ToString(3));
+                return;
+            }
+
+            var tail = "";
+            if (File.Exists(InstallLogPath))
+            {
+                var lines = File.ReadAllLines(InstallLogPath)
+                    .Where(l => !string.IsNullOrWhiteSpace(l) && !l.StartsWith("**", StringComparison.Ordinal))
+                    .TakeLast(4);
+                tail = string.Join(" / ", lines);
+            }
+            _serverPhase = UpdatePhase.Failed;
+            _serverError = $"{pending.TargetVersion} 설치에 실패해 {CurrentVersion.ToString(3)}(으)로 다시 시작했습니다."
+                + (tail.Length > 0 ? $" 설치 기록: {tail}" : "")
+                + $" (서버 PC의 {InstallLogPath})";
+            _logger.LogWarning("서버 업데이트 실패: {Error}", _serverError);
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("이전 업데이트 결과 확인 실패: {Message}", ex.Message);
+        }
     }
 
     private readonly HttpClient _web;
@@ -264,6 +307,12 @@ public class UpdateService
                 Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
 
             await SetServerPhaseAsync(UpdatePhase.Restarting, null);
+            string target;
+            lock (_lock)
+            {
+                target = _latest?.Version.ToString(3) ?? "";
+            }
+            await File.WriteAllTextAsync(PendingMarkerPath, JsonSerializer.Serialize(new PendingUpdate(target, DateTime.UtcNow), Json));
             _logger.LogInformation("서버 설치기 실행: {Installer} (곧 서비스가 재시작됩니다)", installer);
             DetachedProcess.Start(powershell, $"-NoProfile -ExecutionPolicy Bypass -File \"{installer}\"", Path.GetDirectoryName(installer));
             // 여기서 반환하면 곧 설치기가 이 서비스를 멈춘다. 새 버전이 다시 시작한다.

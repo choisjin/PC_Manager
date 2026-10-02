@@ -43,6 +43,15 @@ export function UpdateDialog({ status, agents, onClose }: Props) {
 
   const serverBusy = status?.serverPhase === 'Downloading' || status?.serverPhase === 'Installing' || status?.serverPhase === 'Restarting'
 
+  // 재시작이 2분 넘게 끝나지 않으면(서버가 다시 안 뜸) 서버 PC에서 확인할 방법을 안내한다
+  const [restartStuck, setRestartStuck] = useState(false)
+  useEffect(() => {
+    setRestartStuck(false)
+    if (status?.serverPhase !== 'Restarting') return
+    const id = setTimeout(() => setRestartStuck(true), 120_000)
+    return () => clearTimeout(id)
+  }, [status?.serverPhase])
+
   const run = async (kind: 'check' | 'server' | 'agents', fn: () => Promise<string | null>) => {
     setBusy(kind)
     setError(null)
@@ -115,6 +124,14 @@ export function UpdateDialog({ status, agents, onClose }: Props) {
               </div>
             )}
 
+            {restartStuck && (
+              <div className="warning-box">
+                서버가 2분 넘게 다시 시작되지 않았습니다. 서버 PC의 관리자 PowerShell에서 확인하세요.
+                <br />· 상태: <code>Get-Service PcManagerServer</code> → 멈춰 있으면 <code>Start-Service PcManagerServer</code>
+                <br />· 설치 기록: <code>C:\ProgramData\PcManager\Server\install.log</code>
+                <br />서버가 다시 뜨면 이 창에 업데이트 결과가 표시됩니다.
+              </div>
+            )}
             {error && <p className="error">{error}</p>}
             {message && <p className="muted small">{message}</p>}
 
