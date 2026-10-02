@@ -65,13 +65,13 @@ public static class DownloadLinkEndpoints
         {
             try
             {
-                var full = localShare.ResolveWithin(share, path);
-                if (!File.Exists(full))
+                var stream = localShare.OpenRead(share, path);
+                if (stream is null)
                 {
                     response.StatusCode = StatusCodes.Status404NotFound;
                     return;
                 }
-                await Results.File(full, contentType, name, enableRangeProcessing: true).ExecuteAsync(context);
+                await Results.File(stream, contentType, name, enableRangeProcessing: true).ExecuteAsync(context);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {

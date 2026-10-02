@@ -12,7 +12,6 @@ export function AddShareModal({ onConfirm, onClose }: Props) {
   const [name, setName] = useState('')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [useCreds, setUseCreds] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -20,12 +19,16 @@ export function AddShareModal({ onConfirm, onClose }: Props) {
     dialogRef.current?.showModal()
   }, [])
 
+  // 네트워크 공유(\\서버\공유)는 자격증명 필수. 서버 로컬 폴더는 자격증명 없이도 된다
+  const isNetwork = path.trim().startsWith('\\\\')
+  const ready = path.trim() !== '' && (!isNetwork || (username.trim() !== '' && password !== ''))
+
   const submit = async () => {
-    if (!path.trim() || busy) return
+    if (!ready || busy) return
     setBusy(true)
     setError(null)
     try {
-      await onConfirm(name.trim(), path.trim(), useCreds ? username.trim() : undefined, useCreds ? password : undefined)
+      await onConfirm(name.trim(), path.trim(), username.trim() || undefined, username.trim() ? password : undefined)
       dialogRef.current?.close()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -48,7 +51,8 @@ export function AddShareModal({ onConfirm, onClose }: Props) {
       </div>
       <div className="dialog-body">
         <p className="muted small">
-          서버가 직접 접근하는 네트워크 공유 또는 로컬 폴더를 등록합니다. 서버 실행 계정이 접근할 수 있어야 합니다.
+          서버가 직접 접근하는 네트워크 공유 또는 서버의 로컬 폴더를 등록합니다. 목록과 자격증명은 <b>내 계정에만</b> 저장되며
+          다른 사용자에게는 보이지 않습니다. 네트워크 공유는 자격증명이 필요합니다.
         </p>
         <label>
           경로 (UNC 또는 로컬)
@@ -74,28 +78,35 @@ export function AddShareModal({ onConfirm, onClose }: Props) {
             }}
           />
         </label>
-        <label className="creds-toggle">
-          <input type="checkbox" checked={useCreds} onChange={(e) => setUseCreds(e.target.checked)} />
-          <span>네트워크 자격증명으로 접속 (계정이 필요한 공유 서버)</span>
-        </label>
-        {useCreds && (
-          <div className="creds-fields">
-            <label>
-              사용자 이름
-              <input placeholder="예: DOMAIN\\user 또는 user" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" />
-            </label>
-            <label>
-              비밀번호
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="off" />
-            </label>
-            <p className="muted small">비밀번호는 서버에 DPAPI로 암호화되어 저장됩니다.</p>
-          </div>
-        )}
+        <div className="creds-fields">
+          <label>
+            사용자 이름{isNetwork ? ' (필수)' : ' (서버 로컬 폴더는 선택)'}
+            <input
+              placeholder="예: DOMAIN\user, user@domain 또는 NAS 계정 user"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          <label>
+            비밀번호{isNetwork ? ' (필수)' : ''}
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="new-password"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void submit()
+              }}
+            />
+          </label>
+          <p className="muted small">비밀번호는 서버에 암호화(DPAPI)되어 저장되고, 이 공유 폴더에 접근할 때만 쓰입니다.</p>
+        </div>
         {error && <p className="warning-box">{error}</p>}
       </div>
       <div className="dialog-actions">
         <span className="muted small">취소하려면 바깥을 클릭하거나 ✕</span>
-        <button type="button" className="primary" disabled={!path.trim() || busy} onClick={() => void submit()}>
+        <button type="button" className="primary" disabled={!ready || busy} onClick={() => void submit()}>
           {busy ? '확인 중…' : '등록'}
         </button>
       </div>

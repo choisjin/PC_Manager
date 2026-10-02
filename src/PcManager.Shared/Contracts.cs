@@ -124,6 +124,8 @@ public enum TransferKind
     Push,
     /// <summary>PC 안에서 선택 항목을 ZIP으로 압축 (PC에서 직접 수행)</summary>
     Compress,
+    /// <summary>파일 탐색기: 압축 풀기 (PC 안에서)</summary>
+    Extract,
 }
 
 /// <param name="SourceDirectory">null이면 ResultKey의 결과 폴더</param>
@@ -141,6 +143,12 @@ public record DownloadFileRequest(string TransferId, string DestinationPath);
 /// <param name="SplitBytes">0보다 크면 이 크기로 나눠 .zip.001, .zip.002… 볼륨으로 만든다</param>
 public record CompressRequest(string TransferId, IReadOnlyList<string> Paths, string DestinationFolder, string ArchiveName, long SplitBytes = 0);
 
+/// <param name="EntryPaths">풀 항목의 전체 경로("a.zip\폴더\파일"). 비면 전부</param>
+public record ExtractRequest(string TransferId, string ArchivePath, IReadOnlyList<string> EntryPaths, string DestinationFolder);
+
+/// <summary>편집한 파일 저장: BeginWrite/WriteChunk로 받은 임시 파일로 대상 파일을 바꾼다 (Backup이면 대상.bak을 남김)</summary>
+public record CommitReplaceRequest(string WriteId, string TargetPath, bool Backup);
+
 public record TransferCompleted(string TransferId, bool Success, int FileCount, long TotalBytes, string? Error, DateTime FinishedAt);
 
 /// <summary>오래 걸리는 전송(압축 등)의 진행 상황 보고</summary>
@@ -150,7 +158,8 @@ public record TransferProgressReport(string TransferId, int FileCount, long Byte
 public record FileEntry(string Name, string FullPath, bool IsDirectory, long Size, DateTime? ModifiedAt, bool Hidden = false);
 
 /// <param name="Path">빈 문자열이면 드라이브 목록</param>
-public record DirectoryListing(string Path, string? ParentPath, IReadOnlyList<FileEntry> Entries, string? Error);
+/// <param name="ArchivePath">압축 파일 안을 보고 있으면 그 압축 파일 경로 (읽기 전용)</param>
+public record DirectoryListing(string Path, string? ParentPath, IReadOnlyList<FileEntry> Entries, string? Error, string? ArchivePath = null);
 
 /// <summary>서버 → 에이전트 호출 (응답 없음)</summary>
 public interface IAgentClient
@@ -161,6 +170,8 @@ public interface IAgentClient
     Task UploadFile(UploadFileRequest request);
     Task DownloadFile(DownloadFileRequest request);
     Task Compress(CompressRequest request);
+
+    Task Extract(ExtractRequest request);
 
     /// <param name="setupUrl">설치 파일 URL. null이면 에이전트가 자신의 서버 주소에서 받는다</param>
     Task UpdateAgent(string? setupUrl);
@@ -192,6 +203,12 @@ public static class AgentClientMethods
 
     /// <summary>string writeId → bool. 쓰기 세션 취소(임시 파일 삭제)</summary>
     public const string AbortWrite = "AbortWrite";
+
+    /// <summary>CommitReplaceRequest → string? 오류. 임시 파일로 기존 파일을 덮어쓴다 (텍스트 편집 저장)</summary>
+    public const string CommitReplace = "CommitReplace";
+
+    /// <summary>(string archivePath, string password) → bool. 암호 걸린 압축 파일의 암호를 기억시킨다</summary>
+    public const string SetArchivePassword = "SetArchivePassword";
 
     /// <summary>string sessionId → string? 오류. 사용자 세션에 원격조작 프로세스를 띄워 AgentRemotePaths.Session으로 접속시킨다</summary>
     public const string StartRemote = "StartRemote";

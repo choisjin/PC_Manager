@@ -63,6 +63,8 @@ export default function App() {
     shares,
     addShare,
     removeShare,
+    renameShare,
+    reloadShares,
     org,
     orgActions,
     presence,
@@ -92,9 +94,11 @@ export default function App() {
   const { transfers, artifactByTransfer } = useTransfers(subscribeTransfers)
 
   // 전송 요청 헤더에 현재 사용자 id를 실어 "누가 실행했는지" 기록
+  // 공유 폴더는 사용자별이라 사용자가 바뀌면 그 사용자의 목록으로 다시 불러온다
   useEffect(() => {
     setCurrentUser(identity?.userId ?? null)
-  }, [identity?.userId])
+    reloadShares()
+  }, [identity?.userId, reloadShares])
 
   // id → 이름 해석 (PC/공유, 사용자)
   const nameById = useMemo(() => {
@@ -184,6 +188,7 @@ export default function App() {
             shares={shares}
             addShare={addShare}
             removeShare={removeShare}
+            renameShare={renameShare}
             org={org}
             setAgentProject={orgActions.setAgentProject}
             presence={presence}

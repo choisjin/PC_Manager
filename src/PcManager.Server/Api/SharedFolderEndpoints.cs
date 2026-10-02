@@ -12,16 +12,17 @@ public static class SharedFolderEndpoints
     {
         var api = app.MapGroup("/api/shares");
 
-        api.MapGet("/", (SharedFolderStore store) => Results.Ok(store.Load()));
+        // 요청한 사용자(X-User-Id)의 공유 폴더만
+        api.MapGet("/", (HttpRequest http, SharedFolderStore store) => Results.Ok(store.Load(UserOf(http))));
 
-        api.MapPost("/", async (AddSharedFolderRequest request, SharedFolderStore store, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
+        api.MapPost("/", async (AddSharedFolderRequest request, HttpRequest http, SharedFolderStore store, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
         {
             if (string.IsNullOrWhiteSpace(request.Path))
                 return Results.BadRequest("공유 폴더 경로를 입력하세요. (예: \\\\서버\\공유폴더 또는 D:\\공유)");
             try
             {
-                var share = store.Add(request.Name ?? "", request.Path, request.Username, request.Password);
-                await dashboard.Clients.All.SharesChanged(store.Load());
+                var share = store.Add(UserOf(http), request.Name ?? "", request.Path, request.Username, request.Password);
+                await NotifyAsync(dashboard);
                 return Results.Ok(share);
             }
             catch (Exception ex) when (ex is ArgumentException or DirectoryNotFoundException or InvalidOperationException or IOException)
@@ -30,11 +31,33 @@ public static class SharedFolderEndpoints
             }
         });
 
-        api.MapDelete("/{id}", async (string id, SharedFolderStore store, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
+        // 별칭(표시 이름) 변경
+        api.MapPut("/{id}/name", async (string id, RenameSharedFolderRequest request, HttpRequest http, SharedFolderStore store, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
         {
-            var view = store.Remove(id);
-            await dashboard.Clients.All.SharesChanged(view);
-            return Results.Ok(view);
+            try
+            {
+                var share = store.Rename(UserOf(http), id, request.Name ?? "");
+                await NotifyAsync(dashboard);
+                return Results.Ok(share);
+            }
+            catch (Exception ex) when (ex is ArgumentException or KeyNotFoundException)
+            {
+                return Results.BadRequest(ex.Message);
+            }
+        });
+
+        api.MapDelete("/{id}", async (string id, HttpRequest http, SharedFolderStore store, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
+        {
+            store.Remove(UserOf(http), id);
+            await NotifyAsync(dashboard);
+            return Results.Ok(store.Load(UserOf(http)));
         });
     }
+
+    private static string? UserOf(HttpRequest http) =>
+        http.Headers["X-User-Id"].ToString() is { Length: > 0 } id ? id : null;
+
+    // 사용자마다 목록이 달라 내용은 보내지 않는다. 받으면 각 대시보드가 자기 목록을 다시 불러온다
+    private static Task NotifyAsync(IHubContext<DashboardHub, IDashboardClient> dashboard) =>
+        dashboard.Clients.All.SharesChanged(new SharedFoldersView([]));
 }

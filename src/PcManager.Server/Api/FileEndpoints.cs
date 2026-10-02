@@ -162,8 +162,6 @@ public static class FileEndpoints
         {
             if (string.IsNullOrWhiteSpace(request.SourcePath) || string.IsNullOrWhiteSpace(request.DestFolder))
                 return Results.BadRequest("원본과 대상 폴더가 필요합니다.");
-            if (shares.TryGet(request.SourceAgentId, out _) || shares.TryGet(request.DestAgentId, out _))
-                return Results.BadRequest("공유 폴더와 PC 사이의 복사는 아직 지원하지 않습니다. (같은 위치 안에서는 가능)");
             var result = await transfers.CrossCopyAsync(
                 request.SourceAgentId, request.SourcePath, request.DestAgentId, request.DestFolder, request.Move, ct);
             return result.Success ? Results.Ok(result) : Results.BadRequest(result.Error ?? "실패");

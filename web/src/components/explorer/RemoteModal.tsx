@@ -146,6 +146,18 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
 
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 })
 
+  // 연결은 됐는데 화면이 오래 안 오면(세션 전환 직후 등) 자동으로 다시 연결한다. 수동 '다시 연결'마다 2번까지
+  const autoRetryRef = useRef(0)
+  useEffect(() => {
+    if (phase !== 'connecting') return
+    const id = setTimeout(() => {
+      if (autoRetryRef.current >= 2) return
+      autoRetryRef.current++
+      setAttempt((n) => n + 1)
+    }, 20000)
+    return () => clearTimeout(id)
+  }, [phase, attempt])
+
   // 잠깐 보였다 사라지는 안내 (연결 오류 오버레이와 별개)
   const showHint = (text: string) => setHint(text)
   useEffect(() => {
@@ -270,6 +282,11 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
             else if (msg.note === 'resolution-failed') showHint(`해상도 맞춤 실패: ${msg.message ?? '지원하지 않는 모드'}`)
             else if (msg.note === 'headless') showHint('원격 PC에 모니터가 없어 가상 모니터를 준비합니다… (처음이면 드라이버 설치로 몇 초 걸립니다)')
             else if (msg.note === 'virtual-monitor') showHint('가상 모니터를 켰습니다. 세션이 끝나면 자동으로 꺼집니다.')
+            else if (msg.note === 'reattaching') {
+              // 로그인 등으로 원격 세션이 바뀜 → 서버가 새 세션에 다시 잇는 중
+              setPhase('connecting')
+              setMessage('로그인/세션 전환 중… 다시 연결하는 중')
+            }
             break
           case 'cursor':
             setCursor({ x: msg.x, y: msg.y, visible: msg.visible })
@@ -708,7 +725,14 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
           <div className="remote-overlay">
             <p>{message}</p>
             {phase === 'closed' && (
-              <button type="button" className="primary" onClick={() => setAttempt((n) => n + 1)}>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  autoRetryRef.current = 0
+                  setAttempt((n) => n + 1)
+                }}
+              >
                 다시 연결
               </button>
             )}

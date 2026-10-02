@@ -126,6 +126,10 @@ public class AgentWorker(
         connection.On<UploadFileRequest>(nameof(IAgentClient.UploadFile), files.StartUpload);
         connection.On<DownloadFileRequest>(nameof(IAgentClient.DownloadFile), files.StartDownload);
         connection.On<CompressRequest>(nameof(IAgentClient.Compress), files.StartCompress);
+        connection.On<ExtractRequest>(nameof(IAgentClient.Extract), files.StartExtract);
+        connection.On<CommitReplaceRequest, string?>(AgentClientMethods.CommitReplace, files.CommitReplaceAsync);
+        connection.On<string, string, bool>(AgentClientMethods.SetArchivePassword,
+            (archivePath, password) => { ArchiveBrowser.SetPassword(archivePath, password); return true; });
         // 응답을 기다리는 호출: 수신 루프를 막지 않도록 스레드 풀에서 처리
         connection.On<string?, DirectoryListing>(AgentClientMethods.ListDirectory,
             path => Task.Run(() => files.ListDirectory(path)));

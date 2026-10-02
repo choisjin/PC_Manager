@@ -5,11 +5,11 @@ import type { SubscribeTransfers } from '../../useDashboard'
 const MAX = 80
 
 export const kindLabel = (kind: Transfer['kind']) =>
-  kind === 'Fetch' ? '가져오기' : kind === 'Compress' ? '압축' : '올리기'
+  kind === 'Fetch' ? '가져오기' : kind === 'Compress' ? '압축' : kind === 'Extract' ? '압축 풀기' : '올리기'
 
 /** 진행 중 상태 텍스트 (진행률이 있으면 표시) */
 export const pendingText = (transfer: Transfer) => {
-  const verb = transfer.kind === 'Compress' ? '압축 중' : '전송 중'
+  const verb = transfer.kind === 'Compress' ? '압축 중' : transfer.kind === 'Extract' ? '압축 푸는 중' : '전송 중'
   return typeof transfer.percent === 'number' ? `${verb} ${transfer.percent}%` : `${verb}…`
 }
 

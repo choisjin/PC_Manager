@@ -173,7 +173,10 @@ export function useDashboard() {
     connection.on('UpdateStatusChanged', (status: UpdateStatus) => setUpdateStatus(status))
     connection.on('PcGroupsChanged', (groups: PcGroups) => setPcGroups(groups))
     connection.on('PcFavoritesChanged', (f: PcFavorites) => setFavorites(f))
-    connection.on('SharesChanged', (s: SharedFolders) => setShares(s.shares))
+    // 사용자마다 목록이 달라 서버는 '바뀜'만 알린다 → 내 목록을 다시 불러온다
+    connection.on('SharesChanged', () => {
+      api.shares().then((s: SharedFolders) => setShares(s.shares)).catch(() => {})
+    })
     connection.on('OrgChanged', (o: Org) => setOrg(o))
     connection.on('PresenceChanged', (viewers: Record<string, string[]>) => setPresence(viewers))
     connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
@@ -338,6 +341,15 @@ export function useDashboard() {
   const removeShare = useCallback((id: string) => {
     api.removeShare(id).then((s: SharedFolders) => setShares(s.shares)).catch((err) => console.error('공유 폴더 삭제 실패', err))
   }, [])
+  const renameShare = useCallback(async (id: string, name: string) => {
+    await api.renameShare(id, name)
+    const list = await api.shares().catch(() => null)
+    if (list) setShares(list.shares)
+  }, [])
+  // 사용자를 바꾸면(로그인) 그 사용자의 공유 폴더 목록으로
+  const reloadShares = useCallback(() => {
+    api.shares().then((s: SharedFolders) => setShares(s.shares)).catch(() => {})
+  }, [])
 
   // 프로젝트/사용자 관리 (서버가 OrgChanged로 다시 알려주지만 응답으로도 즉시 반영)
   const orgActions: OrgActions = {
@@ -387,6 +399,8 @@ export function useDashboard() {
     shares,
     addShare,
     removeShare,
+    renameShare,
+    reloadShares,
     org,
     orgActions,
     presence,

@@ -79,8 +79,19 @@ export interface Crumb {
 export function buildCrumbs(path: string): Crumb[] {
   const crumbs: Crumb[] = [{ label: '내 PC', target: '' }]
   if (!path) return crumbs
-  const parts = path.replace(/\//g, '\\').split('\\').filter(Boolean)
+  const normalized = path.replace(/\//g, '\\')
+  const parts = normalized.split('\\').filter(Boolean)
   if (parts.length === 0) return crumbs
+  // 네트워크 공유: \\서버\공유 까지를 한 칸(루트)으로
+  if (normalized.startsWith('\\\\') && parts.length >= 2) {
+    let unc = `\\\\${parts[0]}\\${parts[1]}`
+    crumbs.push({ label: `${parts[0]}\\${parts[1]}`, target: unc })
+    for (let i = 2; i < parts.length; i++) {
+      unc = `${unc}\\${parts[i]}`
+      crumbs.push({ label: parts[i], target: unc })
+    }
+    return crumbs
+  }
   let acc = `${parts[0]}\\`
   crumbs.push({ label: parts[0], target: acc })
   for (let i = 1; i < parts.length; i++) {

@@ -12,6 +12,7 @@ interface Props {
   shares: SharedFolder[]
   addShare: (name: string, path: string, username?: string, password?: string) => Promise<void>
   removeShare: (id: string) => void
+  renameShare: (id: string, name: string) => Promise<void>
   org: Org
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
   presence: Record<string, string[]>
@@ -32,13 +33,20 @@ interface Props {
   onModeChange: (mode: 'browser' | 'remote') => void
 }
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange }: Props) {
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null) // folderId 또는 'root'
   const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null)
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; folderId: string; name: string } | null>(null)
+  const [shareMenu, setShareMenu] = useState<{ x: number; y: number; share: SharedFolder } | null>(null)
+
+  const renameShareAlias = (share: SharedFolder) => {
+    const name = window.prompt(`'${share.path}'의 별칭 (표시 이름)`, share.name)
+    if (name === null || !name.trim() || name.trim() === share.name) return
+    renameShare(share.id, name.trim()).catch((err) => window.alert(err instanceof Error ? err.message : String(err)))
+  }
 
   // 폴더에 프로젝트가 배정돼 있으면 그 프로젝트 사용자(또는 그 프로젝트로 들어온 사람)에게만 보인다
   const folderVisible = (folderId: string) => {
@@ -279,12 +287,32 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
       <div className="share-section">
         <div className="share-head">
           <span className="pane-side-title">공유 서버</span>
-          <button type="button" className="small-btn" title="공유 폴더 등록" onClick={() => setShowAddShare(true)}>＋</button>
+          <button
+            type="button"
+            className="small-btn"
+            title={selfUserId ? '공유 폴더 등록 (내 목록에만 저장)' : '사용자를 선택(로그인)해야 공유 폴더를 등록할 수 있습니다'}
+            disabled={!selfUserId}
+            onClick={() => setShowAddShare(true)}
+          >
+            ＋
+          </button>
         </div>
         <ul className="tree-root share-list">
-          {shares.length === 0 && <li className="placeholder small">등록된 공유 폴더가 없습니다</li>}
+          {shares.length === 0 && (
+            <li className="placeholder small">{selfUserId ? '등록된 공유 폴더가 없습니다' : '사용자를 선택하면 내 공유 폴더가 보입니다'}</li>
+          )}
           {shares.map((s) => (
-            <li key={s.id} className="tree-agent share-item" title={`${s.path} — 클릭하면 창 열기/닫기`} onClick={() => onOpenAgent(s.id)}>
+            <li
+              key={s.id}
+              className="tree-agent share-item"
+              title={`${s.path}${s.username ? ` · ${s.username}` : ''}${s.ownerUserId ? '' : ' · 공용(예전 등록)'} — 클릭하면 창 열기/닫기, 우클릭 메뉴`}
+              onClick={() => onOpenAgent(s.id)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setShareMenu({ x: e.clientX, y: e.clientY, share: s })
+              }}
+            >
               <Icon name="drive" size={14} />
               <span className="ellipsis">{s.name}</span>
               <button
@@ -348,6 +376,29 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
               ...(currentPid ? [{ label: '프로젝트 해제', onClick: () => void setAgentProject(a.id, null) }] : []),
             ]
           })()}
+        />
+      )}
+
+      {shareMenu && (
+        <ContextMenu
+          x={shareMenu.x}
+          y={shareMenu.y}
+          onClose={() => setShareMenu(null)}
+          items={[
+            { label: '열기', onClick: () => onOpenAgent(shareMenu.share.id) },
+            { separator: true },
+            { label: '별칭 변경…', onClick: () => renameShareAlias(shareMenu.share) },
+            { label: '경로 복사', onClick: () => void navigator.clipboard?.writeText(shareMenu.share.path).catch(() => {}) },
+            { separator: true },
+            {
+              label: '목록에서 제거',
+              danger: true,
+              onClick: () => {
+                const s = shareMenu.share
+                if (window.confirm(`'${s.name}' 공유 폴더를 목록에서 제거할까요? (실제 파일은 지워지지 않습니다)`)) removeShare(s.id)
+              },
+            },
+          ]}
         />
       )}
 

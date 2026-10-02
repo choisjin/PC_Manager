@@ -17,3 +17,34 @@ export function isVideoFile(name: string): boolean {
 export function isWebPlayable(name: string): boolean {
   return WEB_VIDEO.has(extensionOf(name))
 }
+
+// 브라우저에서 바로 보고 편집할 텍스트 형식
+const TEXT = new Set([
+  'txt', 'log', 'csv', 'tsv', 'json', 'jsonl', 'xml', 'ini', 'cfg', 'conf', 'config', 'yaml', 'yml', 'toml', 'md',
+  'bat', 'cmd', 'ps1', 'psm1', 'sh', 'py', 'js', 'ts', 'tsx', 'jsx', 'c', 'h', 'cpp', 'hpp', 'cs', 'java', 'go', 'rs',
+  'sql', 'html', 'htm', 'css', 'properties', 'reg', 'srt', 'vbs', 'inf', 'env', 'gitignore', 'csproj', 'props', 'targets', 'sln',
+])
+const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'])
+
+export function isTextFile(name: string): boolean {
+  return TEXT.has(extensionOf(name))
+}
+
+export function isImageFile(name: string): boolean {
+  return IMAGE.has(extensionOf(name))
+}
+
+export function isPdfFile(name: string): boolean {
+  return extensionOf(name) === 'pdf'
+}
+
+/** 폴더처럼 열어볼 수 있는 압축 파일 (분할 압축은 첫 조각 .001) */
+export function isArchiveFile(name: string): boolean {
+  const lower = name.toLowerCase()
+  return ['.zip', '.7z', '.rar', '.tar', '.tgz', '.tar.gz', '.zip.001', '.7z.001'].some((ext) => lower.endsWith(ext))
+}
+
+/** 압축 파일 이름에서 확장자를 뗀 이름 (압축 풀 폴더 이름) */
+export function archiveBaseName(name: string): string {
+  return name.replace(/(\.tar\.gz|\.zip\.001|\.7z\.001|\.zip|\.7z|\.rar|\.tar|\.tgz)$/i, '')
+}

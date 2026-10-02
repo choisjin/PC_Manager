@@ -84,9 +84,6 @@ if (WindowsServiceHelpers.IsWindowsService()
     }
 }
 
-// 자격증명이 있는 공유 서버에 다시 로그온한다 (best-effort)
-app.Services.GetRequiredService<SharedFolderStore>().ReconnectAll();
-
 await app.Services.GetRequiredService<JobService>().RecoverInterruptedAsync();
 
 // 에이전트 토큰(선택): 설정하면 에이전트 Hub와 에이전트 전용 API는 토큰이 맞는 요청만 통과시킨다.
@@ -120,6 +117,7 @@ app.MapHub<AgentHub>(HubPaths.Agent);
 app.MapHub<DashboardHub>(HubPaths.Dashboard);
 app.MapApi();
 app.MapFileApi();
+app.MapTextApi();
 app.MapMediaApi();
 app.MapRemoteApi();
 app.MapPcStatusApi();

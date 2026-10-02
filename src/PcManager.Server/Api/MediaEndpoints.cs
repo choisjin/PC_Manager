@@ -41,14 +41,14 @@ public static class MediaEndpoints
         {
             try
             {
-                var full = localShare.ResolveWithin(share, path);
-                if (!File.Exists(full))
+                var stream = localShare.OpenRead(share, path);
+                if (stream is null)
                 {
                     response.StatusCode = StatusCodes.Status404NotFound;
                     return;
                 }
-                var shareType = ContentTypes.TryGetContentType(full, out var mt) ? mt : "application/octet-stream";
-                await Results.File(full, shareType, enableRangeProcessing: true).ExecuteAsync(context);
+                var shareType = ContentTypes.TryGetContentType(path, out var mt) ? mt : "application/octet-stream";
+                await Results.File(stream, shareType, enableRangeProcessing: true).ExecuteAsync(context);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {

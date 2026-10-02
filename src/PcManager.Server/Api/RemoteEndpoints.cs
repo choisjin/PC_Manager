@@ -68,59 +68,65 @@ public static class RemoteEndpoints
         }
         await dashboard.Clients.All.RemoteUsageChanged(usage.Snapshot());
 
-        var sessionId = Guid.NewGuid().ToString("N");
-        var pending = new PendingSession();
-        Pending[sessionId] = pending;
+        var sessions = new List<string>();
         try
         {
-            string? error;
-            try
+            // 첫 연결
+            var (agent, error) = await StartSessionAsync(agentId, connectionId, sessions, agentHub, ct);
+            if (agent is null)
             {
-                using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                startCts.CancelAfter(StartTimeout);
-                error = await agentHub.Clients.Client(connectionId)
-                    .InvokeAsync<string?>(AgentClientMethods.StartRemote, sessionId, startCts.Token);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
-            {
-                error = ex is OperationCanceledException
-                    ? "에이전트가 응답하지 않습니다. (원격조작을 지원하지 않는 이전 버전일 수 있습니다)"
-                    : $"에이전트 호출 실패: {ex.Message}";
-            }
-            if (error is not null)
-            {
-                await CloseAsync(viewer, WebSocketCloseStatus.InternalServerError, error);
+                await CloseAsync(viewer, WebSocketCloseStatus.InternalServerError, error!);
                 return;
             }
+            logger.LogInformation("원격조작 연결: {AgentId} (세션 {SessionId})", agentId, sessions[^1]);
 
-            WebSocket agent;
+            // 브라우저 → 에이전트: 브라우저 소켓은 끝까지 하나로 읽고, 지금 붙어 있는 원격조작 프로세스로 보낸다
+            var relay = new AgentRelay(agent);
+            using var relayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var fromViewer = relay.PumpFromViewerAsync(viewer, relayCts.Token);
+
+            // 에이전트 → 브라우저: 원격조작 프로세스가 끝나도(로그인으로 세션이 바뀌는 등) 브라우저가 열려 있으면
+            // 새 세션에 다시 띄워 같은 연결에 잇는다 (RDP처럼 로그인 후에도 이어짐)
+            var fromAgents = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    await PumpAsync(relay.Current, viewer, relayCts.Token);
+                    pendingDone(sessions[^1]);
+                    if (relayCts.IsCancellationRequested || viewer.State != WebSocketState.Open)
+                        return;
+
+                    await relay.CloseCurrentAsync();
+                    await SendTextAsync(viewer, """{"type":"status","note":"reattaching"}""", relayCts.Token);
+                    logger.LogInformation("원격조작 프로세스 종료 → 다시 연결 시도: {AgentId}", agentId);
+
+                    WebSocket? next = null;
+                    for (var tryCount = 0; tryCount < ReattachTries && next is null && !relayCts.IsCancellationRequested; tryCount++)
+                    {
+                        // 로그인 직후에는 새 세션이 준비될 때까지 잠깐 걸린다
+                        await Task.Delay(TimeSpan.FromSeconds(tryCount == 0 ? 1.5 : 3), relayCts.Token);
+                        if (!registry.TryGetConnection(agentId, out var conn))
+                            continue;
+                        (next, error) = await StartSessionAsync(agentId, conn, sessions, agentHub, relayCts.Token);
+                    }
+                    if (next is null)
+                        return;
+                    relay.Attach(next);
+                    logger.LogInformation("원격조작 다시 연결됨: {AgentId} (세션 {SessionId})", agentId, sessions[^1]);
+                }
+            }, relayCts.Token);
+
             try
             {
-                agent = await pending.Agent.Task.WaitAsync(AttachTimeout, ct);
-            }
-            catch (TimeoutException)
-            {
-                await CloseAsync(viewer, WebSocketCloseStatus.InternalServerError, "원격조작 프로세스가 접속하지 않았습니다.");
-                return;
-            }
-
-            logger.LogInformation("원격조작 연결: {AgentId} (세션 {SessionId})", agentId, sessionId);
-            try
-            {
-                // 한쪽이 끝나면 다른 쪽에도 닫기를 보내고, 잠시 뒤에도 안 끝나면 끊는다
-                using var relayCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                var toViewer = PumpAsync(agent, viewer, relayCts.Token);
-                var toAgent = PumpAsync(viewer, agent, relayCts.Token);
-                await Task.WhenAny(toViewer, toAgent);
+                await Task.WhenAny(fromViewer, fromAgents);
                 await CloseAsync(viewer, WebSocketCloseStatus.NormalClosure, "원격조작이 종료되었습니다.");
-                await CloseAsync(agent, WebSocketCloseStatus.NormalClosure, "종료");
+                await relay.CloseCurrentAsync();
                 relayCts.CancelAfter(TimeSpan.FromSeconds(3));
-                await Task.WhenAll(toViewer, toAgent);
+                try { await Task.WhenAll(fromViewer, fromAgents); } catch (OperationCanceledException) { }
             }
             finally
             {
-                pending.Done.TrySetResult();
-                logger.LogInformation("원격조작 종료: {AgentId} (세션 {SessionId})", agentId, sessionId);
+                logger.LogInformation("원격조작 종료: {AgentId}", agentId);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -129,10 +135,122 @@ public static class RemoteEndpoints
         }
         finally
         {
-            Pending.TryRemove(sessionId, out _);
-            pending.Done.TrySetResult();
+            foreach (var id in sessions)
+                pendingDone(id);
             usage.Release(agentId, userId);
             await dashboard.Clients.All.RemoteUsageChanged(usage.Snapshot());
+        }
+
+        static void pendingDone(string id)
+        {
+            if (Pending.TryRemove(id, out var p))
+                p.Done.TrySetResult();
+        }
+    }
+
+    private const int ReattachTries = 8;
+
+    /// <summary>에이전트에 원격조작 프로세스를 띄우고 접속해 올 때까지 기다린다.</summary>
+    private static async Task<(WebSocket? Agent, string? Error)> StartSessionAsync(
+        string agentId, string connectionId, List<string> sessions, IHubContext<AgentHub> agentHub, CancellationToken ct)
+    {
+        var sessionId = Guid.NewGuid().ToString("N");
+        var pending = new PendingSession();
+        Pending[sessionId] = pending;
+        sessions.Add(sessionId);
+        try
+        {
+            using var startCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            startCts.CancelAfter(StartTimeout);
+            var error = await agentHub.Clients.Client(connectionId)
+                .InvokeAsync<string?>(AgentClientMethods.StartRemote, sessionId, startCts.Token);
+            if (error is not null)
+                return (null, error);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return (null, ex is OperationCanceledException
+                ? "에이전트가 응답하지 않습니다. (원격조작을 지원하지 않는 이전 버전일 수 있습니다)"
+                : $"에이전트 호출 실패: {ex.Message}");
+        }
+
+        try
+        {
+            return (await pending.Agent.Task.WaitAsync(AttachTimeout, ct), null);
+        }
+        catch (TimeoutException)
+        {
+            return (null, "원격조작 프로세스가 접속하지 않았습니다.");
+        }
+    }
+
+    private static async Task SendTextAsync(WebSocket socket, string text, CancellationToken ct)
+    {
+        try
+        {
+            await socket.SendAsync(System.Text.Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, ct);
+        }
+        catch (Exception ex) when (ex is WebSocketException or OperationCanceledException)
+        {
+            // 연결 종료
+        }
+    }
+
+    /// <summary>브라우저 입력을 지금 붙어 있는 원격조작 프로세스로 보낸다. 다시 연결하면 대상이 바뀐다.</summary>
+    private sealed class AgentRelay(WebSocket initial)
+    {
+        private readonly SemaphoreSlim _sendLock = new(1, 1);
+        private volatile WebSocket _current = initial;
+
+        public WebSocket Current => _current;
+
+        public void Attach(WebSocket socket) => _current = socket;
+
+        public async Task CloseCurrentAsync()
+        {
+            await _sendLock.WaitAsync();
+            try
+            {
+                await CloseAsync(_current, WebSocketCloseStatus.NormalClosure, "종료");
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
+        }
+
+        public async Task PumpFromViewerAsync(WebSocket viewer, CancellationToken ct)
+        {
+            var buffer = new byte[64 * 1024];
+            try
+            {
+                while (viewer.State is WebSocketState.Open or WebSocketState.CloseSent)
+                {
+                    var result = await viewer.ReceiveAsync(buffer, ct);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        return;
+                    await _sendLock.WaitAsync(ct);
+                    try
+                    {
+                        // 다시 연결하는 동안의 입력은 버린다
+                        var target = _current;
+                        if (target.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                            await target.SendAsync(buffer.AsMemory(0, result.Count), result.MessageType, result.EndOfMessage, ct);
+                    }
+                    catch (WebSocketException)
+                    {
+                        // 원격조작 프로세스 쪽이 끊김 → 다시 연결을 기다린다
+                    }
+                    finally
+                    {
+                        _sendLock.Release();
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is WebSocketException or OperationCanceledException)
+            {
+                // 연결 종료
+            }
         }
     }
 

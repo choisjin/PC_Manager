@@ -17,6 +17,8 @@ public class TransferService(
     IHubContext<AgentHub> agentHubRaw,
     IHubContext<DashboardHub, IDashboardClient> dashboard,
     IHttpContextAccessor httpContext,
+    SharedFolderStore shares,
+    LocalShareFiles localShare,
     ILogger<TransferService> logger)
 {
     // PC 간 직접 전송 시 한 번에 옮기는 조각 크기 (서버 디스크를 거치지 않고 원본→대상으로 중계)
@@ -33,27 +35,27 @@ public class TransferService(
         var fileName = Path.GetFileName(sourcePath.TrimEnd('\\', '/'));
         if (string.IsNullOrEmpty(fileName))
             return new FileOpResult(false, "잘못된 원본 경로입니다.", null);
-        if (!registry.TryGetConnection(sourceAgentId, out var sourceConn))
-            return new FileOpResult(false, "원본 PC가 오프라인입니다.", null);
-        if (!registry.TryGetConnection(destAgentId, out var destConn))
-            return new FileOpResult(false, "대상 PC가 오프라인입니다.", null);
 
-        var source = agentHubRaw.Clients.Client(sourceConn);
-        var dest = agentHubRaw.Clients.Client(destConn);
-
-        long size;
+        // 원본·대상은 PC(에이전트) 또는 공유 폴더(서버가 직접 접근)
+        CopySource source;
+        CopyTarget target;
         try
         {
-            size = await source.InvokeAsync<long>(AgentClientMethods.GetFileSize, sourcePath, ct);
+            source = await OpenSourceAsync(sourceAgentId, sourcePath, ct);
+            target = OpenTarget(destAgentId);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (CopyException ex)
         {
-            return new FileOpResult(false, "원본을 열 수 없습니다: " + ex.Message, null);
+            return new FileOpResult(false, ex.Message, null);
         }
-        if (size < 0)
+        if (source.Size < 0)
+        {
+            source.Dispose();
             return new FileOpResult(false, "원본 파일을 찾을 수 없습니다 (폴더는 PC 간 복사를 지원하지 않습니다).", null);
+        }
+        var size = source.Size;
 
-        // 대상 PC로 가는 전송을 기록해 대시보드에 진행 상황을 보여준다
+        // 대상 쪽으로 가는 전송을 기록해 대시보드에 진행 상황을 보여준다
         var transfer = NewTransfer(destAgentId, TransferKind.Push, destFolder.TrimEnd('\\', '/') + "\\" + fileName);
         transfer.TotalBytes = size;
         await using (var db = await dbFactory.CreateDbContextAsync(ct))
@@ -67,7 +69,7 @@ public class TransferService(
         string? failure = null;
         try
         {
-            var writeId = await dest.InvokeAsync<string>(AgentClientMethods.BeginWrite, destFolder, fileName, ct);
+            await target.BeginAsync(destFolder, fileName, ct);
             try
             {
                 long offset = 0;
@@ -75,10 +77,10 @@ public class TransferService(
                 while (offset < size)
                 {
                     var want = (int)Math.Min(CrossCopyChunkSize, size - offset);
-                    var data = await source.InvokeAsync<byte[]>(AgentClientMethods.ReadFileChunk, sourcePath, offset, want, ct);
+                    var data = await source.ReadAsync(offset, want, ct);
                     if (data.Length == 0)
                         break;
-                    await dest.InvokeAsync<int>(AgentClientMethods.WriteChunk, writeId, data, ct);
+                    await target.WriteAsync(data, ct);
                     offset += data.Length;
 
                     var percent = size > 0 ? (int)(offset * 100 / size) : 100;
@@ -88,11 +90,11 @@ public class TransferService(
                         await dashboard.Clients.All.TransferUpdated(transfer.ToView() with { Percent = percent });
                     }
                 }
-                finalPath = await dest.InvokeAsync<string>(AgentClientMethods.CommitWrite, writeId, ct);
+                finalPath = await target.CommitAsync(ct);
             }
             catch
             {
-                try { await dest.InvokeAsync<bool>(AgentClientMethods.AbortWrite, writeId, CancellationToken.None); }
+                try { await target.AbortAsync(); }
                 catch { /* 정리 실패는 무시 */ }
                 throw;
             }
@@ -101,29 +103,157 @@ public class TransferService(
         {
             failure = ex.Message;
         }
+        finally
+        {
+            source.Dispose();
+        }
 
         // 전송 결과를 기록/브로드캐스트
         await MarkCrossCopyResultAsync(transfer.Id, failure is null, size, failure);
         if (failure is not null)
-            return new FileOpResult(false, "대상 PC로 보내지 못했습니다: " + failure, null);
+            return new FileOpResult(false, "대상으로 보내지 못했습니다: " + failure, null);
 
         // 잘라내기면 원본 삭제
         if (move)
         {
-            try
-            {
-                var del = await source.InvokeAsync<FileOpResult>(
-                    AgentClientMethods.FileOp, new FileOpRequest(FileOpKind.Delete, sourcePath, null), ct);
-                if (!del.Success)
-                    return new FileOpResult(true, "복사는 완료됐지만 원본 삭제 실패: " + del.Error, finalPath);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                return new FileOpResult(true, "복사는 완료됐지만 원본 삭제 실패: " + ex.Message, finalPath);
-            }
+            var del = await DeleteSourceAsync(sourceAgentId, sourcePath, ct);
+            if (del is not null)
+                return new FileOpResult(true, "복사는 완료됐지만 원본 삭제 실패: " + del, finalPath);
         }
 
         return new FileOpResult(true, null, finalPath);
+    }
+
+    private sealed class CopyException(string message) : Exception(message);
+
+    /// <summary>복사 원본: 크기와 구간 읽기</summary>
+    private sealed class CopySource(long size, Func<long, int, CancellationToken, Task<byte[]>> read, IDisposable? owned = null) : IDisposable
+    {
+        public long Size => size;
+        public Task<byte[]> ReadAsync(long offset, int length, CancellationToken ct) => read(offset, length, ct);
+        public void Dispose() => owned?.Dispose();
+    }
+
+    /// <summary>복사 대상: 임시 파일에 순서대로 쓰고 확정</summary>
+    private sealed class CopyTarget
+    {
+        public required Func<string, string, CancellationToken, Task> BeginAsync { get; init; }
+        public required Func<byte[], CancellationToken, Task> WriteAsync { get; init; }
+        public required Func<CancellationToken, Task<string>> CommitAsync { get; init; }
+        public required Func<Task> AbortAsync { get; init; }
+    }
+
+    private async Task<CopySource> OpenSourceAsync(string id, string path, CancellationToken ct)
+    {
+        if (shares.TryGet(id, out var share))
+        {
+            var stream = localShare.OpenRead(share, path);
+            if (stream is null)
+                return new CopySource(-1, (_, _, _) => Task.FromResult(Array.Empty<byte>()));
+            return new CopySource(stream.Length, async (offset, length, token) =>
+            {
+                stream.Position = offset;
+                var buffer = new byte[length];
+                var total = 0;
+                while (total < length)
+                {
+                    var read = await stream.ReadAsync(buffer.AsMemory(total), token);
+                    if (read == 0)
+                        break;
+                    total += read;
+                }
+                return total == length ? buffer : buffer[..total];
+            }, stream);
+        }
+
+        if (!registry.TryGetConnection(id, out var conn))
+            throw new CopyException("원본 PC가 오프라인입니다.");
+        var proxy = agentHubRaw.Clients.Client(conn);
+        long size;
+        try
+        {
+            size = await proxy.InvokeAsync<long>(AgentClientMethods.GetFileSize, path, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw new CopyException("원본을 열 수 없습니다: " + ex.Message);
+        }
+        return new CopySource(size, (offset, length, token) =>
+            proxy.InvokeAsync<byte[]>(AgentClientMethods.ReadFileChunk, path, offset, length, token));
+    }
+
+    private CopyTarget OpenTarget(string id)
+    {
+        if (shares.TryGet(id, out var share))
+        {
+            FileStream? stream = null;
+            string? tempPath = null;
+            string? finalPath = null;
+            return new CopyTarget
+            {
+                BeginAsync = (folder, name, _) =>
+                {
+                    (stream, tempPath, finalPath) = localShare.BeginWrite(share, folder, name);
+                    return Task.CompletedTask;
+                },
+                WriteAsync = (data, token) => stream!.WriteAsync(data, token).AsTask(),
+                CommitAsync = async _ =>
+                {
+                    await stream!.DisposeAsync();
+                    localShare.CommitWrite(share, tempPath!, finalPath!);
+                    return finalPath!;
+                },
+                AbortAsync = async () =>
+                {
+                    if (stream is not null)
+                        await stream.DisposeAsync();
+                    if (tempPath is not null)
+                        localShare.AbortWrite(share, tempPath);
+                },
+            };
+        }
+
+        if (!registry.TryGetConnection(id, out var conn))
+            throw new CopyException("대상 PC가 오프라인입니다.");
+        var proxy = agentHubRaw.Clients.Client(conn);
+        string? writeId = null;
+        return new CopyTarget
+        {
+            BeginAsync = async (folder, name, token) =>
+                writeId = await proxy.InvokeAsync<string>(AgentClientMethods.BeginWrite, folder, name, token),
+            WriteAsync = (data, token) => proxy.InvokeAsync<int>(AgentClientMethods.WriteChunk, writeId!, data, token),
+            CommitAsync = token => proxy.InvokeAsync<string>(AgentClientMethods.CommitWrite, writeId!, token),
+            AbortAsync = async () =>
+            {
+                if (writeId is not null)
+                    await proxy.InvokeAsync<bool>(AgentClientMethods.AbortWrite, writeId, CancellationToken.None);
+            },
+        };
+    }
+
+    /// <returns>실패하면 오류 문구</returns>
+    private async Task<string?> DeleteSourceAsync(string id, string path, CancellationToken ct)
+    {
+        try
+        {
+            FileOpResult result;
+            if (shares.TryGet(id, out var share))
+            {
+                result = localShare.PerformFileOp(share, new FileOpRequest(FileOpKind.Delete, path, null));
+            }
+            else
+            {
+                if (!registry.TryGetConnection(id, out var conn))
+                    return "원본 PC가 오프라인입니다.";
+                result = await agentHubRaw.Clients.Client(conn)
+                    .InvokeAsync<FileOpResult>(AgentClientMethods.FileOp, new FileOpRequest(FileOpKind.Delete, path, null), ct);
+            }
+            return result.Success ? null : result.Error;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return ex.Message;
+        }
     }
 
     private async Task MarkCrossCopyResultAsync(string transferId, bool success, long totalBytes, string? error)
@@ -150,6 +280,14 @@ public class TransferService(
         var target = destFolder.TrimEnd('\\', '/') + "\\" + archiveName;
         var transfer = NewTransfer(agentId, TransferKind.Compress, target);
         await DispatchAsync(transfer, client => client.Compress(new CompressRequest(transfer.Id, paths, destFolder, archiveName, splitBytes)));
+        return transfer.ToView();
+    }
+
+    /// <summary>파일 탐색기: 압축 파일 안 항목(비면 전부)을 같은 PC의 폴더에 푼다 (PC에서 직접 수행).</summary>
+    public async Task<TransferView> ExtractAsync(string agentId, string archivePath, IReadOnlyList<string> entryPaths, string destFolder)
+    {
+        var transfer = NewTransfer(agentId, TransferKind.Extract, destFolder);
+        await DispatchAsync(transfer, client => client.Extract(new ExtractRequest(transfer.Id, archivePath, entryPaths, destFolder)));
         return transfer.ToView();
     }
 

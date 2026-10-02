@@ -8,17 +8,92 @@ namespace PcManager.Server.Services;
 /// 서버가 직접 접근하는 공유 폴더의 파일 작업. 에이전트(SignalR) 대신 서버 로컬 파일시스템으로 처리한다.
 /// 모든 경로는 공유 루트 하위로 제한한다(경로 이탈 방지).
 /// </summary>
-public class LocalShareFiles(ILogger<LocalShareFiles> logger)
+public class LocalShareFiles(SharedFolderStore store, ILogger<LocalShareFiles> logger)
 {
     private const int MaxListEntries = 5000;
 
+    // ── 공개 작업: 공유 폴더에 등록한 자격증명으로 로그온한 상태에서 수행한다 ──
+
     public DirectoryListing ListDirectory(SharedFolder share, string? path)
+    {
+        try
+        {
+            return store.RunAs(share, () => ListDirectoryCore(share, path));
+        }
+        catch (IOException ex)
+        {
+            return new DirectoryListing(path ?? "", null, [], ex.Message);
+        }
+    }
+
+    public FileOpResult PerformFileOp(SharedFolder share, FileOpRequest request) =>
+        store.RunAs(share, () => PerformFileOpCore(share, request));
+
+    /// <summary>공유 폴더 안의 파일을 읽기용으로 연다 (압축 안 파일도). 없으면 null. 연 뒤에는 자격증명 없이 읽을 수 있다.</summary>
+    public FileStream? OpenRead(SharedFolder share, string path)
+    {
+        try
+        {
+            return store.RunAs(share, () => OpenReadCore(share, path));
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    public string? ReplaceFile(SharedFolder share, string path, byte[] bytes, bool backup) =>
+        store.RunAs(share, () => ReplaceFileCore(share, path, bytes, backup));
+
+    public (int Files, long Bytes) Extract(SharedFolder share, string archivePath, IReadOnlyList<string> entryPaths, string destinationFolder) =>
+        store.RunAs(share, () => ExtractCore(share, archivePath, entryPaths, destinationFolder));
+
+    public Task<string> SaveUploadAsync(SharedFolder share, string destinationPath, Stream content, CancellationToken ct) =>
+        store.RunAsAsync(share, () => SaveUploadCoreAsync(share, destinationPath, content, ct));
+
+    public long Compress(SharedFolder share, IReadOnlyList<string> paths, string destinationFolder, string archiveName) =>
+        store.RunAs(share, () => CompressCore(share, paths, destinationFolder, archiveName));
+
+    /// <summary>PC ↔ 공유 폴더 복사: 대상 폴더에 새 파일(같은 이름이 있으면 "이름 (2)")을 임시 이름으로 만들어 쓴다.</summary>
+    public (FileStream Stream, string TempPath, string FinalPath) BeginWrite(SharedFolder share, string folder, string fileName) =>
+        store.RunAs(share, () =>
+        {
+            var dest = ResolveWithin(share, folder);
+            Directory.CreateDirectory(dest);
+            var finalPath = UniqueChildPath(dest, CleanName(fileName));
+            var tempPath = finalPath + ".pcm-recv";
+            var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+            return (stream, tempPath, finalPath);
+        });
+
+    public void CommitWrite(SharedFolder share, string tempPath, string finalPath) =>
+        store.RunAs(share, () => File.Move(tempPath, finalPath, overwrite: false));
+
+    public void AbortWrite(SharedFolder share, string tempPath) =>
+        store.RunAs(share, () =>
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
+            catch (IOException)
+            {
+                // 정리 실패는 무시
+            }
+        });
+
+    // ── 내부 구현 ──
+
+    private DirectoryListing ListDirectoryCore(SharedFolder share, string? path)
     {
         try
         {
             var root = RootOf(share);
             var target = ResolveWithin(share, path);
             var dir = new DirectoryInfo(target);
+            if (!dir.Exists && ArchiveBrowser.TrySplit(target, out var archivePath, out var innerPath))
+                return ArchiveBrowser.List(archivePath, innerPath);
             if (!dir.Exists)
                 return new DirectoryListing(target, null, [], "폴더가 없습니다.");
 
@@ -47,11 +122,18 @@ public class LocalShareFiles(ILogger<LocalShareFiles> logger)
         }
     }
 
-    public FileOpResult PerformFileOp(SharedFolder share, FileOpRequest request)
+    private FileOpResult PerformFileOpCore(SharedFolder share, FileOpRequest request)
     {
         try
         {
             var path = ResolveWithin(share, request.Path);
+            if (!File.Exists(path) && !Directory.Exists(path) && ArchiveBrowser.TrySplit(path, out var archivePath, out var innerPath))
+            {
+                if (request.Op != FileOpKind.Copy || innerPath.Length == 0)
+                    return new FileOpResult(false, "압축 파일 안은 읽기 전용입니다. 필요한 항목을 압축 풀기 하거나 복사해서 쓰세요.", null);
+                ArchiveBrowser.Extract(archivePath, [innerPath], ResolveWithin(share, Require(request.Target, "대상 폴더")));
+                return new FileOpResult(true, null, null);
+            }
             switch (request.Op)
             {
                 case FileOpKind.Copy:
@@ -98,11 +180,11 @@ public class LocalShareFiles(ILogger<LocalShareFiles> logger)
     }
 
     /// <summary>공유 폴더 안의 파일을 읽기용으로 연다 (다운로드/미디어 스트리밍). 없으면 null.</summary>
-    public FileStream? OpenRead(SharedFolder share, string path)
+    private FileStream? OpenReadCore(SharedFolder share, string path)
     {
         try
         {
-            var full = ResolveWithin(share, path);
+            var full = ResolveReadableCore(share, path);
             if (!File.Exists(full))
                 return null;
             return new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, useAsync: true);
@@ -111,6 +193,53 @@ public class LocalShareFiles(ILogger<LocalShareFiles> logger)
         {
             return null;
         }
+    }
+
+    /// <summary>ResolveWithin + 압축 안 파일이면 임시 폴더에 풀어 둔 실제 파일 경로</summary>
+    private string ResolveReadableCore(SharedFolder share, string path)
+    {
+        var full = ResolveWithin(share, path);
+        return !File.Exists(full) && ArchiveBrowser.TrySplit(full, out var archivePath, out var innerPath) && innerPath.Length > 0
+            ? ArchiveBrowser.ExtractToCache(archivePath, innerPath)
+            : full;
+    }
+
+    /// <summary>편집한 텍스트 저장: 임시 파일에 쓰고 원래 파일과 바꾼다. 실패하면 오류 문구.</summary>
+    private string? ReplaceFileCore(SharedFolder share, string path, byte[] bytes, bool backup)
+    {
+        try
+        {
+            var full = ResolveWithin(share, path);
+            if (!File.Exists(full))
+                return "파일이 없거나, 압축 파일 안이라 저장할 수 없습니다.";
+            var temp = full + ".pcm-edit";
+            File.WriteAllBytes(temp, bytes);
+            if (backup)
+                File.Copy(full, full + ".bak", overwrite: true);
+            File.Move(temp, full, overwrite: true);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return ex.Message;
+        }
+    }
+
+    /// <summary>공유 폴더 안 압축 파일의 항목(비면 전부)을 푼다.</summary>
+    private (int Files, long Bytes) ExtractCore(SharedFolder share, string archivePath, IReadOnlyList<string> entryPaths, string destinationFolder)
+    {
+        var archive = ResolveWithin(share, archivePath);
+        var dest = ResolveWithin(share, destinationFolder);
+        var inner = new List<string>();
+        foreach (var entry in entryPaths)
+        {
+            var full = ResolveWithin(share, entry);
+            if (!ArchiveBrowser.TrySplit(full, out var a, out var i) || !string.Equals(a, archive, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException($"압축 파일 안의 항목이 아닙니다: {entry}");
+            if (i.Length > 0)
+                inner.Add(i);
+        }
+        return ArchiveBrowser.Extract(archive, inner, dest);
     }
 
     public string ResolveWithin(SharedFolder share, string? path)
@@ -125,7 +254,7 @@ public class LocalShareFiles(ILogger<LocalShareFiles> logger)
     }
 
     /// <summary>업로드 받은 내용을 공유 폴더에 저장한다. 저장한 전체 경로를 반환한다.</summary>
-    public async Task<string> SaveUploadAsync(SharedFolder share, string destinationPath, Stream content, CancellationToken ct)
+    private async Task<string> SaveUploadCoreAsync(SharedFolder share, string destinationPath, Stream content, CancellationToken ct)
     {
         var full = ResolveWithin(share, destinationPath);
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
@@ -137,7 +266,7 @@ public class LocalShareFiles(ILogger<LocalShareFiles> logger)
     }
 
     /// <summary>선택 항목을 하나의 zip으로 압축한다 (공유 폴더 안, 서버에서 직접 수행). zip 크기를 반환한다.</summary>
-    public long Compress(SharedFolder share, IReadOnlyList<string> paths, string destinationFolder, string archiveName)
+    private long CompressCore(SharedFolder share, IReadOnlyList<string> paths, string destinationFolder, string archiveName)
     {
         var destFolder = ResolveWithin(share, destinationFolder);
         Directory.CreateDirectory(destFolder);

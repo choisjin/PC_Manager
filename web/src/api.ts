@@ -53,7 +53,7 @@ export interface CreateRunsRequest {
 
 export type JobState = 'Pending' | 'Running' | 'Succeeded' | 'Failed' | 'Cancelled'
 export type JobStepKind = 'Command' | 'Collect'
-export type TransferKind = 'Collect' | 'Fetch' | 'Push' | 'Compress'
+export type TransferKind = 'Collect' | 'Fetch' | 'Push' | 'Compress' | 'Extract'
 export type TransferState = 'Pending' | 'Succeeded' | 'Failed'
 
 export interface JobStep {
@@ -162,7 +162,30 @@ export interface DirectoryListing {
   parentPath: string | null
   entries: FileEntry[]
   error: string | null
+  /** 압축 파일 안을 보고 있으면 그 압축 파일 경로 (읽기 전용) */
+  archivePath?: string | null
 }
+
+/** 텍스트 보기/편집: 서버가 인코딩·줄바꿈을 판별해 준다 (저장할 때 그대로 되돌림) */
+export interface TextFile {
+  /** 줄바꿈을 \n으로 맞춘 내용 */
+  content: string
+  encoding: 'utf-8' | 'utf-8-bom' | 'utf-16le' | 'utf-16be' | 'cp949'
+  newline: '\r\n' | '\n'
+  hash: string
+  size: number
+}
+
+export interface SaveTextResult {
+  success: boolean
+  /** 편집하는 동안 다른 곳에서 파일이 바뀌어 저장하지 않음 */
+  conflict: boolean
+  error: string | null
+  hash: string | null
+}
+
+/** listing.error / 오류 문구가 이것으로 시작하면 압축 암호를 묻는다 */
+export const ARCHIVE_PASSWORD_PREFIX = '암호가 필요합니다'
 
 export type UpdatePhase = 'Idle' | 'Downloading' | 'Installing' | 'Restarting' | 'Failed'
 
@@ -213,6 +236,8 @@ export interface SharedFolder {
   name: string
   path: string
   username?: string | null
+  /** 등록한 사용자. 없으면 예전에 등록된 공용 공유 폴더 */
+  ownerUserId?: string | null
 }
 
 export interface SharedFolders {
@@ -393,6 +418,8 @@ export const api = {
       body: JSON.stringify({ name, path, username: username || null, password: password || null }),
     }),
   removeShare: (id: string) => request<SharedFolders>(`/api/shares/${id}`, { method: 'DELETE' }),
+  renameShare: (id: string, name: string) =>
+    request<SharedFolder>(`/api/shares/${id}/name`, { method: 'PUT', body: JSON.stringify({ name }) }),
 
   /** 파일에 대한 공개 다운로드 링크 생성 (토큰만 있으면 누구나 받음) */
   createDownloadLink: (agentId: string, path: string) =>
@@ -465,6 +492,27 @@ export const api = {
     request<FileOpResult>('/api/files/cross-copy', { method: 'POST', body: JSON.stringify(body) }),
 
   /** PC 안에서 선택 항목을 ZIP으로 압축 (PC에서 직접 수행). splitBytes>0이면 분할 압축. 진행 상황은 전송 기록에 표시된다 */
+  readText: (agentId: string, path: string) => request<TextFile>(`/api/agents/${agentId}/text?${query({ path })}`),
+  saveText: (agentId: string, body: { path: string; content: string; encoding: string; newline: string; baseHash: string | null; backup: boolean }) =>
+    request<SaveTextResult>(`/api/agents/${agentId}/text`, { method: 'PUT', body: JSON.stringify(body) }),
+  /** 편집 중인 내용을 원래 인코딩의 바이트로 (내 PC에 저장용) */
+  encodeText: async (content: string, encoding: string, newline: string) => {
+    const res = await fetch('/api/text/encode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, encoding, newline }),
+    })
+    if (!res.ok) throw new Error(errorMessage(res.status, await res.text()))
+    return res.blob()
+  },
+  /** 압축 풀기 (같은 PC). entryPaths가 비면 전부 */
+  extractFiles: (agentId: string, archivePath: string, entryPaths: string[], destinationFolder: string) =>
+    request<Transfer>(`/api/agents/${agentId}/files/extract`, {
+      method: 'POST',
+      body: JSON.stringify({ archivePath, entryPaths, destinationFolder }),
+    }),
+  setArchivePassword: (agentId: string, archivePath: string, password: string) =>
+    request<void>(`/api/agents/${agentId}/archive-password`, { method: 'POST', body: JSON.stringify({ archivePath, password }) }),
   compressFiles: (agentId: string, paths: string[], destinationFolder: string, archiveName?: string, splitBytes = 0) =>
     request<Transfer>(`/api/agents/${agentId}/files/compress`, {
       method: 'POST',

@@ -37,6 +37,10 @@ public class FileTransferService(
                 return new DirectoryListing("", null, drives, null);
             }
 
+            // 압축 파일(또는 그 안의 폴더)이면 압축 안 목록
+            if (ArchiveBrowser.TrySplit(path, out var archivePath, out var innerPath))
+                return ArchiveBrowser.List(archivePath, innerPath);
+
             var directory = new DirectoryInfo(path);
             var entries = directory
                 .EnumerateFileSystemInfos("*", new EnumerationOptions
@@ -69,7 +73,7 @@ public class FileTransferService(
     {
         try
         {
-            var file = new FileInfo(path);
+            var file = new FileInfo(ReadablePath(path));
             return file.Exists ? file.Length : -1;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
@@ -77,6 +81,17 @@ public class FileTransferService(
             return -1;
         }
     }
+
+    /// <summary>압축 안 파일 경로면 임시 폴더에 풀어 둔 실제 파일 경로를, 아니면 그대로 돌려준다.</summary>
+    private static string ReadablePath(string path) =>
+        !File.Exists(path) && ArchiveBrowser.TrySplit(path, out var archivePath, out var innerPath) && innerPath.Length > 0
+            ? ArchiveBrowser.ExtractToCache(archivePath, innerPath)
+            : path;
+
+    /// <summary>압축 파일 안 경로인지 (압축 파일 자체는 제외)</summary>
+    private static bool IsInsideArchive(string path) =>
+        !File.Exists(path) && !Directory.Exists(path)
+        && ArchiveBrowser.TrySplit(path, out _, out var innerPath) && innerPath.Length > 0;
 
     /// <summary>파일의 [offset, offset+length) 구간을 읽는다. EOF에 걸리면 더 짧게 반환한다.</summary>
     public byte[] ReadFileChunk(string path, long offset, int length)
@@ -86,7 +101,7 @@ public class FileTransferService(
         length = Math.Min(length, MaxChunk);
 
         // 테스트가 아직 쓰고 있는(녹화 중인) 파일도 읽을 수 있게 공유 모드로 연다
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var stream = new FileStream(ReadablePath(path), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         if (offset >= stream.Length)
             return [];
 
@@ -108,6 +123,22 @@ public class FileTransferService(
     {
         try
         {
+            if (IsInsideArchive(request.Path) || (request.Op == FileOpKind.CreateDirectory && ArchiveBrowser.TrySplit(request.Path, out _, out _)))
+            {
+                if (request.Op != FileOpKind.Copy)
+                    return new FileOpResult(false, "압축 파일 안은 읽기 전용입니다. 필요한 항목을 압축 풀기 하거나 복사해서 쓰세요.", null);
+                // 압축 안 항목을 실제 폴더로 복사 = 그 항목만 압축 풀기
+                var dest = Require(request.Target, "대상 폴더");
+                if (ArchiveBrowser.TrySplit(dest, out _, out _))
+                    return new FileOpResult(false, "압축 파일 안에는 붙여넣을 수 없습니다.", null);
+                ArchiveBrowser.TrySplit(request.Path, out var archivePath, out var innerPath);
+                ArchiveBrowser.Extract(archivePath, [innerPath], dest);
+                return new FileOpResult(true, null, null);
+            }
+            if (request.Op is FileOpKind.Copy or FileOpKind.Move && request.Target is not null
+                && ArchiveBrowser.TrySplit(request.Target, out _, out _))
+                return new FileOpResult(false, "압축 파일 안에는 붙여넣을 수 없습니다.", null);
+
             switch (request.Op)
             {
                 case FileOpKind.Copy:
@@ -314,6 +345,51 @@ public class FileTransferService(
     public void StartCompress(CompressRequest request) =>
         StartTransfer(request.TransferId, progress => CompressAsync(request, progress));
 
+    public void StartExtract(ExtractRequest request) =>
+        StartTransfer(request.TransferId, progress => Task.Run(() => Extract(request, progress)));
+
+    /// <summary>압축 안 항목(없으면 전부)을 대상 폴더에 푼다. 진행 상황을 서버로 보고한다.</summary>
+    private void Extract(ExtractRequest request, TransferProgress progress)
+    {
+        var inner = new List<string>();
+        foreach (var path in request.EntryPaths)
+        {
+            if (!ArchiveBrowser.TrySplit(path, out var archivePath, out var innerPath)
+                || !string.Equals(archivePath, request.ArchivePath, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException($"압축 파일 안의 항목이 아닙니다: {path}");
+            if (innerPath.Length > 0)
+                inner.Add(innerPath);
+        }
+        var (files, bytes) = ArchiveBrowser.Extract(request.ArchivePath, inner, request.DestinationFolder,
+            (count, done, percent) => outbound.Enqueue(new TransferProgressReport(request.TransferId, count, done, percent)));
+        progress.Files = files;
+        progress.Bytes = bytes;
+        logger.LogInformation("압축 풀기 완료 {TransferId}: {Archive} → {Dest} ({Files}개)", request.TransferId, request.ArchivePath, request.DestinationFolder, files);
+    }
+
+    /// <summary>편집한 파일 저장: 받은 임시 파일로 대상 파일을 바꾼다. 실패하면 오류 문구.</summary>
+    public async Task<string?> CommitReplaceAsync(CommitReplaceRequest request)
+    {
+        if (!_writes.TryRemove(request.WriteId, out var session))
+            return "쓰기 세션이 없습니다.";
+        await session.Stream.FlushAsync();
+        await session.Stream.DisposeAsync();
+        try
+        {
+            if (IsInsideArchive(request.TargetPath))
+                throw new IOException("압축 파일 안은 읽기 전용입니다.");
+            if (request.Backup && File.Exists(request.TargetPath))
+                File.Copy(request.TargetPath, request.TargetPath + ".bak", overwrite: true);
+            File.Move(session.TempPath, request.TargetPath, overwrite: true);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            try { File.Delete(session.TempPath); } catch (IOException) { }
+            return ex.Message;
+        }
+    }
+
     /// <summary>TransferCompleted가 서버에 전달된 뒤 호출한다.</summary>
     public void MarkReported(string transferId) => _unreported.TryRemove(transferId, out _);
 
@@ -363,11 +439,12 @@ public class FileTransferService(
 
     private async Task UploadSingleAsync(UploadFileRequest request, TransferProgress progress)
     {
-        var file = new FileInfo(request.SourcePath);
+        var file = new FileInfo(ReadablePath(request.SourcePath));
         if (!file.Exists)
             throw new FileNotFoundException($"파일이 없습니다: {request.SourcePath}");
 
-        progress.Bytes = await UploadAsync(request.TransferId, file.Name, file.FullName);
+        // 압축 안 파일은 임시 이름이 아니라 원래 이름으로 올린다
+        progress.Bytes = await UploadAsync(request.TransferId, Path.GetFileName(request.SourcePath.TrimEnd('\\', '/')), file.FullName);
         progress.Files = 1;
     }
 
