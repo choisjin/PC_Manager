@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { extensionOf, fileKind, type FileKind } from '../../fileTypes'
+import { fileKind, type FileKind } from '../../fileTypes'
 
 // 윈도우 11 Fluent 스타일의 자체 제작 라인 아이콘 (SVG).
 // 마이크로소프트의 독점 Windows .ico/Segoe Fluent 글꼴을 배포하지 않기 위해 직접 그린 아이콘을 쓴다.
@@ -97,73 +97,116 @@ export function Icon({ name, size = 16, className }: Props) {
   )
 }
 
-// 파일 종류별 색 (윈도우·오피스에서 익숙한 색 계열)
-const KIND_COLOR: Record<FileKind, string | null> = {
-  image: '#1f9e8f',
-  video: '#7048e8',
-  audio: '#d6336c',
-  text: '#6b7480',
-  code: '#3b5bdb',
-  excel: '#1d7044',
-  word: '#2b579a',
-  powerpoint: '#c4472b',
-  pdf: '#d0312d',
-  archive: '#b07219',
-  program: '#495057',
-  other: null,
+// 파일 종류별 모양 (24×24). 모양 자체로 구분되게 그린다: 사진 액자, 필름, 음표, 표, 상자 등
+const PAGE = 'M6.5 2.5h7.8l4.7 4.7v13.3a1 1 0 0 1-1 1h-11.5a1 1 0 0 1-1-1v-17a1 1 0 0 1 1-1z'
+const PAGE_FOLD = 'M14.3 2.5v3.7a1 1 0 0 0 1 1h3.7'
+
+const KIND_SHAPE: Record<FileKind, ReactNode> = {
+  // 사진: 액자 + 해 + 산
+  image: (
+    <>
+      <rect x="2.5" y="4.5" width="19" height="15" rx="2" fill="#e6fcf5" stroke="#1f9e8f" strokeWidth="1.2" />
+      <circle cx="8" cy="9.3" r="1.8" fill="#f59f00" />
+      <path d="M3.2 17.8l5.4-5.4 3.7 3.7 2.6-2.6 5.9 4.4v.4a1 1 0 0 1-1 1H4.2a1 1 0 0 1-1-1z" fill="#1f9e8f" />
+    </>
+  ),
+  // 영상: 필름 (구멍 + 재생)
+  video: (
+    <>
+      <rect x="2.5" y="4.5" width="19" height="15" rx="2" fill="#7048e8" />
+      <path d="M4.5 6.2h1.6M8.5 6.2h1.6M12.5 6.2h1.6M16.5 6.2h1.6M4.5 17.8h1.6M8.5 17.8h1.6M12.5 17.8h1.6M16.5 17.8h1.6" stroke="#fff" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M10 9v6l5-3z" fill="#fff" />
+    </>
+  ),
+  // 오디오: 음표
+  audio: (
+    <>
+      <path d="M9.5 17V6.2l10-2.2v10.6" stroke="#d6336c" strokeWidth="2" strokeLinejoin="round" />
+      <ellipse cx="7" cy="17.3" rx="3" ry="2.4" fill="#d6336c" />
+      <ellipse cx="17" cy="14.9" rx="3" ry="2.4" fill="#d6336c" />
+    </>
+  ),
+  // 텍스트: 줄이 있는 종이
+  text: (
+    <>
+      <path d={PAGE} fill="var(--file-page, #fff)" stroke="#6b7480" strokeWidth="1.1" strokeLinejoin="round" />
+      <path d={PAGE_FOLD} stroke="#6b7480" strokeWidth="1.1" strokeLinejoin="round" />
+      <path d="M8 10.5h8M8 13.5h8M8 16.5h5" stroke="#6b7480" strokeWidth="1.2" strokeLinecap="round" />
+    </>
+  ),
+  // 코드: </>
+  code: (
+    <>
+      <rect x="2.5" y="3.5" width="19" height="17" rx="3" fill="#3b5bdb" />
+      <path d="M9 8.5L5.8 12 9 15.5M15 8.5l3.2 3.5-3.2 3.5M13.2 7.5l-2.4 9" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </>
+  ),
+  // 엑셀: 표
+  excel: (
+    <>
+      <rect x="2.5" y="2.5" width="19" height="19" rx="3" fill="#1d7044" />
+      <rect x="6" y="6" width="12" height="12" rx="1" fill="#fff" />
+      <path d="M6 10h12M6 14h12M10 6v12M14 6v12" stroke="#1d7044" strokeWidth="1.1" />
+    </>
+  ),
+  // 워드·한글: W
+  word: (
+    <>
+      <rect x="2.5" y="2.5" width="19" height="19" rx="3" fill="#2b579a" />
+      <path d="M6.5 7.5l2 9 3.5-7 3.5 7 2-9" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </>
+  ),
+  // 파워포인트: 원그래프
+  powerpoint: (
+    <>
+      <rect x="2.5" y="2.5" width="19" height="19" rx="3" fill="#c4472b" />
+      <path d="M11.3 7.2a5.2 5.2 0 1 0 5.4 5.4h-5.4z" fill="#fff" />
+      <path d="M12.9 5.8v5.3h5.3a5.3 5.3 0 0 0-5.3-5.3z" fill="#fff" opacity="0.75" />
+    </>
+  ),
+  // PDF: 빨간 문서
+  pdf: (
+    <>
+      <path d={PAGE} fill="#d0312d" />
+      <path d={PAGE_FOLD} fill="#f08c8a" stroke="#f08c8a" strokeWidth="0.6" strokeLinejoin="round" />
+      <path d="M7.5 17.5c2-1.5 3.6-4.6 4-7.7.2-1.6-1.4-1.6-1.3-.1.3 3.2 3.7 6.6 6.3 6.6 1.3 0 1.2-1.3-.3-1.4-3.3-.2-7.1 1.6-8.7 2.9-.7.6.1 1.3 0-.3z" stroke="#fff" strokeWidth="1" strokeLinejoin="round" />
+    </>
+  ),
+  // 압축: 지퍼 달린 상자
+  archive: (
+    <>
+      <rect x="3.5" y="7.5" width="17" height="13" rx="1.5" fill="#d9952f" />
+      <rect x="2.5" y="4" width="19" height="4.5" rx="1.2" fill="#b07219" />
+      <rect x="10.5" y="4" width="3" height="16.5" fill="#f1d39b" />
+      <path d="M10.5 6h1.5M12 8h1.5M10.5 10h1.5M12 12h1.5M10.5 14h1.5" stroke="#8a5a14" strokeWidth="1" />
+      <rect x="10" y="15" width="4" height="3.5" rx="0.8" fill="#8a5a14" />
+    </>
+  ),
+  // 프로그램: 창 + 톱니
+  program: (
+    <>
+      <rect x="2.5" y="3.5" width="19" height="17" rx="2.5" fill="#495057" />
+      <path d="M2.5 6a2.5 2.5 0 0 1 2.5-2.5h14A2.5 2.5 0 0 1 21.5 6v1.5h-19z" fill="#343a40" />
+      <circle cx="5" cy="5.5" r=".7" fill="#ff6b6b" />
+      <circle cx="7.2" cy="5.5" r=".7" fill="#ffd43b" />
+      <circle cx="12" cy="14" r="2.3" stroke="#fff" strokeWidth="1.5" />
+      <path d="M12 9.6v1.3M12 17.1v1.3M7.6 14h1.3M15.1 14h1.3M8.9 10.9l.9.9M14.2 16.2l.9.9M8.9 17.1l.9-.9M14.2 11.8l.9-.9" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
+    </>
+  ),
+  // 그 밖: 빈 종이
+  other: (
+    <>
+      <path d={PAGE} fill="var(--file-page, #fff)" stroke="#9aa3ad" strokeWidth="1.1" strokeLinejoin="round" />
+      <path d={PAGE_FOLD} stroke="#9aa3ad" strokeWidth="1.1" strokeLinejoin="round" />
+    </>
+  ),
 }
 
-/**
- * 탐색기 파일 아이콘: 종이 모양에 종류별 색 라벨(확장자)을 붙여 이미지·영상·엑셀·압축 등을 한눈에 구분한다.
- * 작게(16px) 그려도 라벨 색으로 구분되고, 크게(큰 아이콘 보기) 그리면 확장자 글자가 보인다.
- */
+/** 탐색기 파일 아이콘: 종류마다 모양이 다르다 (사진·필름·음표·표·W·원그래프·PDF·상자·창·종이) */
 export function FileIcon({ name, size = 16, className }: { name: string; size?: number; className?: string }) {
-  const kind = fileKind(name)
-  const color = KIND_COLOR[kind]
-  const ext = (kind === 'archive' && /\.\d{3}$/.test(name) ? 'ZIP' : extensionOf(name)).toUpperCase().slice(0, 4)
-  const label = ext.length > 0 ? ext : ''
-  const fontSize = label.length >= 4 ? 4.4 : label.length === 3 ? 5.2 : 6
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" className={className} aria-hidden="true" focusable="false" fill="none">
-      <title>{name}</title>
-      {/* 종이 */}
-      <path
-        d="M6.5 2.5h7.8l4.7 4.7v13.3a1 1 0 0 1-1 1h-11.5a1 1 0 0 1-1-1v-17a1 1 0 0 1 1-1z"
-        fill="var(--file-page, #fff)"
-        stroke={color ?? '#9aa3ad'}
-        strokeWidth="1.1"
-        strokeLinejoin="round"
-      />
-      <path d="M14.3 2.5v3.7a1 1 0 0 0 1 1h3.7" stroke={color ?? '#9aa3ad'} strokeWidth="1.1" strokeLinejoin="round" />
-      {color ? (
-        <>
-          {/* 종류별 무늬 (종이 윗부분) */}
-          {kind === 'image' && <path d="M8 11.5l2.2-2.6 1.7 1.9 1.2-1.2 2 1.9z" fill={color} />}
-          {kind === 'video' && <path d="M10.2 7.6v4l3.3-2z" fill={color} />}
-          {kind === 'audio' && <path d="M12.5 6.5v4.3a1.3 1.3 0 1 1-.9-1.2V6.5h2.2" stroke={color} strokeWidth="1" />}
-          {kind === 'archive' && <path d="M11 3v1.3h1.2v1.3H11v1.3h1.2v1.3H11v1.3h1.2" stroke={color} strokeWidth="1" />}
-          {(kind === 'text' || kind === 'code') && <path d="M8 7.5h5M8 9.5h7M8 11.5h4" stroke={color} strokeWidth="1" strokeLinecap="round" />}
-          {(kind === 'excel' || kind === 'word' || kind === 'powerpoint' || kind === 'pdf' || kind === 'program') && (
-            <path d="M8 7.5h7M8 9.5h7M8 11.5h5" stroke={color} strokeWidth="0.9" strokeLinecap="round" opacity="0.55" />
-          )}
-          {/* 확장자 라벨 */}
-          <rect x="2.5" y="13" width="15.5" height="7" rx="1.3" fill={color} />
-          <text
-            x="10.25"
-            y="18.15"
-            textAnchor="middle"
-            fontSize={fontSize}
-            fontWeight="700"
-            fontFamily="Segoe UI, Arial, sans-serif"
-            fill="#fff"
-            letterSpacing="0.1"
-          >
-            {label}
-          </text>
-        </>
-      ) : (
-        <path d="M8 11h8M8 14h8M8 17h5" stroke="#b4bcc5" strokeWidth="1" strokeLinecap="round" />
-      )}
+      {KIND_SHAPE[fileKind(name)]}
     </svg>
   )
 }
