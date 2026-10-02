@@ -844,8 +844,8 @@ export function ExplorerPane({
     if (targets.length === 1 && !targets[0].isDirectory) {
       const kind = viewerKind(targets[0].name)
       if (selfAgentId) items.push({ label: '내 PC 프로그램으로 열기 (읽기 전용 복사본)', onClick: () => openLocal(targets[0]) })
-      if (kind) items.push({ label: kind === 'text' ? '보기 (읽기 전용)' : '보기', onClick: () => openViewer(targets[0], kind) })
-      if (isVideoFile(targets[0].name)) items.push({ label: '재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
+      if (kind) items.push({ label: '내려받지 않고 보기', onClick: () => openViewer(targets[0], kind) })
+      if (isVideoFile(targets[0].name)) items.push({ label: '내려받지 않고 재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
     }
     const what = targets.length ? `선택 ${targets.length}개` : '전체'
     items.push({ label: `압축 풀기: ${what} → 압축 파일이 있는 폴더`, onClick: () => extract(archive, targets, archiveFolder) })
@@ -873,9 +873,9 @@ export function ExplorerPane({
       const kind = viewerKind(t.name)
       if (selfAgentId && !isArchiveFile(t.name))
         items.push({ label: '내 PC 프로그램으로 열기 (저장하면 이 PC에 저장)', onClick: () => openLocal(t) })
-      if (kind) items.push({ label: kind === 'text' ? '브라우저에서 보기·편집' : '브라우저에서 보기', onClick: () => openViewer(t, kind) })
+      if (kind) items.push({ label: kind === 'text' ? '내려받지 않고 편집' : '내려받지 않고 보기', onClick: () => openViewer(t, kind) })
       else if (t.size <= 5 * 1024 * 1024 && !isArchiveFile(t.name) && !isVideoFile(t.name))
-        items.push({ label: '텍스트로 열기', onClick: () => openViewer(t, 'text') })
+        items.push({ label: '내려받지 않고 텍스트로 편집', onClick: () => openViewer(t, 'text') })
       if (isArchiveFile(t.name)) {
         const folderOf = t.fullPath.slice(0, t.fullPath.lastIndexOf('\\'))
         const sub = `${folderOf}\\${archiveBaseName(t.name)}`
@@ -909,7 +909,7 @@ export function ExplorerPane({
       items.push({ label: '분할 압축…', disabled: !path, onClick: () => setSplitTargets(targets) })
     }
     if (targets.length === 1 && isVideoFile(targets[0].name)) {
-      items.push({ label: '재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
+      items.push({ label: '내려받지 않고 재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
     }
     if (targets.length > 0) {
       items.push({ label: '경로 복사', onClick: () => void copyText(targets.map((t) => t.fullPath).join('\n')) })
