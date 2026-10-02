@@ -118,6 +118,7 @@ app.MapHub<DashboardHub>(HubPaths.Dashboard);
 app.MapApi();
 app.MapFileApi();
 app.MapTextApi();
+app.MapFileIconApi();
 app.MapMediaApi();
 app.MapRemoteApi();
 app.MapPcStatusApi();

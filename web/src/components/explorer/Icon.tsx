@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { fileKind, type FileKind } from '../../fileTypes'
+import { type ReactNode, useState } from 'react'
+import { extensionOf, fileKind, type FileKind } from '../../fileTypes'
 
 // 윈도우 11 Fluent 스타일의 자체 제작 라인 아이콘 (SVG).
 // 마이크로소프트의 독점 Windows .ico/Segoe Fluent 글꼴을 배포하지 않기 위해 직접 그린 아이콘을 쓴다.
@@ -200,6 +200,32 @@ const KIND_SHAPE: Record<FileKind, ReactNode> = {
       <path d={PAGE_FOLD} stroke="#9aa3ad" strokeWidth="1.1" strokeLinejoin="round" />
     </>
   ),
+}
+
+/**
+ * 윈도우 정식 아이콘: 대시보드를 연 PC(없으면 서버 PC)에 설치된 확장자별 셸 아이콘을 그대로 쓴다.
+ * 받지 못하면 직접 그린 종류별 아이콘(FileIcon)으로 대신한다.
+ */
+export function ShellIcon({ name, folder, size = 16, agentId, className }: { name: string; folder?: boolean; size?: number; agentId: string | null; className?: string }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return folder ? <Icon name="folder" size={size} className={className} /> : <FileIcon name={name} size={size} className={className} />
+  // 분할 압축(.001)·tar.gz는 압축 아이콘으로
+  const ext = folder ? '<folder>' : fileKind(name) === 'archive' && /\.\d{3}$/.test(name) ? 'zip' : extensionOf(name) || 'file'
+  // 고해상도 화면에서도 선명하게 한 단계 큰 아이콘을 받아 줄여 그린다
+  const want = size <= 16 ? (window.devicePixelRatio > 1 ? 32 : 16) : size <= 32 ? 48 : 256
+  const query = new URLSearchParams({ ext, size: String(want), ...(agentId ? { agent: agentId } : {}) })
+  return (
+    <img
+      src={`/api/file-icon?${query}`}
+      width={size}
+      height={size}
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+      className={`shell-icon${className ? ` ${className}` : ''}`}
+      onError={() => setFailed(true)}
+    />
+  )
 }
 
 /** 탐색기 파일 아이콘: 종류마다 모양이 다르다 (사진·필름·음표·표·W·원그래프·PDF·상자·창·종이) */

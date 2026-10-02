@@ -253,6 +253,9 @@ public static class AgentClientMethods
     /// <summary>() → EditCleanResult. 다 보냈고 열려 있지 않은 받은 사본을 지운다</summary>
     public const string CleanEditFolder = "CleanEditFolder";
 
+    /// <summary>(string extension, int size) → byte[]? PNG. 그 PC 윈도우의 확장자별 셸 아이콘 (탐색기와 같은 아이콘)</summary>
+    public const string GetFileIcon = "GetFileIcon";
+
     /// <summary>string sessionId → string? 오류. 사용자 세션에 원격조작 프로세스를 띄워 AgentRemotePaths.Session으로 접속시킨다</summary>
     public const string StartRemote = "StartRemote";
 

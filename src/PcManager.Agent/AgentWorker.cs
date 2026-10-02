@@ -136,6 +136,7 @@ public class AgentWorker(
         connection.On(AgentClientMethods.GetEditFolderInfo, () => Task.Run(edits.GetInfo));
         connection.On(AgentClientMethods.OpenEditFolder, () => Task.Run(edits.OpenFolder));
         connection.On(AgentClientMethods.CleanEditFolder, () => Task.Run(edits.CleanNow));
+        connection.On<string, int, byte[]?>(AgentClientMethods.GetFileIcon, (ext, size) => Task.Run(() => ShellIcons.GetPng(ext, size)));
         connection.On<CommitReplaceRequest, string?>(AgentClientMethods.CommitReplace, files.CommitReplaceAsync);
         connection.On<string, string, bool>(AgentClientMethods.SetArchivePassword,
             (archivePath, password) => { ArchiveBrowser.SetPassword(archivePath, password); return true; });

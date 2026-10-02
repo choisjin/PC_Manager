@@ -3720,3 +3720,9 @@ th.sortable:hover {
   margin: 4px 0 0;
   color: var(--ok);
 }
+
+/* 윈도우 셸 아이콘 이미지 */
+.shell-icon {
+  display: inline-block;
+  object-fit: contain;
+}

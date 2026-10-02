@@ -7,7 +7,7 @@ import { FileViewer, type ViewerKind } from '../FileViewer'
 import { VideoViewer } from '../VideoViewer'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DriveTree } from './DriveTree'
-import { FileIcon, Icon } from './Icon'
+import { Icon, ShellIcon } from './Icon'
 import { copyText, type FileClipboard, FILES_MIME, type FilesDragPayload, newId, PANE_MIME } from './pcGroups'
 
 const COL_WIDTH_KEY = 'explorer.colWidths'
@@ -1221,7 +1221,7 @@ export function ExplorerPane({
                       } : undefined}
                     >
                       <td className="ellipsis">
-                        {entry.isDirectory ? <Icon name="folder" className="file-icon" /> : <FileIcon name={entry.name} className="file-icon" />}
+                        <ShellIcon name={entry.name} folder={entry.isDirectory} agentId={selfAgentId} className="file-icon" />
                         {entry.name}
                       </td>
                       {columns.modified && <td className="col-date">{entry.modifiedAt ? formatFileDate(entry.modifiedAt) : ''}</td>}
@@ -1265,7 +1265,7 @@ export function ExplorerPane({
                       }
                     } : undefined}
                   >
-                    {entry.isDirectory ? <Icon name="folder" size={44} className="icon-tile-ico" /> : <FileIcon name={entry.name} size={44} className="icon-tile-ico" />}
+                    <ShellIcon name={entry.name} folder={entry.isDirectory} size={44} agentId={selfAgentId} className="icon-tile-ico" />
                     <span className="icon-tile-name ellipsis-2">{entry.name}</span>
                   </div>
                 )
