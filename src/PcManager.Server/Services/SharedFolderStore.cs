@@ -194,6 +194,28 @@ public class SharedFolderStore(AppPaths paths, ILogger<SharedFolderStore> logger
         }
     }
 
+    /// <summary>이 사용자에게 보이는 공유 폴더의 표시 순서를 바꾼다 (ids 순서대로, 빠진 것은 뒤에)</summary>
+    public SharedFoldersView Reorder(string? userId, IReadOnlyList<string> ids)
+    {
+        lock (_lock)
+        {
+            var list = LoadUnlocked();
+            var visible = list.Where(s => VisibleTo(s, userId)).ToList();
+            var ordered = ids.Select(id => visible.FirstOrDefault(s => s.Id == id)).OfType<Stored>()
+                .Concat(visible.Where(s => !ids.Contains(s.Id)))
+                .ToList();
+            // 보이는 항목들이 있던 자리에 새 순서로 다시 채운다 (다른 사용자 항목 위치는 그대로)
+            var queue = new Queue<Stored>(ordered);
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (VisibleTo(list[i], userId))
+                    list[i] = queue.Dequeue();
+            }
+            Save(list);
+            return new SharedFoldersView(list.Where(s => VisibleTo(s, userId)).Select(ToView).ToList());
+        }
+    }
+
     public void Remove(string? userId, string id)
     {
         lock (_lock)

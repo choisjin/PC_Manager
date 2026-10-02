@@ -21,6 +21,7 @@ interface Props {
   addShare: (name: string, path: string, username?: string, password?: string) => Promise<void>
   removeShare: (id: string) => void
   renameShare: (id: string, name: string) => Promise<void>
+  reorderShares: (ids: string[]) => void
   org: Org
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
   presence: Record<string, string[]>
@@ -64,7 +65,7 @@ const MODE_KEY = 'explorer.mode'
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, renameShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, clientIp, selfPc, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, renameShare, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, clientIp, selfPc, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   // 선택한 프로젝트의 에이전트 + 아직 미배정 에이전트를 노출 (다른 프로젝트 전용은 숨김). 전체 보기면 모두.
   const visibleAgents = useMemo(
@@ -260,6 +261,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         addShare={addShare}
         removeShare={removeShare}
         renameShare={renameShare}
+        reorderShares={reorderShares}
         org={org}
         setAgentProject={setAgentProject}
         presence={presence}

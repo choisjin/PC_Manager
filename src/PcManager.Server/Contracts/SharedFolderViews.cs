@@ -17,3 +17,5 @@ public record ShareProbeRequest(string? Path);
 /// <param name="NeedsCredentials">폴더는 있는데 권한이 없다 → 사용자 이름·비밀번호 필요</param>
 /// <param name="Error">경로가 없거나 서버에 연결할 수 없는 등 (자격증명으로 해결되지 않을 수 있음)</param>
 public record ShareProbeResult(bool Accessible, bool NeedsCredentials, string? Error);
+
+public record ReorderSharedFoldersRequest(IReadOnlyList<string>? Ids);

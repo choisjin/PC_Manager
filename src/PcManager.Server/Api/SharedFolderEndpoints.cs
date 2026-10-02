@@ -35,6 +35,14 @@ public static class SharedFolderEndpoints
         api.MapPost("/probe", (ShareProbeRequest request) =>
             Results.Ok(SharedFolderStore.Probe(request.Path ?? "")));
 
+        // 표시 순서 변경 (끌어서 옮기기)
+        api.MapPut("/order", async (ReorderSharedFoldersRequest request, HttpRequest http, SharedFolderStore store, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
+        {
+            var view = store.Reorder(UserOf(http), request.Ids ?? []);
+            await NotifyAsync(dashboard);
+            return Results.Ok(view);
+        });
+
         // 별칭(표시 이름) 변경
         api.MapPut("/{id}/name", async (string id, RenameSharedFolderRequest request, HttpRequest http, SharedFolderStore store, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
         {

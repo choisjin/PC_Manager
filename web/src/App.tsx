@@ -65,6 +65,7 @@ export default function App() {
     addShare,
     removeShare,
     renameShare,
+    reorderShares,
     reloadShares,
     org,
     orgActions,
@@ -195,6 +196,7 @@ export default function App() {
             addShare={addShare}
             removeShare={removeShare}
             renameShare={renameShare}
+            reorderShares={reorderShares}
             org={org}
             setAgentProject={orgActions.setAgentProject}
             presence={presence}

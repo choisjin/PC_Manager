@@ -2693,7 +2693,9 @@ tr.drop-into > td,
 /* 공유 서버 섹션 (PC 트리 하단) */
 .share-section {
   flex: none;
-  border-top: 1px solid var(--border);
+  max-height: 35%;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
   padding: 2px 2px 4px;
 }
 
@@ -3743,4 +3745,21 @@ th.sortable:hover {
 
 .share-probe.error {
   color: var(--danger, #c92a2a);
+}
+
+/* 공유 폴더 순서 바꾸기 */
+.share-item {
+  cursor: grab;
+}
+
+.share-item.dragging {
+  opacity: 0.45;
+}
+
+.share-item.drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.share-item.drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }

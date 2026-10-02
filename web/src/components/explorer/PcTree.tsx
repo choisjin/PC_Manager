@@ -13,6 +13,7 @@ interface Props {
   addShare: (name: string, path: string, username?: string, password?: string) => Promise<void>
   removeShare: (id: string) => void
   renameShare: (id: string, name: string) => Promise<void>
+  reorderShares: (ids: string[]) => void
   org: Org
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
   presence: Record<string, string[]>
@@ -33,7 +34,7 @@ interface Props {
   onModeChange: (mode: 'browser' | 'remote') => void
 }
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange }: Props) {
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
@@ -41,6 +42,19 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
   const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null)
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; folderId: string; name: string } | null>(null)
   const [shareMenu, setShareMenu] = useState<{ x: number; y: number; share: SharedFolder } | null>(null)
+  // 공유 폴더 순서 바꾸기 (끌어서 놓기)
+  const [shareDrag, setShareDrag] = useState<string | null>(null)
+  const [shareOver, setShareOver] = useState<{ id: string; after: boolean } | null>(null)
+  const dropShare = (targetId: string, after: boolean) => {
+    const from = shareDrag
+    setShareDrag(null)
+    setShareOver(null)
+    if (!from || from === targetId) return
+    const ids = shares.map((s) => s.id).filter((id) => id !== from)
+    const index = ids.indexOf(targetId)
+    ids.splice(after ? index + 1 : index, 0, from)
+    reorderShares(ids)
+  }
 
   const renameShareAlias = (share: SharedFolder) => {
     const name = window.prompt(`'${share.path}'의 별칭 (표시 이름)`, share.name)
@@ -272,26 +286,6 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         </div>
       </div>
 
-      <ul className="tree-root">
-        {roots.map((node) => renderFolder(node, 0))}
-
-        <li>
-          <div
-            className={`tree-folder ungrouped${dropTarget === 'root' ? ' drop-active' : ''}`}
-            style={{ paddingLeft: folderPad(0) }}
-            onDragOver={(e) => allowAgentDrop(e, 'root')}
-            onDragLeave={() => setDropTarget((t) => (t === 'root' ? null : t))}
-            onDrop={(e) => handleDropAgent(e, null)}
-          >
-            <span className="tree-caret">·</span>
-            <span className="tree-folder-name muted">미분류 ({ungrouped.length})</span>
-          </div>
-          <ul className="tree-children">{ungrouped.map((agent) => renderAgent(agent, 1))}</ul>
-        </li>
-
-        {agents.length === 0 && <li className="placeholder small">등록된 PC가 없습니다</li>}
-      </ul>
-
       <div className="share-section">
         <div className="share-head">
           <span className="pane-side-title">공유 서버</span>
@@ -312,8 +306,30 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
           {shares.map((s) => (
             <li
               key={s.id}
-              className="tree-agent share-item"
-              title={`${s.path}${s.username ? ` · ${s.username}` : ''}${s.ownerUserId ? '' : ' · 공용(예전 등록)'} — 클릭하면 창 열기/닫기, 우클릭 메뉴`}
+              className={`tree-agent share-item${shareDrag === s.id ? ' dragging' : ''}${shareOver?.id === s.id ? (shareOver.after ? ' drop-after' : ' drop-before') : ''}`}
+              title={`${s.path}${s.username ? ` · ${s.username}` : ''}${s.ownerUserId ? '' : ' · 공용(예전 등록)'} — 클릭: 창 열기/닫기 · 끌어서 순서 변경 · 우클릭 메뉴`}
+              draggable
+              onDragStart={(e) => {
+                setShareDrag(s.id)
+                e.dataTransfer.setData('application/x-pcm-share', s.id)
+                e.dataTransfer.effectAllowed = 'move'
+              }}
+              onDragEnd={() => {
+                setShareDrag(null)
+                setShareOver(null)
+              }}
+              onDragOver={(e) => {
+                if (!shareDrag) return
+                e.preventDefault()
+                const rect = e.currentTarget.getBoundingClientRect()
+                setShareOver({ id: s.id, after: e.clientY > rect.top + rect.height / 2 })
+              }}
+              onDrop={(e) => {
+                if (!shareDrag) return
+                e.preventDefault()
+                const rect = e.currentTarget.getBoundingClientRect()
+                dropShare(s.id, e.clientY > rect.top + rect.height / 2)
+              }}
               onClick={() => onOpenAgent(s.id)}
               onContextMenu={(e) => {
                 e.preventDefault()
@@ -339,7 +355,26 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         </ul>
       </div>
 
-      <p className="tree-hint small muted">PC·공유 폴더를 클릭하면 창 열기/닫기 · 폴더로 끌어 그룹 지정</p>
+      <ul className="tree-root">
+        {roots.map((node) => renderFolder(node, 0))}
+
+        <li>
+          <div
+            className={`tree-folder ungrouped${dropTarget === 'root' ? ' drop-active' : ''}`}
+            style={{ paddingLeft: folderPad(0) }}
+            onDragOver={(e) => allowAgentDrop(e, 'root')}
+            onDragLeave={() => setDropTarget((t) => (t === 'root' ? null : t))}
+            onDrop={(e) => handleDropAgent(e, null)}
+          >
+            <span className="tree-caret">·</span>
+            <span className="tree-folder-name muted">미분류 ({ungrouped.length})</span>
+          </div>
+          <ul className="tree-children">{ungrouped.map((agent) => renderAgent(agent, 1))}</ul>
+        </li>
+
+        {agents.length === 0 && <li className="placeholder small">등록된 PC가 없습니다</li>}
+      </ul>
+
 
       {showAddShare && <AddShareModal onConfirm={addShare} onClose={() => setShowAddShare(false)} />}
 

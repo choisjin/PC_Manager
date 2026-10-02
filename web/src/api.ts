@@ -443,6 +443,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path }),
     }),
+  reorderShares: (ids: string[]) =>
+    request<SharedFolders>('/api/shares/order', { method: 'PUT', body: JSON.stringify({ ids }) }),
   renameShare: (id: string, name: string) =>
     request<SharedFolder>(`/api/shares/${id}/name`, { method: 'PUT', body: JSON.stringify({ name }) }),
 

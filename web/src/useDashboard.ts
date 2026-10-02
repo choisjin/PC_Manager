@@ -341,6 +341,13 @@ export function useDashboard() {
   const removeShare = useCallback((id: string) => {
     api.removeShare(id).then((s: SharedFolders) => setShares(s.shares)).catch((err) => console.error('공유 폴더 삭제 실패', err))
   }, [])
+  // 순서 변경: 화면은 바로 바꾸고 서버에 저장 (실패하면 다시 불러옴)
+  const reorderShares = useCallback((ids: string[]) => {
+    setShares((list) => ids.map((id) => list.find((s) => s.id === id)).filter((s): s is SharedFolder => !!s))
+    api.reorderShares(ids).then((s: SharedFolders) => setShares(s.shares)).catch(() => {
+      api.shares().then((s: SharedFolders) => setShares(s.shares)).catch(() => {})
+    })
+  }, [])
   const renameShare = useCallback(async (id: string, name: string) => {
     await api.renameShare(id, name)
     const list = await api.shares().catch(() => null)
@@ -400,6 +407,7 @@ export function useDashboard() {
     addShare,
     removeShare,
     renameShare,
+    reorderShares,
     reloadShares,
     org,
     orgActions,
