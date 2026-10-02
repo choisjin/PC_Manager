@@ -70,7 +70,46 @@ public class SharedFolderStore(AppPaths paths, ILogger<SharedFolderStore> logger
 
     public static bool IsNetworkPath(string path) => path.StartsWith(@"\\", StringComparison.Ordinal);
 
-    /// <summary>공유 폴더 추가. 네트워크 공유는 자격증명이 필수이며, 그 자격증명으로 접근되는지 확인한 뒤 저장한다.</summary>
+    /// <summary>
+    /// 자격증명 없이(서버 계정으로) 열리는지 확인한다. 등록 화면이 사용자 이름·비밀번호를 필수로 요구할지 정하는 데 쓴다.
+    /// </summary>
+    public static ShareProbeResult Probe(string path)
+    {
+        var cleanPath = path.Trim().TrimEnd('\\', '/');
+        if (cleanPath.Length == 0)
+            return new ShareProbeResult(false, false, "경로를 입력하세요.");
+        if (IsNetworkPath(cleanPath) && cleanPath.TrimStart('\\').Split('\\', StringSplitOptions.RemoveEmptyEntries).Length < 2)
+            return new ShareProbeResult(false, false, "\\\\서버\\공유폴더 형식으로 입력하세요.");
+        try
+        {
+            // 목록을 실제로 읽어 봐야 권한 문제를 알 수 있다 (Directory.Exists는 권한이 없어도 false만 준다)
+            using var entries = Directory.EnumerateFileSystemEntries(cleanPath).GetEnumerator();
+            entries.MoveNext();
+            return new ShareProbeResult(true, false, null);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new ShareProbeResult(false, true, null);
+        }
+        catch (IOException ex)
+        {
+            // 로그온 실패·권한 없음·자격증명 충돌 → 자격증명 필요. 경로·서버를 못 찾음 → 오류
+            var code = ex.HResult & 0xFFFF;
+            if (code is 5 or 86 or 1219 or 1326 or 1327 or 1330 or 1331 or 1385 or 1907 or 1909 or 2242)
+                return new ShareProbeResult(false, true, null);
+            return code is 2 or 3 or 53 or 67 or 1231 or 1232 or 64
+                ? new ShareProbeResult(false, false, IsNetworkPath(cleanPath)
+                    ? "공유 서버나 공유 폴더를 찾을 수 없습니다. 경로와 네트워크 연결을 확인하세요."
+                    : "폴더가 없습니다.")
+                : new ShareProbeResult(false, true, ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            return new ShareProbeResult(false, false, ex.Message);
+        }
+    }
+
+    /// <summary>공유 폴더 추가. 자격증명 없이 열리지 않는 공유는 자격증명이 필수이며, 그 자격증명으로 접근되는지 확인한 뒤 저장한다.</summary>
     public SharedFolder Add(string? userId, string name, string path, string? username, string? password)
     {
         if (string.IsNullOrWhiteSpace(userId))
@@ -80,8 +119,15 @@ public class SharedFolderStore(AppPaths paths, ILogger<SharedFolderStore> logger
             throw new ArgumentException("경로를 입력하세요.");
 
         var hasCredentials = !string.IsNullOrWhiteSpace(username);
-        if (IsNetworkPath(cleanPath) && !hasCredentials)
-            throw new ArgumentException("네트워크 공유는 자격증명(사용자 이름·비밀번호)이 필요합니다.");
+        if (!hasCredentials)
+        {
+            // 자격증명 없이 열리는 폴더만 그대로 등록
+            var probe = Probe(cleanPath);
+            if (probe.NeedsCredentials)
+                throw new ArgumentException("이 폴더는 권한이 필요합니다. 사용자 이름과 비밀번호를 입력하세요.");
+            if (!probe.Accessible)
+                throw new DirectoryNotFoundException(probe.Error ?? $"폴더에 접근할 수 없습니다: {cleanPath}");
+        }
 
         // 그 자격증명으로 실제로 열리는지 확인
         if (hasCredentials)

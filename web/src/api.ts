@@ -437,6 +437,12 @@ export const api = {
       body: JSON.stringify({ name, path, username: username || null, password: password || null }),
     }),
   removeShare: (id: string) => request<SharedFolders>(`/api/shares/${id}`, { method: 'DELETE' }),
+  /** 등록 전 확인: 자격증명 없이 열리는지 */
+  probeShare: (path: string) =>
+    request<{ accessible: boolean; needsCredentials: boolean; error: string | null }>('/api/shares/probe', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
   renameShare: (id: string, name: string) =>
     request<SharedFolder>(`/api/shares/${id}/name`, { method: 'PUT', body: JSON.stringify({ name }) }),
 

@@ -3726,3 +3726,21 @@ th.sortable:hover {
   display: inline-block;
   object-fit: contain;
 }
+
+/* 공유 폴더 등록: 접근 확인 결과 */
+.share-probe {
+  margin: -2px 0 2px;
+  color: var(--muted);
+}
+
+.share-probe.open {
+  color: var(--ok);
+}
+
+.share-probe.needs {
+  color: var(--accent);
+}
+
+.share-probe.error {
+  color: var(--danger, #c92a2a);
+}

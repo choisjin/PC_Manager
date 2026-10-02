@@ -31,6 +31,10 @@ public static class SharedFolderEndpoints
             }
         });
 
+        // 등록 전 확인: 자격증명 없이 열리는지 (등록 화면이 사용자 이름을 필수로 할지 정함)
+        api.MapPost("/probe", (ShareProbeRequest request) =>
+            Results.Ok(SharedFolderStore.Probe(request.Path ?? "")));
+
         // 별칭(표시 이름) 변경
         api.MapPut("/{id}/name", async (string id, RenameSharedFolderRequest request, HttpRequest http, SharedFolderStore store, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
         {
