@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ARCHIVE_PASSWORD_PREFIX, api, type TextFile } from '../api'
+import { loadBackupSetting, saveBackupSetting } from '../fileTypes'
 
 export type ViewerKind = 'text' | 'image' | 'pdf'
 
@@ -19,7 +20,6 @@ interface Props {
   onClose: () => void
 }
 
-const BACKUP_KEY = 'pcm.viewer.backup'
 const WRAP_KEY = 'pcm.viewer.wrap'
 
 const ENCODING_LABEL: Record<string, string> = {
@@ -56,7 +56,7 @@ export function FileViewer({ agentId, path, name, kind, readOnly, onFetch, onSav
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [backup, setBackup] = useState(() => loadFlag(BACKUP_KEY, true))
+  const [backup, setBackup] = useState(loadBackupSetting)
   const [wrap, setWrap] = useState(() => loadFlag(WRAP_KEY, false))
   const [reloadKey, setReloadKey] = useState(0)
   const dirty = file !== null && text !== file.content
@@ -243,7 +243,7 @@ export function FileViewer({ agentId, path, name, kind, readOnly, onFetch, onSav
                 checked={backup}
                 onChange={(e) => {
                   setBackup(e.target.checked)
-                  saveFlag(BACKUP_KEY, e.target.checked)
+                  saveBackupSetting(e.target.checked)
                 }}
               />
               .bak 백업

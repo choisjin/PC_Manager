@@ -133,7 +133,7 @@ public class TransferService(
     /// 편집 PC 자신의 파일이면 그 자리에서 연다.
     /// </summary>
     /// <returns>오류 문구. 성공하면 null</returns>
-    public async Task<string?> OpenLocalAsync(string sourceId, string sourcePath, string editorId, string label, bool readOnly, CancellationToken ct)
+    public async Task<string?> OpenLocalAsync(string sourceId, string sourcePath, string editorId, string label, bool readOnly, bool backup, CancellationToken ct)
     {
         if (!registry.TryGetConnection(editorId, out var editorConn))
             return "내 PC의 에이전트가 오프라인입니다.";
@@ -195,7 +195,7 @@ public class TransferService(
                     }
                     var hash = Convert.ToHexString(sha.GetHashAndReset());
                     failure = await editor.InvokeAsync<string?>(
-                        AgentClientMethods.OpenEdit, new OpenEditRequest(writeId, sourceId, sourcePath, hash, readOnly), ct);
+                        AgentClientMethods.OpenEdit, new OpenEditRequest(writeId, sourceId, sourcePath, hash, readOnly, backup), ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -214,10 +214,10 @@ public class TransferService(
     }
 
     /// <summary>
-    /// 편집 PC에서 저장한 내용을 원래 PC의 원래 경로에 쓴다 (원본은 .bak).
+    /// 편집 PC에서 저장한 내용을 원래 PC의 원래 경로에 쓴다 (backup이면 원본을 .bak으로).
     /// 편집하는 동안 원래 파일이 바뀌었으면 덮어쓰지 않고 옆에 "이름 (충돌 날짜).확장자"로 저장한다.
     /// </summary>
-    public async Task<EditSaveResult> SaveEditAsync(string sourceId, string sourcePath, string? baseHash, byte[] content, CancellationToken ct)
+    public async Task<EditSaveResult> SaveEditAsync(string sourceId, string sourcePath, string? baseHash, byte[] content, bool backup, CancellationToken ct)
     {
         var newHash = Convert.ToHexString(SHA256.HashData(content));
         var current = await HashSourceAsync(sourceId, sourcePath, ct);
@@ -247,11 +247,11 @@ public class TransferService(
         }
         else if (shares.TryGet(sourceId, out var share))
         {
-            error = localShare.ReplaceFile(share, sourcePath, content, backup: true);
+            error = localShare.ReplaceFile(share, sourcePath, content, backup);
         }
         else
         {
-            error = await Api.TextEndpoints.WriteToAgentAsync(sourceId, sourcePath, content, backup: true, registry, agentHubRaw, ct);
+            error = await Api.TextEndpoints.WriteToAgentAsync(sourceId, sourcePath, content, backup, registry, agentHubRaw, ct);
         }
 
         // 저장 기록 (전송 기록·PiP에 보이게)

@@ -58,6 +58,7 @@ export function ExplorerToolbar({ controller }: Props) {
       { label: `${c.view === 'details' ? '● ' : ''}자세히`, onClick: () => c.setView('details') },
       { separator: true },
       { label: `${c.showHidden ? '☑' : '☐'} 숨김 항목 보기`, onClick: () => c.toggleHidden() },
+      { label: `${c.backupOnSave ? '☑' : '☐'} 저장할 때 원본 .bak 남기기`, onClick: () => c.toggleBackupOnSave() },
       { separator: true },
       { label: '표시할 열 (자세히 보기)', disabled: true, onClick: () => {} },
       { label: `${c.columns.modified ? '☑' : '☐'} 수정한 날짜`, onClick: () => c.toggleColumn('modified') },

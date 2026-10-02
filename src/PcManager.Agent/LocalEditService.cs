@@ -60,7 +60,7 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
             Launch(target);
             if (!request.ReadOnly)
             {
-                var watch = new EditWatch(this, target, request.SourceAgentId, request.SourcePath, request.BaseHash);
+                var watch = new EditWatch(this, target, request.SourceAgentId, request.SourcePath, request.BaseHash, request.Backup);
                 _watches[target] = watch;
             }
             logger.LogInformation("편집 열기: {Source} → {Local}{ReadOnly}", request.SourcePath, target, request.ReadOnly ? " (읽기 전용)" : "");
@@ -163,7 +163,7 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
     private async Task<EditSaveResult> UploadAsync(EditWatch watch, byte[] content)
     {
         var current = settings.Current;
-        var query = $"?source={Uri.EscapeDataString(watch.SourceAgentId)}&path={Uri.EscapeDataString(watch.SourcePath)}&baseHash={Uri.EscapeDataString(watch.BaseHash)}";
+        var query = $"?source={Uri.EscapeDataString(watch.SourceAgentId)}&path={Uri.EscapeDataString(watch.SourcePath)}&baseHash={Uri.EscapeDataString(watch.BaseHash)}&backup={(watch.Backup ? 1 : 0)}";
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(current.ServerUrl), AgentTransferPaths.EditSave + query));
         if (!string.IsNullOrEmpty(current.Token))
             request.Headers.Add(AgentHeaders.Token, current.Token);
@@ -186,8 +186,9 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
         private readonly SemaphoreSlim _uploadLock = new(1, 1);
         private string _lastHash;
 
-        public EditWatch(LocalEditService owner, string localPath, string sourceAgentId, string sourcePath, string baseHash)
+        public EditWatch(LocalEditService owner, string localPath, string sourceAgentId, string sourcePath, string baseHash, bool backup)
         {
+            Backup = backup;
             _owner = owner;
             _localPath = localPath;
             SourceAgentId = sourceAgentId;
@@ -212,6 +213,7 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
         }
 
         public string SourceAgentId { get; }
+        public bool Backup { get; }
         public string SourcePath { get; private set; }
         public string BaseHash { get; private set; }
 

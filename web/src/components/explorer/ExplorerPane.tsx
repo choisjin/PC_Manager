@@ -1,6 +1,6 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import { ARCHIVE_PASSWORD_PREFIX, api, type DirectoryListing, type FileEntry, type PcStatus, type Transfer } from '../../api'
-import { archiveBaseName, isArchiveFile, isImageFile, isPdfFile, isTextFile, isVideoFile } from '../../fileTypes'
+import { archiveBaseName, BACKUP_SETTING_EVENT, isArchiveFile, isImageFile, isPdfFile, isTextFile, isVideoFile, loadBackupSetting, saveBackupSetting } from '../../fileTypes'
 import { formatBytes } from '../../format'
 import type { SubscribeTransfers, WatchRun } from '../../useDashboard'
 import { FileViewer, type ViewerKind } from '../FileViewer'
@@ -181,6 +181,14 @@ export function ExplorerPane({
     setShowHidden(next)
     window.dispatchEvent(new Event(COLUMNS_EVENT))
   }
+  // 저장할 때 .bak 남기기 (모든 창 공통, 기본 끔)
+  const [backupOnSave, setBackupOnSave] = useState(loadBackupSetting)
+  useEffect(() => {
+    const sync = () => setBackupOnSave(loadBackupSetting())
+    window.addEventListener(BACKUP_SETTING_EVENT, sync)
+    return () => window.removeEventListener(BACKUP_SETTING_EVENT, sync)
+  }, [])
+  const toggleBackupOnSave = () => saveBackupSetting(!backupOnSave)
   const toggleColumn = (column: OptionalColumn) => {
     const next = { ...loadColumns(), [column]: !columns[column] }
     try {
@@ -517,12 +525,12 @@ export function ExplorerPane({
     if (entry.size > 500 * 1024 * 1024 && !window.confirm(`'${entry.name}'은(는) ${formatBytes(entry.size)}입니다. 내 PC로 받아서 열까요?`)) return
     setError(null)
     setNotice(selfAgentId === agentId ? `'${entry.name}'을(를) 여는 중…` : `'${entry.name}'을(를) 내 PC로 받아 여는 중…${inArchive ? ' (압축 안 파일: 저장해도 되돌아가지 않음)' : ' 저장하면 이 PC의 원래 위치에 저장됩니다.'}`)
-    api.openLocal(agentId, entry.fullPath, selfAgentId, machineName, inArchive).then(
+    api.openLocal(agentId, entry.fullPath, selfAgentId, machineName, inArchive, backupOnSave).then(
       () =>
         setNotice(
           selfAgentId === agentId || inArchive
             ? `'${entry.name}'을(를) 열었습니다.`
-            : `'${entry.name}'을(를) 내 PC 프로그램으로 열었습니다. 저장하면 ${machineName}의 원래 위치에 저장됩니다 (원본은 .bak).`,
+            : `'${entry.name}'을(를) 내 PC 프로그램으로 열었습니다. 저장하면 ${machineName}의 원래 위치에 저장됩니다${backupOnSave ? ' (원본은 .bak)' : ''}.`,
         ),
       (err) => {
         setNotice(null)
@@ -731,6 +739,8 @@ export function ExplorerPane({
     toggleColumn,
     showHidden,
     toggleHidden,
+    backupOnSave,
+    toggleBackupOnSave,
     setSearch,
     openTerminal: () => setTerminal(true),
     openRemote: () => {

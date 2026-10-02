@@ -44,6 +44,9 @@ export interface PaneController {
   setView: (view: ViewMode) => void
   toggleColumn: (column: OptionalColumn) => void
   toggleHidden: () => void
+  /** 저장할 때 원본 .bak 남기기 (내 PC 프로그램 저장·브라우저 편집 공통) */
+  backupOnSave: boolean
+  toggleBackupOnSave: () => void
   setSearch: (q: string) => void
   openTerminal: () => void
   openRemote: () => void

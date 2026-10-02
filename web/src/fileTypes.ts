@@ -48,3 +48,24 @@ export function isArchiveFile(name: string): boolean {
 export function archiveBaseName(name: string): string {
   return name.replace(/(\.tar\.gz|\.zip\.001|\.7z\.001|\.zip|\.7z|\.rar|\.tar|\.tgz)$/i, '')
 }
+
+/** 저장할 때 원본을 .bak으로 남길지 (내 PC 프로그램 저장·브라우저 편집 공통, 브라우저에 저장). 기본 끔 */
+export const BACKUP_SETTING_KEY = 'pcm.viewer.backup'
+export const BACKUP_SETTING_EVENT = 'pcm-backup-setting'
+
+export function loadBackupSetting(): boolean {
+  try {
+    return localStorage.getItem(BACKUP_SETTING_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function saveBackupSetting(value: boolean) {
+  try {
+    localStorage.setItem(BACKUP_SETTING_KEY, value ? '1' : '0')
+  } catch {
+    // 무시
+  }
+  window.dispatchEvent(new Event(BACKUP_SETTING_EVENT))
+}

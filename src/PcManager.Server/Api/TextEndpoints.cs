@@ -65,16 +65,16 @@ public static class TextEndpoints
             if (string.IsNullOrWhiteSpace(request.Path) || string.IsNullOrWhiteSpace(request.EditorAgentId))
                 return Results.BadRequest("파일 경로와 내 PC가 필요합니다.");
             var error = await transfers.OpenLocalAsync(agentId, request.Path!, request.EditorAgentId!,
-                string.IsNullOrWhiteSpace(request.Label) ? agentId : request.Label!, request.ReadOnly, ct);
+                string.IsNullOrWhiteSpace(request.Label) ? agentId : request.Label!, request.ReadOnly, request.Backup, ct);
             return error is null ? Results.NoContent() : Results.BadRequest(error);
         });
 
         // 편집 PC 에이전트 → 저장한 내용을 원래 PC로 (토큰 검사는 /api/agent 미들웨어)
-        app.MapPost(AgentTransferPaths.EditSave, async (string source, string path, string? baseHash, HttpRequest http, TransferService transfers, CancellationToken ct) =>
+        app.MapPost(AgentTransferPaths.EditSave, async (string source, string path, string? baseHash, int? backup, HttpRequest http, TransferService transfers, CancellationToken ct) =>
         {
             using var memory = new MemoryStream();
             await http.Body.CopyToAsync(memory, ct);
-            return Results.Ok(await transfers.SaveEditAsync(source, path, string.IsNullOrEmpty(baseHash) ? null : baseHash, memory.ToArray(), ct));
+            return Results.Ok(await transfers.SaveEditAsync(source, path, string.IsNullOrEmpty(baseHash) ? null : baseHash, memory.ToArray(), backup == 1, ct));
         }).WithMetadata(new Microsoft.AspNetCore.Mvc.DisableRequestSizeLimitAttribute());
 
         // 편집 중인 내용을 원래 인코딩으로 내려받기 (내 PC에 저장)

@@ -105,7 +105,7 @@ public static class AgentTransferPaths
     /// <summary>GET: 서버 → 에이전트로 보낼 파일 내용</summary>
     public static string Content(string transferId) => $"/api/agent/transfers/{transferId}/content";
 
-    /// <summary>POST: 내 PC 프로그램으로 편집한 파일을 원래 PC로 저장. 쿼리 source, path, baseHash / 본문 = 파일 내용</summary>
+    /// <summary>POST: 내 PC 프로그램으로 편집한 파일을 원래 PC로 저장. 쿼리 source, path, baseHash, backup(1이면 .bak) / 본문 = 파일 내용</summary>
     public const string EditSave = "/api/agent/edit/save";
 }
 
@@ -115,7 +115,8 @@ public static class AgentTransferPaths
 /// </summary>
 /// <param name="BaseHash">보낸 내용의 SHA-256. 저장할 때 원래 파일이 그 사이 바뀌었는지 비교한다</param>
 /// <param name="ReadOnly">압축 안 파일 등 되돌려 저장할 수 없는 파일 (열기만)</param>
-public record OpenEditRequest(string WriteId, string SourceAgentId, string SourcePath, string BaseHash, bool ReadOnly);
+/// <param name="Backup">저장할 때 원래 PC의 원본을 "파일.bak"으로 남긴다 (선택)</param>
+public record OpenEditRequest(string WriteId, string SourceAgentId, string SourcePath, string BaseHash, bool ReadOnly, bool Backup = false);
 
 /// <param name="Conflict">편집하는 동안 원래 파일이 바뀌어 옆에 새 이름으로 저장했다 (SavedPath)</param>
 public record EditSaveResult(bool Success, string? Error, string? Hash, string? SavedPath, bool Conflict);
