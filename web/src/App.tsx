@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { setCurrentUser } from './api'
+import { findSelfAgentId } from './selfAgent'
 import { FileExplorer } from './components/FileExplorer'
 import { useTransfers } from './components/explorer/useTransfers'
 import { type Identity, SelectGate } from './components/SelectGate'
@@ -89,6 +90,11 @@ export default function App() {
   const [showGate, setShowGate] = useState(false)
   const [page, setPage] = useState<Page>('files')
   const [selfPc] = useState(loadSelfPc)
+  // 대시보드를 연 PC의 에이전트 (온라인일 때만): Setting의 편집 폴더 관리에 쓴다
+  const selfAgentOnlineId = useMemo(() => {
+    const id = findSelfAgentId(agents, selfPc, clientIp, serverHostName)
+    return id && agents.some((a) => a.id === id && a.online) ? id : null
+  }, [agents, selfPc, clientIp, serverHostName])
 
   // 전송 기록/PiP 공용 데이터 (한 번만 구독)
   const { transfers, artifactByTransfer } = useTransfers(subscribeTransfers)
@@ -208,7 +214,7 @@ export default function App() {
             watchRun={watchRun}
           />
         ) : page === 'settings' ? (
-          <SettingsPage org={org} actions={orgActions} agents={agents} pcGroups={pcGroups} />
+          <SettingsPage org={org} actions={orgActions} agents={agents} pcGroups={pcGroups} selfAgentId={selfAgentOnlineId} />
         ) : (
           <TransfersPage transfers={transfers} artifactByTransfer={artifactByTransfer} machineName={machineName} userName={userName} />
         )}

@@ -121,6 +121,16 @@ public record OpenEditRequest(string WriteId, string SourceAgentId, string Sourc
 /// <param name="Conflict">편집하는 동안 원래 파일이 바뀌어 옆에 새 이름으로 저장했다 (SavedPath)</param>
 public record EditSaveResult(bool Success, string? Error, string? Hash, string? SavedPath, bool Conflict);
 
+/// <summary>편집 PC의 편집 폴더(문서\PC Manager 편집) 현황</summary>
+/// <param name="Path">편집 폴더. 로그인한 사용자가 없으면 null</param>
+/// <param name="Files">남아 있는 받은 사본 수</param>
+/// <param name="Pending">아직 원래 PC로 못 보낸 변경이 있는 사본 수</param>
+public record EditFolderInfo(string? Path, int Files, long Bytes, int Pending);
+
+/// <param name="InUse">프로그램이 열고 있어 남긴 사본 수</param>
+/// <param name="Pending">원래 PC로 못 보낸 변경이 있어 남긴 사본 수</param>
+public record EditCleanResult(int Deleted, long Bytes, int InUse, int Pending, EditFolderInfo Info);
+
 /// <summary>원격조작 WebSocket 경로</summary>
 public static class AgentRemotePaths
 {
@@ -233,6 +243,15 @@ public static class AgentClientMethods
 
     /// <summary>string path → string? 오류. 이 PC의 파일을 그 자리에서 기본 프로그램으로 연다 (대시보드를 연 PC 자신의 파일)</summary>
     public const string LaunchFile = "LaunchFile";
+
+    /// <summary>() → EditFolderInfo. 편집 폴더 현황</summary>
+    public const string GetEditFolderInfo = "GetEditFolderInfo";
+
+    /// <summary>() → string? 오류. 편집 폴더를 사용자 화면에 탐색기로 연다</summary>
+    public const string OpenEditFolder = "OpenEditFolder";
+
+    /// <summary>() → EditCleanResult. 다 보냈고 열려 있지 않은 받은 사본을 지운다</summary>
+    public const string CleanEditFolder = "CleanEditFolder";
 
     /// <summary>string sessionId → string? 오류. 사용자 세션에 원격조작 프로세스를 띄워 AgentRemotePaths.Session으로 접속시킨다</summary>
     public const string StartRemote = "StartRemote";

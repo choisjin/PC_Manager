@@ -4,9 +4,11 @@ using System.Diagnostics;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
-using Timer = System.Threading.Timer;
+using System.Text.Json;
+using Microsoft.Extensions.Options;
 using PcManager.Agent.Service;
 using PcManager.Shared;
+using Timer = System.Threading.Timer;
 
 namespace PcManager.Agent;
 
@@ -14,25 +16,47 @@ namespace PcManager.Agent;
 /// 대시보드를 연 PC(편집 PC)에서 다른 PC의 파일을 이 PC 프로그램(엑셀 등)으로 연다.
 /// 서버가 보내 준 파일을 '문서\PC Manager 편집\PC이름'에 두고 사용자 권한으로 기본 프로그램을 실행한 뒤,
 /// 저장(파일 변경)을 감시해 원래 PC의 원래 경로로 되돌려 보낸다.
+/// 받은 사본은 원래 PC로 다 보냈고 프로그램이 닫혔으면(잠금 없음, 10분간 변경 없음) 지운다.
+/// 받은 사본 목록은 에이전트 데이터 폴더에 저장해 재시작 후에도 감시·정리를 이어 간다.
 /// </summary>
-public class LocalEditService(FileTransferService files, AgentSettingsStore settings, ILogger<LocalEditService> logger)
+public class LocalEditService
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(10) };
 
     /// <summary>열어 둔 파일을 이만큼 감시한다 (그 뒤 저장은 원래 PC로 가지 않음)</summary>
     private static readonly TimeSpan WatchLifetime = TimeSpan.FromHours(12);
 
-    private ILogger Logger => logger;
+    /// <summary>마지막 변경 후 이만큼 지나고 아무도 열고 있지 않으면 사본을 지운다</summary>
+    private static readonly TimeSpan IdleBeforeDelete = TimeSpan.FromMinutes(10);
 
-    // 로컬 파일 경로 → 감시
-    private readonly ConcurrentDictionary<string, EditWatch> _watches = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
+
+    private readonly FileTransferService _files;
+    private readonly AgentSettingsStore _settings;
+    private readonly ILogger<LocalEditService> _logger;
+    private readonly string _manifestPath;
+    private readonly Lock _lock = new();
+    private readonly Timer _cleanup;
+
+    // 로컬 사본 경로 → 받은 사본 (감시 포함)
+    private readonly ConcurrentDictionary<string, ManagedCopy> _copies = new(StringComparer.OrdinalIgnoreCase);
+
+    public LocalEditService(FileTransferService files, AgentSettingsStore settings, IOptions<AgentOptions> options, ILogger<LocalEditService> logger)
+    {
+        _files = files;
+        _settings = settings;
+        _logger = logger;
+        _manifestPath = Path.Combine(options.Value.DataDirectory, "edit-copies.json");
+        Restore();
+        _cleanup = new Timer(_ => Cleanup(), null, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1));
+    }
 
     /// <summary>편집 폴더에 받을 준비. 반환한 writeId로 서버가 WriteChunk 한다.</summary>
     public string Prepare(string folderLabel, string fileName)
     {
         var folder = Path.Combine(EditRoot(), Clean(folderLabel));
         Directory.CreateDirectory(folder);
-        return files.BeginWrite(folder, Clean(fileName) + ".pcm-edit");
+        return _files.BeginWrite(folder, Clean(fileName) + ".pcm-edit");
     }
 
     /// <summary>받은 파일을 확정하고 기본 프로그램으로 연다. 되돌려 저장할 수 있으면 감시를 시작한다.</summary>
@@ -40,35 +64,44 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
     {
         try
         {
-            var temp = await files.FinishWriteToTempAsync(request.WriteId);
+            var temp = await _files.FinishWriteToTempAsync(request.WriteId);
             var folder = Path.GetDirectoryName(temp)!;
             var name = Clean(Path.GetFileName(request.SourcePath.TrimEnd('\\', '/')));
             var target = Path.Combine(folder, name);
 
             // 같은 파일을 이미 열어 두었으면(프로그램이 잠금) 다른 이름으로 받는다
-            if (_watches.TryRemove(target, out var old))
-                old.Dispose();
             if (!TryReplace(temp, target))
             {
                 target = UniquePath(folder, name);
                 File.Move(temp, target);
             }
+            if (_copies.TryRemove(target, out var old))
+                old.Dispose();
             // 읽기 전용(압축 안 파일 등)은 실수로 고치지 않게 속성을 건다
             if (request.ReadOnly)
                 File.SetAttributes(target, File.GetAttributes(target) | FileAttributes.ReadOnly);
 
-            Launch(target);
-            if (!request.ReadOnly)
+            var copy = new ManagedCopy(this, new CopyRecord
             {
-                var watch = new EditWatch(this, target, request.SourceAgentId, request.SourcePath, request.BaseHash, request.Backup);
-                _watches[target] = watch;
-            }
-            logger.LogInformation("편집 열기: {Source} → {Local}{ReadOnly}", request.SourcePath, target, request.ReadOnly ? " (읽기 전용)" : "");
+                LocalPath = target,
+                SourceAgentId = request.SourceAgentId,
+                SourcePath = request.SourcePath,
+                BaseHash = request.BaseHash,
+                SyncedHash = request.BaseHash,
+                Backup = request.Backup,
+                ReadOnly = request.ReadOnly,
+                OpenedAt = DateTime.UtcNow,
+            });
+            _copies[target] = copy;
+            SaveManifest();
+
+            Launch(target);
+            _logger.LogInformation("편집 열기: {Source} → {Local}{ReadOnly}", request.SourcePath, target, request.ReadOnly ? " (읽기 전용)" : "");
             return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or InvalidOperationException)
         {
-            logger.LogWarning("편집 열기 실패: {Message}", ex.Message);
+            _logger.LogWarning("편집 열기 실패: {Message}", ex.Message);
             return ex.Message;
         }
     }
@@ -78,7 +111,7 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
     {
         try
         {
-            if (!File.Exists(path))
+            if (!File.Exists(path) && !Directory.Exists(path))
                 return "파일이 없습니다.";
             Launch(path);
             return null;
@@ -86,6 +119,241 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or InvalidOperationException)
         {
             return ex.Message;
+        }
+    }
+
+    /// <summary>편집 폴더 현황 (설정 페이지)</summary>
+    public EditFolderInfo GetInfo()
+    {
+        string? root = null;
+        try
+        {
+            root = EditRoot();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+        {
+            // 로그인한 사용자가 없음
+        }
+        var existing = _copies.Values.Where(c => File.Exists(c.Record.LocalPath)).ToList();
+        return new EditFolderInfo(
+            root,
+            existing.Count,
+            existing.Sum(c => SafeLength(c.Record.LocalPath)),
+            existing.Count(c => c.HasPendingChanges()));
+    }
+
+    /// <summary>편집 폴더를 탐색기로 연다 (없으면 만든다).</summary>
+    public string? OpenFolder()
+    {
+        try
+        {
+            var root = EditRoot();
+            Directory.CreateDirectory(root);
+            Launch(root);
+            return null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or InvalidOperationException)
+        {
+            return ex.Message;
+        }
+    }
+
+    /// <summary>
+    /// 지금 정리: 원래 PC로 다 보냈고 열려 있지 않은 받은 사본을 모두 지운다.
+    /// 다른 프로그램이 열고 있거나 아직 못 보낸 변경이 있는 사본은 남긴다. 직접 저장한 다른 파일은 건드리지 않는다.
+    /// </summary>
+    public EditCleanResult CleanNow()
+    {
+        int deleted = 0, inUse = 0, pending = 0;
+        long bytes = 0;
+        foreach (var copy in _copies.Values.ToList())
+        {
+            var path = copy.Record.LocalPath;
+            if (!File.Exists(path))
+            {
+                Forget(copy);
+                continue;
+            }
+            if (copy.HasPendingChanges())
+            {
+                pending++;
+                copy.Poke(); // 다시 보내 본다
+                continue;
+            }
+            var size = SafeLength(path);
+            if (!TryDelete(path))
+            {
+                inUse++;
+                continue;
+            }
+            deleted++;
+            bytes += size;
+            // 지운 뒤 프로그램이 다시 저장하면(메모장 등) 되돌려 보내도록 감시는 만료 때까지 둔다
+            if (copy.IsExpired)
+                Forget(copy);
+        }
+        RemoveEmptyFolders();
+        SaveManifest();
+        return new EditCleanResult(deleted, bytes, inUse, pending, GetInfo());
+    }
+
+    /// <summary>1분마다: 다 보냈고 닫힌(잠금 없음·10분 변경 없음) 사본을 지우고, 못 보낸 변경은 다시 보낸다.</summary>
+    private void Cleanup()
+    {
+        try
+        {
+            var changed = false;
+            foreach (var copy in _copies.Values.ToList())
+            {
+                var record = copy.Record;
+                var expired = copy.IsExpired;
+                if (!File.Exists(record.LocalPath))
+                {
+                    // 지운 뒤에도 프로그램이 다시 저장하면(메모장 등) 되돌려 보내도록 감시는 만료 때까지 둔다
+                    if (expired)
+                    {
+                        Forget(copy);
+                        changed = true;
+                    }
+                    continue;
+                }
+                if (copy.HasPendingChanges())
+                {
+                    if (!expired)
+                        copy.Poke();
+                    continue; // 못 보낸 변경이 있으면 지우지 않는다
+                }
+                var idle = DateTime.UtcNow - File.GetLastWriteTimeUtc(record.LocalPath) > IdleBeforeDelete;
+                if (idle && TryDelete(record.LocalPath))
+                {
+                    _logger.LogInformation("편집 사본 정리: {Local}", record.LocalPath);
+                    if (expired)
+                        Forget(copy);
+                    changed = true;
+                }
+            }
+            if (changed)
+            {
+                RemoveEmptyFolders();
+                SaveManifest();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "편집 사본 정리 실패");
+        }
+    }
+
+    private void Forget(ManagedCopy copy)
+    {
+        if (_copies.TryRemove(copy.Record.LocalPath, out var removed))
+            removed.Dispose();
+    }
+
+    /// <summary>다른 프로그램이 열고 있지 않을 때만 지운다</summary>
+    private static bool TryDelete(string path)
+    {
+        try
+        {
+            // 공유 없이 열리면 아무도 쓰고 있지 않은 것
+            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+            }
+            File.SetAttributes(path, FileAttributes.Normal);
+            File.Delete(path);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    // 편집 폴더 아래 빈 PC 폴더 정리 (편집 폴더 자체는 둔다)
+    private void RemoveEmptyFolders()
+    {
+        // 감시 중인 사본이 있는 폴더는 둔다 (폴더를 지우면 저장 감시가 끊긴다)
+        var watched = _copies.Values.Where(c => !c.IsExpired && !c.Record.ReadOnly)
+            .Select(c => Path.GetDirectoryName(c.Record.LocalPath))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var root = EditRoot();
+            if (Directory.Exists(root))
+                foreach (var dir in Directory.EnumerateDirectories(root).Where(d => !watched.Contains(d)))
+                    TryRemoveEmpty(dir);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            // 로그인한 사용자가 없음 등
+        }
+    }
+
+    private static void TryRemoveEmpty(string? folder)
+    {
+        try
+        {
+            if (folder is not null && Directory.Exists(folder) && !Directory.EnumerateFileSystemEntries(folder).Any())
+                Directory.Delete(folder);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 무시
+        }
+    }
+
+    private static long SafeLength(string path)
+    {
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
+    }
+
+    // ── 받은 사본 목록 저장/복원 ──
+
+    private void SaveManifest()
+    {
+        lock (_lock)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(_manifestPath)!);
+                var temp = _manifestPath + ".tmp";
+                File.WriteAllText(temp, JsonSerializer.Serialize(_copies.Values.Select(c => c.Record).ToList(), Json));
+                File.Move(temp, _manifestPath, overwrite: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogWarning("편집 사본 목록 저장 실패: {Message}", ex.Message);
+            }
+        }
+    }
+
+    private void Restore()
+    {
+        try
+        {
+            if (!File.Exists(_manifestPath))
+                return;
+            var records = JsonSerializer.Deserialize<List<CopyRecord>>(File.ReadAllText(_manifestPath), Json) ?? [];
+            foreach (var record in records)
+            {
+                var expired = DateTime.UtcNow - record.OpenedAt > WatchLifetime;
+                // 만료됐고 사본도 없으면 버린다. 사본이 남아 있으면 정리 대상으로 계속 관리한다
+                if (expired && !File.Exists(record.LocalPath))
+                    continue;
+                if (Directory.Exists(Path.GetDirectoryName(record.LocalPath)))
+                    _copies[record.LocalPath] = new ManagedCopy(this, record);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
+        {
+            _logger.LogWarning("편집 사본 목록 복원 실패: {Message}", ex.Message);
         }
     }
 
@@ -160,10 +428,11 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
     }
 
     /// <summary>저장된 내용을 원래 PC로 보낸다.</summary>
-    private async Task<EditSaveResult> UploadAsync(EditWatch watch, byte[] content)
+    private async Task<EditSaveResult> UploadAsync(CopyRecord record, byte[] content)
     {
-        var current = settings.Current;
-        var query = $"?source={Uri.EscapeDataString(watch.SourceAgentId)}&path={Uri.EscapeDataString(watch.SourcePath)}&baseHash={Uri.EscapeDataString(watch.BaseHash)}&backup={(watch.Backup ? 1 : 0)}";
+        var current = _settings.Current;
+        var query = $"?source={Uri.EscapeDataString(record.SourceAgentId)}&path={Uri.EscapeDataString(record.SourcePath)}"
+            + $"&baseHash={Uri.EscapeDataString(record.BaseHash)}&backup={(record.Backup ? 1 : 0)}";
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(new Uri(current.ServerUrl), AgentTransferPaths.EditSave + query));
         if (!string.IsNullOrEmpty(current.Token))
             request.Headers.Add(AgentHeaders.Token, current.Token);
@@ -175,30 +444,38 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
         return await response.Content.ReadFromJsonAsync<EditSaveResult>() ?? new EditSaveResult(false, "빈 응답", null, null, false);
     }
 
-    /// <summary>편집 중인 파일 하나의 저장 감시</summary>
-    private sealed class EditWatch : IDisposable
+    /// <summary>받은 사본 한 개의 기록 (재시작 후 복원용으로 저장)</summary>
+    private sealed class CopyRecord
+    {
+        public required string LocalPath { get; init; }
+        public required string SourceAgentId { get; init; }
+        public required string SourcePath { get; set; }
+        /// <summary>원래 PC 파일의 마지막으로 알고 있는 내용 해시 (충돌 확인용)</summary>
+        public required string BaseHash { get; set; }
+        /// <summary>원래 PC로 마지막으로 보낸(또는 받은) 내용 해시. 사본이 이와 다르면 아직 못 보낸 변경이 있다</summary>
+        public required string SyncedHash { get; set; }
+        public bool Backup { get; init; }
+        public bool ReadOnly { get; init; }
+        public DateTime OpenedAt { get; init; }
+    }
+
+    /// <summary>받은 사본 + 저장 감시</summary>
+    private sealed class ManagedCopy : IDisposable
     {
         private readonly LocalEditService _owner;
-        private readonly string _localPath;
-        private readonly FileSystemWatcher _watcher;
+        private readonly FileSystemWatcher? _watcher;
         private readonly Timer _debounce;
-        private readonly Timer _expire;
         private readonly SemaphoreSlim _uploadLock = new(1, 1);
-        private string _lastHash;
 
-        public EditWatch(LocalEditService owner, string localPath, string sourceAgentId, string sourcePath, string baseHash, bool backup)
+        public ManagedCopy(LocalEditService owner, CopyRecord record)
         {
-            Backup = backup;
             _owner = owner;
-            _localPath = localPath;
-            SourceAgentId = sourceAgentId;
-            SourcePath = sourcePath;
-            BaseHash = baseHash;
-            _lastHash = baseHash;
+            Record = record;
             _debounce = new Timer(_ => _ = SaveAsync(), null, Timeout.Infinite, Timeout.Infinite);
-            _expire = new Timer(_ => Expire(), null, WatchLifetime, Timeout.InfiniteTimeSpan);
+            if (record.ReadOnly || DateTime.UtcNow - record.OpenedAt > WatchLifetime)
+                return;
             // 프로그램은 보통 임시 파일에 쓰고 이름을 바꿔 저장하므로 이름 바뀜·생성도 본다
-            _watcher = new FileSystemWatcher(Path.GetDirectoryName(localPath)!, Path.GetFileName(localPath))
+            _watcher = new FileSystemWatcher(Path.GetDirectoryName(record.LocalPath)!, Path.GetFileName(record.LocalPath))
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.CreationTime,
             };
@@ -206,19 +483,39 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
             _watcher.Created += (_, _) => Poke();
             _watcher.Renamed += (_, e) =>
             {
-                if (string.Equals(e.FullPath, _localPath, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(e.FullPath, record.LocalPath, StringComparison.OrdinalIgnoreCase))
                     Poke();
             };
             _watcher.EnableRaisingEvents = true;
         }
 
-        public string SourceAgentId { get; }
-        public bool Backup { get; }
-        public string SourcePath { get; private set; }
-        public string BaseHash { get; private set; }
+        public CopyRecord Record { get; }
+
+        /// <summary>감시 기간(12시간)이 지났다</summary>
+        public bool IsExpired => DateTime.UtcNow - Record.OpenedAt > WatchLifetime;
 
         // 저장이 끝날 때까지(여러 번 쓰기) 잠깐 기다렸다 보낸다
-        private void Poke() => _debounce.Change(1500, Timeout.Infinite);
+        public void Poke()
+        {
+            if (_watcher is not null)
+                _debounce.Change(1500, Timeout.Infinite);
+        }
+
+        /// <summary>사본 내용이 원래 PC로 보낸 내용과 다르면 true (아직 못 보낸 저장)</summary>
+        public bool HasPendingChanges()
+        {
+            if (Record.ReadOnly || !File.Exists(Record.LocalPath))
+                return false;
+            try
+            {
+                using var stream = new FileStream(Record.LocalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return Convert.ToHexString(SHA256.HashData(stream)) != Record.SyncedHash;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return true; // 못 읽으면 안전하게 지우지 않는다
+            }
+        }
 
         private async Task SaveAsync()
         {
@@ -233,27 +530,26 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
                 if (content is null)
                     return;
                 var hash = Convert.ToHexString(SHA256.HashData(content));
-                if (hash == _lastHash)
+                if (hash == Record.SyncedHash)
                     return;
 
-                var result = await _owner.UploadAsync(this, content);
+                var result = await _owner.UploadAsync(Record, content);
                 if (!result.Success)
                 {
-                    _owner.Logger.LogWarning("편집 저장을 원래 PC로 보내지 못했습니다 {Path}: {Error}", SourcePath, result.Error);
-                    return; // 다음 저장 때 다시 시도
+                    _owner._logger.LogWarning("편집 저장을 원래 PC로 보내지 못했습니다 {Path}: {Error}", Record.SourcePath, result.Error);
+                    return; // 정리 주기에 다시 시도
                 }
-                _lastHash = hash;
-                BaseHash = result.Hash ?? hash;
+                Record.SyncedHash = hash;
+                Record.BaseHash = result.Hash ?? hash;
+                // 그 사이 원래 파일이 바뀌어 옆에 새 이름으로 저장했다 → 이후 저장도 그 파일로
                 if (result.Conflict && result.SavedPath is not null)
-                {
-                    // 그 사이 원래 파일이 바뀌어 옆에 새 이름으로 저장했다 → 이후 저장도 그 파일로
-                    SourcePath = result.SavedPath;
-                }
-                _owner.Logger.LogInformation("편집 저장 → {Source}{Conflict}", result.SavedPath, result.Conflict ? " (충돌: 새 이름)" : "");
+                    Record.SourcePath = result.SavedPath;
+                _owner.SaveManifest();
+                _owner._logger.LogInformation("편집 저장 → {Source}{Conflict}", result.SavedPath, result.Conflict ? " (충돌: 새 이름)" : "");
             }
             catch (Exception ex) when (ex is IOException or HttpRequestException or TaskCanceledException or UnauthorizedAccessException)
             {
-                _owner.Logger.LogWarning("편집 저장 실패 {Path}: {Message}", _localPath, ex.Message);
+                _owner._logger.LogWarning("편집 저장 실패 {Path}: {Message}", Record.LocalPath, ex.Message);
             }
             finally
             {
@@ -268,9 +564,9 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
             {
                 try
                 {
-                    if (!File.Exists(_localPath))
+                    if (!File.Exists(Record.LocalPath))
                         return null;
-                    await using var stream = new FileStream(_localPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    await using var stream = new FileStream(Record.LocalPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     using var memory = new MemoryStream();
                     await stream.CopyToAsync(memory);
                     return memory.ToArray();
@@ -283,17 +579,10 @@ public class LocalEditService(FileTransferService files, AgentSettingsStore sett
             return null;
         }
 
-        private void Expire()
-        {
-            if (_owner._watches.TryRemove(_localPath, out _))
-                Dispose();
-        }
-
         public void Dispose()
         {
-            _watcher.Dispose();
+            _watcher?.Dispose();
             _debounce.Dispose();
-            _expire.Dispose();
         }
     }
 }

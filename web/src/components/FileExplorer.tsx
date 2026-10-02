@@ -1,3 +1,4 @@
+import { findSelfAgentId } from '../selfAgent'
 import { useEffect, useMemo, useState } from 'react'
 import type { Agent, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder, Thumbnail } from '../api'
 import { RemoteGrid, type RemoteSection } from './RemoteGrid'
@@ -80,11 +81,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   // Browser·파일 작업에는 그대로 둔다
   // 대시보드를 연 PC의 에이전트 ('내 PC 프로그램으로 열기'에 쓴다):
   // 런처가 알려 준 PC 이름 → 접속 IP → 서버 PC에서 localhost로 연 경우 서버 PC
-  const selfAgentId = useMemo(() => {
-    const byName = (name: string | null) => (name ? agents.find((a) => a.machineName.toLowerCase() === name.toLowerCase()) : undefined)
-    const found = byName(selfPc) ?? (clientIp ? agents.find((a) => a.ipAddresses.includes(clientIp)) : byName(serverHostName))
-    return found?.id ?? null
-  }, [agents, selfPc, clientIp, serverHostName])
+  const selfAgentId = useMemo(() => findSelfAgentId(agents, selfPc, clientIp, serverHostName), [agents, selfPc, clientIp, serverHostName])
   const selfOnline = !!selfAgentId && agents.some((a) => a.id === selfAgentId && a.online)
 
   const remoteAgents = useMemo(

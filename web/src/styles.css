@@ -3697,3 +3697,24 @@ th.sortable:hover {
   width: 100%;
   border: 0;
 }
+
+/* Setting: 편집 폴더 */
+.edit-folder-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.edit-folder-path {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-folder-msg {
+  margin: 4px 0 0;
+  color: var(--ok);
+}

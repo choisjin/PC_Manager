@@ -69,6 +69,26 @@ public static class TextEndpoints
             return error is null ? Results.NoContent() : Results.BadRequest(error);
         });
 
+        // 편집 폴더(대시보드를 연 PC의 문서\PC Manager 편집): 현황 / 탐색기로 열기 / 정리
+        api.MapGet("/agents/{agentId}/edit-folder", (string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            CallAgentAsync<EditFolderInfo>(agentId, AgentClientMethods.GetEditFolderInfo, registry, agentHub, ct));
+        api.MapPost("/agents/{agentId}/edit-folder/open", async (string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+        {
+            if (!registry.TryGetConnection(agentId, out var conn))
+                return Results.Conflict("내 PC의 에이전트가 오프라인입니다.");
+            try
+            {
+                var error = await agentHub.Clients.Client(conn).InvokeAsync<string?>(AgentClientMethods.OpenEditFolder, ct);
+                return error is null ? Results.NoContent() : Results.BadRequest(error);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return Results.Problem(OldAgentMessage(ex), statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+        api.MapPost("/agents/{agentId}/edit-folder/clean", (string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            CallAgentAsync<EditCleanResult>(agentId, AgentClientMethods.CleanEditFolder, registry, agentHub, ct));
+
         // 편집 PC 에이전트 → 저장한 내용을 원래 PC로 (토큰 검사는 /api/agent 미들웨어)
         app.MapPost(AgentTransferPaths.EditSave, async (string source, string path, string? baseHash, int? backup, HttpRequest http, TransferService transfers, CancellationToken ct) =>
         {
@@ -215,6 +235,23 @@ public static class TextEndpoints
                 catch { /* 정리 실패는 무시 */ }
             }
             return OldAgentMessage(ex);
+        }
+    }
+
+    private static async Task<IResult> CallAgentAsync<T>(
+        string agentId, string method, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct)
+    {
+        if (!registry.TryGetConnection(agentId, out var conn))
+            return Results.Conflict("내 PC의 에이전트가 오프라인입니다.");
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            return Results.Ok(await agentHub.Clients.Client(conn).InvokeAsync<T>(method, timeout.Token));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            return Results.Problem(OldAgentMessage(ex), statusCode: StatusCodes.Status502BadGateway);
         }
     }
 

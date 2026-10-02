@@ -133,6 +133,9 @@ public class AgentWorker(
             (label, name) => Task.Run(() => edits.Prepare(label, name)));
         connection.On<OpenEditRequest, string?>(AgentClientMethods.OpenEdit, edits.OpenAsync);
         connection.On<string, string?>(AgentClientMethods.LaunchFile, path => Task.Run(() => edits.LaunchInPlace(path)));
+        connection.On(AgentClientMethods.GetEditFolderInfo, () => Task.Run(edits.GetInfo));
+        connection.On(AgentClientMethods.OpenEditFolder, () => Task.Run(edits.OpenFolder));
+        connection.On(AgentClientMethods.CleanEditFolder, () => Task.Run(edits.CleanNow));
         connection.On<CommitReplaceRequest, string?>(AgentClientMethods.CommitReplace, files.CommitReplaceAsync);
         connection.On<string, string, bool>(AgentClientMethods.SetArchivePassword,
             (archivePath, password) => { ArchiveBrowser.SetPassword(archivePath, password); return true; });

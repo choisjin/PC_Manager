@@ -184,6 +184,25 @@ export interface SaveTextResult {
   hash: string | null
 }
 
+/** 편집 폴더 현황. path가 null이면 로그인한 사용자가 없음 */
+export interface EditFolderInfo {
+  path: string | null
+  files: number
+  bytes: number
+  /** 아직 원래 PC로 못 보낸 변경이 있는 사본 수 */
+  pending: number
+}
+
+export interface EditCleanResult {
+  deleted: number
+  bytes: number
+  /** 프로그램이 열고 있어 남긴 수 */
+  inUse: number
+  /** 못 보낸 변경이 있어 남긴 수 */
+  pending: number
+  info: EditFolderInfo
+}
+
 /** listing.error / 오류 문구가 이것으로 시작하면 압축 암호를 묻는다 */
 export const ARCHIVE_PASSWORD_PREFIX = '암호가 필요합니다'
 
@@ -511,6 +530,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path, editorAgentId, label, readOnly, backup }),
     }),
+  /** 편집 폴더(대시보드를 연 PC의 문서\\PC Manager 편집): 현황 / 탐색기로 열기 / 정리 */
+  editFolderInfo: (agentId: string) => request<EditFolderInfo>(`/api/agents/${agentId}/edit-folder`),
+  openEditFolder: (agentId: string) => request<void>(`/api/agents/${agentId}/edit-folder/open`, { method: 'POST' }),
+  cleanEditFolder: (agentId: string) => request<EditCleanResult>(`/api/agents/${agentId}/edit-folder/clean`, { method: 'POST' }),
   /** 압축 풀기 (같은 PC). entryPaths가 비면 전부 */
   extractFiles: (agentId: string, archivePath: string, entryPaths: string[], destinationFolder: string) =>
     request<Transfer>(`/api/agents/${agentId}/files/extract`, {

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Agent, Org, PcGroups } from '../api'
 import type { OrgActions } from '../useDashboard'
+import { EditFolderSection } from './EditFolderSection'
 import { displayName } from './explorer/pcGroups'
 
 interface Props {
@@ -8,10 +9,12 @@ interface Props {
   actions: OrgActions
   agents: Agent[]
   pcGroups: PcGroups
+  /** 대시보드를 연 PC의 에이전트 (편집 폴더 관리) */
+  selfAgentId: string | null
 }
 
 /** Setting 페이지: 프로젝트·사용자 관리, 사용자×프로젝트 매트릭스, 프로젝트별 구성 요약 */
-export function SettingsPage({ org, actions, agents, pcGroups }: Props) {
+export function SettingsPage({ org, actions, agents, pcGroups, selfAgentId }: Props) {
   const [projectName, setProjectName] = useState('')
   const [userName, setUserName] = useState('')
 
@@ -170,6 +173,14 @@ export function SettingsPage({ org, actions, agents, pcGroups }: Props) {
           체크하면 그 프로젝트에 배정됩니다. 프로젝트에 배정된 PC·폴더는 그 프로젝트 사용자에게만 보입니다. PC·폴더 배정은 PC Manager 화면에서 우클릭으로 합니다.
         </p>
       </section>
+      {/* 편집 폴더 */}
+      <EditFolderSection
+        selfAgentId={selfAgentId}
+        selfName={(() => {
+          const a = agents.find((x) => x.id === selfAgentId)
+          return a ? displayName(a, pcGroups) : null
+        })()}
+      />
     </div>
   )
 }
