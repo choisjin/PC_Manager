@@ -4,4 +4,38 @@
     <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
     <None Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
   </ItemGroup>
+
+  <!--
+    배포 빌드 난독화 (Obfuscar): -p:PcmObfuscate=true 일 때만. 개발 빌드에는 적용하지 않는다.
+    컴파일 직후(obj의 dll)에 적용하므로 이후 출력·게시·단일 exe 묶기에 난독화된 dll이 들어간다.
+    - 공개 API는 그대로 두고 내부 이름만 바꾼다 (KeepPublicApi): 프로젝트 사이 참조, 계약(Contracts), 허브 메서드
+    - 속성 이름은 바꾸지 않는다: JSON 저장 파일·API 응답의 이름
+    - 문자열 숨김 (HideStrings)
+    - 서버 API 처리기(PcManager.Server.Api)는 제외: ASP.NET이 매개변수 이름으로 값을 넣는다
+    - JSON으로 읽는 비공개 형식은 [Obfuscation(Exclude = true)] 특성으로, 익명 형식은 규칙으로 제외
+  -->
+  <Target Name="PcmObfuscate" AfterTargets="CoreCompile"
+          Condition="'$(PcmObfuscate)' == 'true' and '$(MSBuildProjectName)' != '' and $(MSBuildProjectName.StartsWith('PcManager.'))"
+          Inputs="@(IntermediateAssembly)" Outputs="$(IntermediateOutputPath)obfuscar\$(TargetFileName)">
+    <PropertyGroup>
+      <_PcmObfDir>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)obfuscar</_PcmObfDir>
+      <_PcmObfIn>$(_PcmObfDir)\in</_PcmObfIn>
+      <_PcmObfConfig>$(_PcmObfDir)\obfuscar.xml</_PcmObfConfig>
+      <!-- 익명 형식(new { type = ... })은 JSON으로 보내므로 생성자 매개변수 이름이 필요하다 → 모든 프로젝트에서 제외 -->
+      <_PcmSkip>&lt;SkipType rx="f__AnonymousType" skipMethods="true" skipFields="true" /&gt;</_PcmSkip>
+      <_PcmSkip Condition="'$(MSBuildProjectName)' == 'PcManager.Server'">$(_PcmSkip)&lt;SkipNamespace name="PcManager.Server.Api" /&gt;</_PcmSkip>
+    </PropertyGroup>
+    <ItemGroup>
+      <_PcmSearchDir Include="@(ReferencePath->'%(RootDir)%(Directory)')" />
+      <_PcmSearchDirDistinct Include="@(_PcmSearchDir->Distinct())" />
+    </ItemGroup>
+    <RemoveDir Directories="$(_PcmObfDir)" />
+    <MakeDir Directories="$(_PcmObfIn)" />
+    <Copy SourceFiles="@(IntermediateAssembly)" DestinationFolder="$(_PcmObfIn)" />
+    <WriteLinesToFile File="$(_PcmObfConfig)" Overwrite="true" Lines="&lt;?xml version=&quot;1.0&quot;?&gt;;&lt;Obfuscator&gt;;&lt;Var name=&quot;InPath&quot; value=&quot;$(_PcmObfIn)&quot; /&gt;;&lt;Var name=&quot;OutPath&quot; value=&quot;$(_PcmObfDir)&quot; /&gt;;&lt;Var name=&quot;KeepPublicApi&quot; value=&quot;true&quot; /&gt;;&lt;Var name=&quot;HidePrivateApi&quot; value=&quot;true&quot; /&gt;;&lt;Var name=&quot;HideStrings&quot; value=&quot;true&quot; /&gt;;&lt;Var name=&quot;RenameProperties&quot; value=&quot;false&quot; /&gt;;&lt;Var name=&quot;RenameEvents&quot; value=&quot;false&quot; /&gt;;@(_PcmSearchDirDistinct->'&lt;AssemblySearchPath path=&quot;%(Identity)&quot; /&gt;');&lt;Module file=&quot;$(_PcmObfIn)\$(TargetFileName)&quot;&gt;$(_PcmSkip)&lt;/Module&gt;;&lt;/Obfuscator&gt;" />
+    <Exec Command="dotnet tool run obfuscar.console &quot;$(_PcmObfConfig)&quot;" WorkingDirectory="$(MSBuildThisFileDirectory)" StandardOutputImportance="low" />
+    <!-- 난독화된 dll로 obj의 컴파일 결과를 바꾼다 -->
+    <Copy SourceFiles="$(_PcmObfDir)\$(TargetFileName)" DestinationFiles="@(IntermediateAssembly)" />
+    <Message Importance="high" Text="난독화: $(TargetFileName)" />
+  </Target>
 </Project>

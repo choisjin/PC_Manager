@@ -73,6 +73,8 @@ public class UpdateService
 
     private static string InstallLogPath => Path.Combine(Path.GetDirectoryName(ServerOptions.InstalledConfigPath)!, "install.log");
 
+    // JSON으로 저장·읽기: 난독화하면 생성자 매개변수 이름이 지워져 읽지 못하므로 제외
+    [System.Reflection.Obfuscation(Exclude = true, ApplyToMembers = true)]
     private sealed record PendingUpdate(string TargetVersion, DateTime StartedAt);
 
     /// <summary>이전 자가 업데이트 결과를 확인한다: 새 버전으로 떴으면 성공, 아니면 설치 기록 끝부분과 함께 실패로 표시</summary>
@@ -377,6 +379,8 @@ public class UpdateService
     private static Version NormalizeVersion(Version? v) =>
         v is null ? new Version(0, 0, 0) : new Version(v.Major, v.Minor, Math.Max(v.Build, 0));
 
+    // JSON으로 저장·읽기: 난독화하면 생성자 매개변수 이름이 지워져 읽지 못하므로 제외
+    [System.Reflection.Obfuscation(Exclude = true, ApplyToMembers = true)]
     private sealed record GitHubRelease(
         [property: JsonPropertyName("tag_name")] string? TagName,
         [property: JsonPropertyName("name")] string? Name,
@@ -385,6 +389,8 @@ public class UpdateService
         [property: JsonPropertyName("published_at")] DateTime? PublishedAt,
         [property: JsonPropertyName("assets")] List<GitHubAsset>? Assets);
 
+    // JSON으로 저장·읽기: 난독화하면 생성자 매개변수 이름이 지워져 읽지 못하므로 제외
+    [System.Reflection.Obfuscation(Exclude = true, ApplyToMembers = true)]
     private sealed record GitHubAsset(
         [property: JsonPropertyName("name")] string Name,
         [property: JsonPropertyName("browser_download_url")] string BrowserDownloadUrl);

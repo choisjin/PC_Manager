@@ -27,6 +27,8 @@ public class SharedFolderStore(AppPaths paths, ILogger<SharedFolderStore> logger
     private readonly ConcurrentDictionary<string, SafeAccessTokenHandle> _tokens = new();
 
     /// <summary>저장용 내부 모델 (비밀번호는 암호화된 상태)</summary>
+    // JSON으로 저장·읽기: 난독화하면 생성자 매개변수 이름이 지워져 읽지 못하므로 제외
+    [System.Reflection.Obfuscation(Exclude = true, ApplyToMembers = true)]
     private record Stored(string Id, string Name, string Path, string? Username, string? ProtectedPassword, string? OwnerUserId = null);
 
     private List<Stored> LoadUnlocked()

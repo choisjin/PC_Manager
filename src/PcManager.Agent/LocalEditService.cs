@@ -445,6 +445,8 @@ public class LocalEditService
     }
 
     /// <summary>받은 사본 한 개의 기록 (재시작 후 복원용으로 저장)</summary>
+    // JSON으로 저장·읽기: 난독화하면 생성자 매개변수 이름이 지워져 읽지 못하므로 제외
+    [System.Reflection.Obfuscation(Exclude = true, ApplyToMembers = true)]
     private sealed class CopyRecord
     {
         public required string LocalPath { get; init; }

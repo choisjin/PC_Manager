@@ -133,12 +133,7 @@ app.MapInstallApi(serverOptions);
 
 // 설치 파일은 크므로 요청 크기 제한과 무관하게 스트리밍 (다운로드만, 업로드 아님)
 
-// 대시보드 화면 경로는 index.html로 돌려준다. 없는 API/Hub 경로는 404
-app.MapFallback("{*path:nonfile}", (HttpContext context, IWebHostEnvironment env) =>
-{
-    var indexPath = Path.Combine(env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot"), "index.html");
-    var isApi = context.Request.Path.StartsWithSegments("/api") || context.Request.Path.StartsWithSegments("/hubs");
-    return isApi || !File.Exists(indexPath) ? Results.NotFound() : Results.File(indexPath, "text/html; charset=utf-8");
-});
+// 대시보드 화면 경로는 index.html로 (API 처리기는 모두 Api 네임스페이스: 난독화에서 매개변수 이름을 지키기 위함)
+app.MapSpaFallback();
 
 app.Run();

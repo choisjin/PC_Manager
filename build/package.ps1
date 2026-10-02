@@ -47,8 +47,26 @@ $publishArgs = @(
     "-p:Version=$Version",
     '-p:DebugType=None',
     '-p:DebugSymbols=false',
+    # 배포 파일 난독화 (Obfuscar, Directory.Build.targets): 설치 폴더의 dll/exe에서 코드를 읽기 어렵게
+    '-p:PcmObfuscate=true',
     '-nologo'
 )
+
+Write-Step '빌드 도구 준비 (난독화 도구)'
+Push-Location $root
+try {
+    dotnet tool restore
+}
+finally {
+    Pop-Location
+}
+# 이전 Release 빌드 결과(obj/bin)를 지우고 새로 컴파일해야 난독화가 빠짐없이 적용된다
+Get-ChildItem -Path (Join-Path $root 'src') -Directory | ForEach-Object {
+    foreach ($sub in 'obj\Release', 'bin\Release') {
+        $dir = Join-Path $_.FullName $sub
+        if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+    }
+}
 
 Write-Step "대시보드 빌드 (버전 $Version)"
 Push-Location (Join-Path $root 'web')

@@ -99,4 +99,8 @@
 ## 업데이트 (0.2.3+)
 - 서버가 GitHub 릴리스 API로 최신 버전·릴리스노트 확인 (UpdateService, 주기적 + 수동)
 - 서버 자가 업데이트: 새 패키지 다운로드 → install-server.ps1 실행 → 서비스 재시작 (LocalSystem 필요)
+- 배포 파일 난독화: `build/package.ps1`이 `-p:PcmObfuscate=true`로 게시해 서버·에이전트·공용 dll을 Obfuscar로 난독화한다 (`Directory.Build.targets`, 도구는 `dotnet-tools.json`).
+  공개 API·속성 이름은 그대로 두고 내부 이름만 바꾸며 문자열을 숨긴다. 다음은 제외해야 동작한다:
+  서버 API 처리기(`PcManager.Server.Api` — ASP.NET이 매개변수 이름으로 값을 넣음), 익명 형식(JSON 메시지),
+  JSON으로 읽는 비공개 형식(`[Obfuscation(Exclude = true, ApplyToMembers = true)]`). 새 API 처리기는 반드시 Api 네임스페이스에 둔다.
 - 에이전트 업데이트: 서버가 UpdateAgent 명령 → 에이전트가 설치 파일 받아 --install --silent 재설치

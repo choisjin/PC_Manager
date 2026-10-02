@@ -42,6 +42,16 @@ internal static class RemoteSessionApp
         catch (Exception ex)
         {
             Trace.WriteLine($"원격 세션 오류: {ex}");
+            // 창 없이 뜨는 프로세스라 오류를 볼 곳이 없다 → 임시 폴더 기록 (SYSTEM이면 C:\Windows\SystemTemp)
+            try
+            {
+                File.AppendAllText(Path.Combine(Path.GetTempPath(), "PcManagerRemote.log"),
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {(thumbnail ? "썸네일" : "원격조작")} 오류: {ex}{Environment.NewLine}");
+            }
+            catch (IOException)
+            {
+                // 기록 실패는 무시
+            }
             return 1;
         }
     }
