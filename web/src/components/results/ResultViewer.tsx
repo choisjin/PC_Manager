@@ -395,24 +395,28 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
         (l) => {
           const entry = l.entries.find((e) => e.fullPath === v || e.name === baseName(v))
           if (entry) update({ modified: wallFromIso(entry.modifiedAt), size: entry.size })
+          // 녹화 시작 시각 사이드카 (ReplayKit: 영상.meta.json) — 있을 때만 읽는다
+          const metaName = `${baseName(v)}.meta.json`.toLowerCase()
+          if (l.entries.some((e) => e.name.toLowerCase() === metaName))
+            fetch(api.mediaUrl(source.agentId, `${v}.meta.json`))
+              .then((res) => (res.ok ? res.json() : null))
+              .then((meta: { started_at?: string } | null) => meta?.started_at && update({ metaStarted: meta.started_at }), () => {})
         },
         () => {},
       )
-      fetch(api.mediaUrl(source.agentId, `${v}.meta.json`))
-        .then((res) => (res.ok ? res.json() : null))
-        .then((meta: { started_at?: string } | null) => meta?.started_at && update({ metaStarted: meta.started_at }), () => {})
       api.prepareVideo(source.agentId, v, false).then(
         (r) => update(r.playPath
           ? { playPath: r.playPath, duration: r.duration, fps: r.fps, prep: 'ready', prepNote: r.note }
           : { duration: r.duration, fps: r.fps, prep: 'needs-convert', prepNote: r.note }),
-        () => {
+        (err) => {
           // PC가 꺼졌거나 옛 에이전트: 셋에 백업한 재생용 사본 → 원본을 브라우저가 읽는 만큼
           const saved = savedConfig?.playPaths?.[v]
           if (saved && set?.files[saved.playPath]) {
             update({ playPath: saved.playPath, duration: saved.duration, fps: saved.fps, prep: 'ready' })
             return
           }
-          update({ playPath: v, prep: 'ready' })
+          // 원본 그대로 재생: 길이·탐색 색인이 없는 영상(mkv·webm 등)은 위치가 어긋날 수 있어 알린다
+          update({ playPath: v, prep: 'ready', prepNote: `재생용 영상을 준비하지 못해 원본을 그대로 재생합니다 (${toMessage(err)})` })
           const probe = document.createElement('video')
           probe.preload = 'metadata'
           probe.muted = true
@@ -623,6 +627,11 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
               </>
             }
           />
+          {currentRaw?.prep === 'ready' && currentRaw.playPath === currentRaw.path && currentRaw.prepNote && (
+            <div className="rv-notice small" title={currentRaw.prepNote}>
+              ⚠ {currentRaw.prepNote} — 길이가 안 나오거나 스텝 위치가 어긋나면 이 PC의 에이전트를 업데이트하세요 (업데이트 → 에이전트 업데이트)
+            </div>
+          )}
           <div className="rv-sync-line small muted">
             {currentVideo
               ? <>영상 시작: {currentVideo.start !== null ? formatWall(currentVideo.start, true) : '모름'} ({START_SOURCE_LABEL[currentVideo.startSource]}) · 보정 {sync.offset >= 0 ? '+' : ''}{sync.offset.toFixed(2)}초{sync.rate !== 1 ? ` · 배율 ${sync.rate.toFixed(5)}` : ''}{sync.anchors.length ? ` · 기준점 ${sync.anchors.length}개` : ''}</>
