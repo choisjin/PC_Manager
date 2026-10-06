@@ -523,7 +523,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
         inFrame
           ? `다른 화면 안에 열린 대시보드에서는 Alt+Tab·Win 키를 직접 보낼 수 없습니다. 새 창으로 여세요: ${https ?? location.origin}  (상단 '새 창에서 열기'). 지금은 위 아이콘으로 보낼 수 있습니다.`
           : https
-          ? `Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: ${https}  (인증서 경고가 뜨면 'PC 추가' 창의 인증서 설치 도구를 한 번 실행). 지금은 위 아이콘으로 보낼 수 있습니다.`
+          ? `Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: ${https}  (인증서 경고가 뜨면 Setting › 'PC 추가 · 인증서'의 인증서 설치 도구를 한 번 실행). 지금은 위 아이콘으로 보낼 수 있습니다.`
           : 'Alt+Tab·Win 키를 직접 누르려면 HTTPS(또는 localhost)로 접속해야 합니다. 지금은 위 아이콘으로 보낼 수 있습니다.',
       )
     } else {

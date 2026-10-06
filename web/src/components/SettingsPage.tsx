@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Agent, Org, PcGroups } from '../api'
 import type { OrgActions } from '../useDashboard'
+import { AddAgentDialog } from './AddAgentDialog'
 import { EditFolderSection } from './EditFolderSection'
 import { displayName } from './explorer/pcGroups'
 
@@ -17,6 +18,7 @@ interface Props {
 export function SettingsPage({ org, actions, agents, pcGroups, selfAgentId }: Props) {
   const [projectName, setProjectName] = useState('')
   const [userName, setUserName] = useState('')
+  const [addingPc, setAddingPc] = useState(false)
 
   const inProject = (projectId: string, userId: string) => (org.projectUsers[projectId] ?? []).includes(userId)
   const toggle = (projectId: string, userId: string) => {
@@ -173,6 +175,20 @@ export function SettingsPage({ org, actions, agents, pcGroups, selfAgentId }: Pr
           체크하면 그 프로젝트에 배정됩니다. 프로젝트에 배정된 PC·폴더는 그 프로젝트 사용자에게만 보입니다. PC·폴더 배정은 PC Manager 화면에서 우클릭으로 합니다.
         </p>
       </section>
+      {/* PC 추가 · 인증서 */}
+      <section className="panel settings-section">
+        <div className="settings-section-head">
+          <h2>PC 추가 · 인증서</h2>
+          <button type="button" className="primary" onClick={() => setAddingPc(true)}>
+            열기
+          </button>
+        </div>
+        <p className="muted small">
+          테스트 PC에 설치할 에이전트 설치 파일과 서버 주소, 그리고 이 대시보드를 HTTPS로 경고 없이 열기 위한 인증서 설치 도구가
+          있습니다. 인증서 설치 도구는 대시보드를 여는 PC마다 한 번 실행합니다 (에이전트가 설치된 PC는 자동).
+        </p>
+      </section>
+      {addingPc && <AddAgentDialog onClose={() => setAddingPc(false)} />}
       {/* 편집 폴더 */}
       <EditFolderSection
         selfAgentId={selfAgentId}
