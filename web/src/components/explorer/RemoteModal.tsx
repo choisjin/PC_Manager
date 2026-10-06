@@ -68,6 +68,36 @@ const keyboardApi = () => (navigator as Navigator & { keyboard?: KeyboardApi }).
  * Keyboard Lock API: 전체 화면에서 Alt+Tab, Win, Alt+F4, Ctrl+W 같은 키를 브라우저/OS 대신 페이지가 받는다.
  * 보안 컨텍스트(HTTPS, localhost)에서만 노출된다. Ctrl+Alt+Del은 OS가 처리하므로 어떤 방법으로도 가로챌 수 없다.
  */
+/** 다른 화면(NPMS 포털 등) 안의 iframe으로 열렸는지 */
+const embedded = () => typeof window !== 'undefined' && window.self !== window.top
+
+/**
+ * iframe에서는 브라우저가 키보드 잠금을 허용하지 않는다 (최상위 문서만).
+ * 바깥 화면(HTTPS)이 지원하면 대신 잠가 달라고 요청한다: {pcmKeyboardLock:'lock'|'unlock', id} → {pcmKeyboardLockResult:id, ok, error}
+ * 응답이 없으면(지원하지 않는 화면) false
+ */
+const parentKeyboardLock = (action: 'lock' | 'unlock') =>
+  new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    if (!embedded()) {
+      resolve({ ok: false })
+      return
+    }
+    const id = Math.random().toString(36).slice(2)
+    const timer = setTimeout(() => {
+      window.removeEventListener('message', onMessage)
+      resolve({ ok: false })
+    }, 1500)
+    function onMessage(e: MessageEvent) {
+      const d = e.data as { pcmKeyboardLockResult?: string; ok?: boolean; error?: string } | null
+      if (e.source !== window.parent || d?.pcmKeyboardLockResult !== id) return
+      clearTimeout(timer)
+      window.removeEventListener('message', onMessage)
+      resolve({ ok: !!d.ok, error: d.error })
+    }
+    window.addEventListener('message', onMessage)
+    window.parent.postMessage({ pcmKeyboardLock: action, id }, '*')
+  })
+
 const keyboardLockAvailable = () => typeof window !== 'undefined' && window.isSecureContext && typeof keyboardApi()?.lock === 'function'
 
 type KeyLock = 'off' | 'locked' | 'unavailable'
@@ -173,6 +203,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
       setFullscreen(active)
       if (!active) {
         keyboardApi()?.unlock?.()
+        if (embedded()) void parentKeyboardLock('unlock')
         setKeyLock((s) => (s === 'locked' ? 'off' : s))
       }
       stageRef.current?.focus()
@@ -181,6 +212,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     return () => {
       document.removeEventListener('fullscreenchange', onChange)
       keyboardApi()?.unlock?.()
+      if (embedded()) void parentKeyboardLock('unlock')
       if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
     }
   }, [])
@@ -463,8 +495,23 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
 
     // 전체 화면에서만 키보드 잠금이 가능: Alt+Tab, Win, Alt+F4, Ctrl+W 등이 로컬 대신 원격으로 간다
     // 다른 화면(NPMS 포털 등) 안의 iframe이면 HTTPS여도 브라우저가 키보드 잠금을 허용하지 않는다 (최상위 창만)
-    const embedded = window.self !== window.top
-    if (keyLock === 'unavailable' || embedded) {
+    // → 바깥 화면이 대신 잠가 주면 그것으로 (바깥도 HTTPS여야 함)
+    const inFrame = embedded()
+    if (inFrame) {
+      const result = await parentKeyboardLock('lock')
+      if (result.ok) {
+        setKeyLock('locked')
+        showHint('키보드 잠금: Alt+Tab·Win·Alt+F4가 원격으로 전달됩니다. 종료하려면 Esc를 길게 누르거나 ⛶ 버튼을 누르세요.')
+        stage.focus()
+        return
+      }
+      if (result.error) {
+        showHint(`키보드 잠금 실패(바깥 화면): ${result.error}. 새 창으로 열면 됩니다. 지금은 위 아이콘으로 보낼 수 있습니다.`)
+        stage.focus()
+        return
+      }
+    }
+    if (keyLock === 'unavailable' || inFrame) {
       // HTTP 접속: 브라우저가 Keyboard Lock API를 노출하지 않는다 → HTTPS 주소를 안내
       let https: string | null = null
       try {
@@ -473,7 +520,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
         // 안내만 생략
       }
       showHint(
-        embedded
+        inFrame
           ? `다른 화면 안에 열린 대시보드에서는 Alt+Tab·Win 키를 직접 보낼 수 없습니다. 새 창으로 여세요: ${https ?? location.origin}  (상단 '새 창에서 열기'). 지금은 위 아이콘으로 보낼 수 있습니다.`
           : https
           ? `Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: ${https}  (인증서 경고가 뜨면 'PC 추가' 창의 인증서 설치 도구를 한 번 실행). 지금은 위 아이콘으로 보낼 수 있습니다.`
