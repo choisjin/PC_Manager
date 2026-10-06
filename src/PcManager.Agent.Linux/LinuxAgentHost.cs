@@ -33,7 +33,9 @@ public static class LinuxAgentHost
         builder.Services.AddSingleton<LinuxAgentUpdater>();
         builder.Services.AddHostedService<LinuxAgentWorker>();
 
-        builder.Build().Run();
+        var host = builder.Build();
+        SystemdInstaller.RepairUnit(host.Services.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(SystemdInstaller)));
+        host.Run();
         return 0;
     }
 }

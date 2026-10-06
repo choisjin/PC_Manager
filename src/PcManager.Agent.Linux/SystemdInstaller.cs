@@ -50,23 +50,7 @@ public static class SystemdInstaller
         }
 
         Step("systemd 서비스 등록·시작 (pcmanager-agent)");
-        File.WriteAllText(UnitPath, $"""
-            [Unit]
-            Description=PC Manager Agent
-            After=network-online.target graphical.target
-            Wants=network-online.target
-
-            [Service]
-            Type=notify
-            ExecStart={InstalledExe} --service
-            Restart=always
-            RestartSec=5
-            # 원격 도우미가 쓰는 /tmp (사용자 X 세션에 접근하므로 격리하지 않는다)
-            PrivateTmp=false
-
-            [Install]
-            WantedBy=multi-user.target
-            """);
+        File.WriteAllText(UnitPath, UnitText);
         if (!Run("systemctl", "daemon-reload") || !Run("systemctl", "enable", "pcmanager-agent") || !Run("systemctl", "restart", "pcmanager-agent"))
         {
             Console.Error.WriteLine($"서비스를 등록·시작하지 못했습니다 (systemd가 없는 환경?). 직접 실행: {InstalledExe} --service");
@@ -77,6 +61,50 @@ public static class SystemdInstaller
         Console.WriteLine("설치 완료. 상태: systemctl status pcmanager-agent   로그: journalctl -u pcmanager-agent -f");
         Console.WriteLine("원격조작은 X11 데스크톱 세션(로그인 화면에서 'Ubuntu on Xorg')이 있어야 합니다.");
         return 0;
+    }
+
+    // graphical.target 뒤로 순서를 걸면 안 된다: multi-user.target이 이 서비스를 Wants하면 자동으로 이 서비스 뒤에 오고,
+    // graphical.target은 multi-user.target 뒤에 오므로 순환이 생겨 부팅 때 systemd가 이 서비스 시작을 빼 버린다.
+    // X 세션은 원격조작 요청 때 찾으므로 화면보다 먼저 떠도 된다
+    private static string UnitText => $"""
+        [Unit]
+        Description=PC Manager Agent
+        After=network-online.target
+        Wants=network-online.target
+
+        [Service]
+        Type=notify
+        ExecStart={InstalledExe} --service
+        Restart=always
+        RestartSec=5
+        # 원격 도우미가 쓰는 /tmp (사용자 X 세션에 접근하므로 격리하지 않는다)
+        PrivateTmp=false
+
+        [Install]
+        WantedBy=multi-user.target
+        """;
+
+    /// <summary>
+    /// 서비스 시작 시: 예전 버전이 쓴 유닛 파일(부팅 때 안 뜨는 순환 의존)을 지금 내용으로 고친다.
+    /// 업데이트는 실행 파일만 바꾸므로 이미 설치된 PC는 여기서 고쳐진다
+    /// </summary>
+    public static void RepairUnit(ILogger logger)
+    {
+        try
+        {
+            if (!Environment.IsPrivilegedProcess || Environment.ProcessPath != InstalledExe || !File.Exists(UnitPath))
+                return;
+            if (File.ReadAllText(UnitPath) == UnitText)
+                return;
+            File.WriteAllText(UnitPath, UnitText);
+            Run(["systemctl", "daemon-reload"], quiet: true);
+            Run(["systemctl", "reenable", "pcmanager-agent"], quiet: true);
+            logger.LogInformation("systemd 유닛 파일을 고쳤습니다 ({Path}, 재부팅 시 자동 시작)", UnitPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning("systemd 유닛 파일을 고치지 못했습니다: {Message}", ex.Message);
+        }
     }
 
     public static int Uninstall(bool purge)
