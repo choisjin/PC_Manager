@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using PcManager.Server.Contracts;
 using PcManager.Server.Data;
+using PcManager.Server.Hubs;
 using PcManager.Server.Services;
 
 namespace PcManager.Server.Api;
@@ -16,6 +18,19 @@ public static class ApiEndpoints
             await using var db = await dbFactory.CreateDbContextAsync();
             var agents = await db.Agents.AsNoTracking().OrderBy(a => a.MachineName).ToListAsync();
             return agents.Select(a => a.ToView(registry.IsOnline(a.Id)));
+        });
+
+        // 목록에서 삭제: 연결이 끊긴 PC만. 실행·전송 기록은 남기고, 에이전트가 다시 연결하면 새로 등록된다
+        api.MapDelete("/agents/{id}", async (string id, IDbContextFactory<AppDbContext> dbFactory, AgentRegistry registry,
+            IHubContext<DashboardHub, IDashboardClient> dashboard) =>
+        {
+            if (registry.IsOnline(id))
+                return Results.Conflict("연결 중인 PC는 삭제할 수 없습니다. 에이전트 연결이 끊긴 뒤 삭제하세요.");
+            await using var db = await dbFactory.CreateDbContextAsync();
+            if (await db.Agents.Where(a => a.Id == id).ExecuteDeleteAsync() == 0)
+                return Results.NotFound();
+            await dashboard.Clients.All.AgentRemoved(id);
+            return Results.NoContent();
         });
 
         api.MapGet("/runs", async (string? agentId, string? jobRunId, int? take, IDbContextFactory<AppDbContext> dbFactory) =>

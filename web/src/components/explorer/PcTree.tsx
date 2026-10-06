@@ -13,6 +13,8 @@ interface Props {
   addShare: (name: string, path: string, username?: string, password?: string) => Promise<void>
   removeShare: (id: string) => void
   renameShare: (id: string, name: string) => Promise<void>
+  /** 목록에서 삭제 (연결 끊긴 PC만). 에이전트가 다시 연결하면 다시 나타난다 */
+  removeAgent: (agentId: string) => Promise<void>
   reorderShares: (ids: string[]) => void
   org: Org
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
@@ -34,7 +36,7 @@ interface Props {
   onModeChange: (mode: 'browser' | 'remote') => void
 }
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange }: Props) {
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
@@ -417,6 +419,18 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
                 ? projectItems
                 : [{ label: '프로젝트 없음 (설정에서 추가)', disabled: true, onClick: () => {} }]),
               ...(currentPid ? [{ label: '프로젝트 해제', onClick: () => void setAgentProject(a.id, null) }] : []),
+              { separator: true },
+              {
+                label: a.online ? '목록에서 삭제 (연결 끊긴 PC만)' : '목록에서 삭제…',
+                danger: true,
+                disabled: a.online,
+                onClick: () => {
+                  if (!window.confirm(`'${displayName(a, groups)}'을(를) PC 목록에서 삭제할까요?
+
+이 PC의 에이전트가 다시 연결하면 목록에 다시 나타납니다.`)) return
+                  removeAgent(a.id).catch((err) => window.alert(`삭제하지 못했습니다: ${err instanceof Error ? err.message : String(err)}`))
+                },
+              },
             ]
           })()}
         />

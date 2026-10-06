@@ -9,6 +9,7 @@ namespace PcManager.Server.Hubs;
 public interface IDashboardClient
 {
     Task AgentUpdated(AgentView agent);
+    Task AgentRemoved(string agentId);
     Task RunUpdated(RunView run);
     Task RunOutput(string runId, IReadOnlyList<CommandOutput> lines);
     Task TransferUpdated(TransferView transfer);

@@ -166,6 +166,9 @@ export function useDashboard() {
     connection.on('AgentUpdated', (agent: Agent) =>
       setAgents((prev) => upsertBy(prev, agent, sameId).sort(byMachineName)),
     )
+    connection.on('AgentRemoved', (agentId: string) =>
+      setAgents((prev) => prev.filter((a) => a.id !== agentId)),
+    )
     connection.on('RunUpdated', (run: Run) => upsertRuns([run]))
     connection.on('RunOutput', (runId: string, lines: OutputLine[]) =>
       watchers.get(runId)?.onLines(lines),
@@ -385,6 +388,11 @@ export function useDashboard() {
   const removeShare = useCallback((id: string) => {
     api.removeShare(id).then((s: SharedFolders) => setShares(s.shares)).catch((err) => console.error('공유 폴더 삭제 실패', err))
   }, [])
+  // PC 목록에서 삭제 (연결 끊긴 PC만, 서버가 AgentRemoved로 알려준다). 에이전트가 다시 연결하면 다시 나타남
+  const removeAgent = useCallback(async (agentId: string) => {
+    await api.removeAgent(agentId)
+    setAgents((prev) => prev.filter((a) => a.id !== agentId))
+  }, [])
   // 순서 변경: 화면은 바로 바꾸고 서버에 저장 (실패하면 다시 불러옴)
   const reorderShares = useCallback((ids: string[]) => {
     setShares((list) => ids.map((id) => list.find((s) => s.id === id)).filter((s): s is SharedFolder => !!s))
@@ -511,6 +519,7 @@ export function useDashboard() {
     removeShare,
     renameShare,
     reorderShares,
+    removeAgent,
     reloadShares,
     org,
     orgActions,

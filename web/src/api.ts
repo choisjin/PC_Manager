@@ -415,6 +415,7 @@ const query = (params: Record<string, string | number | undefined>) =>
 
 export const api = {
   agents: () => request<Agent[]>('/api/agents'),
+  removeAgent: (id: string) => request<void>(`/api/agents/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   runs: () => request<Run[]>('/api/runs?take=200'),
   run: (runId: string) => request<Run>(`/api/runs/${runId}`),
   output: (runId: string, afterSeq = 0) =>
