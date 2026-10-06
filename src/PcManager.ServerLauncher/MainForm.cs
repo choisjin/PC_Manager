@@ -37,6 +37,7 @@ internal sealed partial class MainForm : Form
     private readonly Button _stopAll = new() { Text = "전체 중지" };
     private readonly Button _update = new() { Text = "일괄 업데이트" };
     private readonly Button _updateZip = new() { Text = "zip으로 업데이트…" };
+    private readonly Button _trust = new() { Text = "HTTPS 인증서 신뢰(이 PC)" };
     private readonly Label _version = new() { AutoSize = true, Margin = new Padding(0, 8, 12, 0) };
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(0, 8, 0, 0) };
     private readonly ProgressBar _progress = new() { Width = 160, Visible = false, Margin = new Padding(8, 6, 0, 0) };
@@ -49,6 +50,7 @@ internal sealed partial class MainForm : Form
     private bool _refreshing;
     private bool _exiting;
     private bool _trayHintShown;
+    private bool _certificateTrusted;
 
     public MainForm(bool startMinimized)
     {
@@ -68,7 +70,8 @@ internal sealed partial class MainForm : Form
         _list.Columns.Add("상태", 90);
         _list.Columns.Add("이름", 120);
         _list.Columns.Add("포트", 60);
-        _list.Columns.Add("에이전트 접속 주소", 190);
+        _list.Columns.Add("에이전트 접속 주소", 180);
+        _list.Columns.Add("대시보드 HTTPS", 180);
         _list.Columns.Add("데이터 폴더", 260);
         _list.Columns.Add("자동 시작", 70);
         _list.Columns.Add("메시지", 300);
@@ -89,6 +92,8 @@ internal sealed partial class MainForm : Form
         bottom.Controls.Add(new Label { Width = 16 });
         foreach (var b in new[] { _startAll, _stopAll })
             bottom.Controls.Add(Styled(b));
+        bottom.Controls.Add(new Label { Width = 16 });
+        bottom.Controls.Add(Styled(_trust));
         bottom.Controls.Add(_progress);
 
         var footer = Row();
@@ -121,6 +126,7 @@ internal sealed partial class MainForm : Form
         _stopAll.Click += async (_, _) => await RunBusy("전체 중지 중…", StopAllAsync);
         _update.Click += async (_, _) => await UpdateFromGitHubAsync();
         _updateZip.Click += async (_, _) => await UpdateFromZipAsync();
+        _trust.Click += (_, _) => TrustCertificate();
         _autorun.Checked = Autorun.IsEnabled;
         _autorun.CheckedChanged += (_, _) => Autorun.Set(_autorun.Checked);
 
@@ -169,6 +175,7 @@ internal sealed partial class MainForm : Form
         _initialized = true;
         _timer.Start();
 
+        EnsureCertificate(askTrust: !_startMinimized);
         if (ServerPackage.InstalledVersion() is null)
             SetStatus("서버 파일이 없습니다. [일괄 업데이트]로 최신 서버를 받으세요.");
         else
@@ -210,6 +217,7 @@ internal sealed partial class MainForm : Form
                 instance.Config.Name,
                 instance.Config.Port.ToString(),
                 AgentAddress(instance),
+                instance.Config.ResolvedHttpsPort > 0 ? $"https://{NetInfo.LanAddress()}:{instance.Config.ResolvedHttpsPort}" : "",
                 instance.Config.ResolvedDataDirectory,
                 instance.Config.AutoStart ? "예" : "",
                 instance.Message ?? "",
@@ -254,6 +262,7 @@ internal sealed partial class MainForm : Form
         _startAll.Enabled = !_busy && hasServer && _instances.Any(i => !i.IsActive);
         _stopAll.Enabled = !_busy && _instances.Any(i => i.IsActive);
         _update.Enabled = _updateZip.Enabled = !_busy;
+        _trust.Visible = _instances.Any(i => i.Config.ResolvedHttpsPort > 0) && !_certificateTrusted;
     }
 
     private string VersionText()
@@ -305,9 +314,11 @@ internal sealed partial class MainForm : Form
 
     private void AddInstance()
     {
+        var used = _instances.SelectMany(i => i.Config.Ports).ToHashSet();
+        bool Free(int p) => !used.Contains(p) && !ServerInstance.IsPortListening(p);
         var port = DefaultPort;
-        while (_instances.Any(i => i.Config.Port == port) || ServerInstance.IsPortListening(port))
-            port++;
+        while (!Free(port) || !Free(port + 1))
+            port += 2;
         using var dialog = new InstanceDialog(null, port, c => Validate(c, null));
         if (dialog.ShowDialog(this) != DialogResult.OK)
             return;
@@ -319,6 +330,8 @@ internal sealed partial class MainForm : Form
         _instances.Add(instance);
         if (dialog.OpenFirewall)
             OpenFirewall(config);
+        if (config.ResolvedHttpsPort > 0)
+            EnsureCertificate(askTrust: true);
         if (File.Exists(LauncherPaths.ServerExe))
             StartInstance(instance);
         RefreshList();
@@ -335,17 +348,21 @@ internal sealed partial class MainForm : Form
             return;
 
         var result = dialog.Result;
-        var needsRestart = result.Port != config.Port || result.ResolvedDataDirectory != config.ResolvedDataDirectory;
+        var needsRestart = result.Port != config.Port || result.ResolvedHttpsPort != config.ResolvedHttpsPort
+            || result.ResolvedDataDirectory != config.ResolvedDataDirectory;
         var wasActive = instance.IsActive;
         if (needsRestart && wasActive)
             await RunBusy($"{config.Name} 중지 중…", instance.StopAsync);
 
         config.Port = result.Port;
+        config.HttpsPort = result.HttpsPort;
         config.DataDirectory = result.DataDirectory;
         config.AutoStart = result.AutoStart;
         Save();
         if (dialog.OpenFirewall)
             OpenFirewall(config);
+        if (config.ResolvedHttpsPort > 0)
+            EnsureCertificate(askTrust: true);
         if (needsRestart && wasActive)
             StartInstance(instance);
         RefreshList();
@@ -394,10 +411,15 @@ internal sealed partial class MainForm : Form
             if (_config.Instances.Any(c => string.Equals(c.Name, candidate.Name, StringComparison.OrdinalIgnoreCase)))
                 return "같은 이름의 서버가 이미 있습니다.";
         }
-        if (_config.Instances.FirstOrDefault(c => c != self && c.Port == candidate.Port) is { } samePort)
-            return $"포트 {candidate.Port}은(는) '{samePort.Name}'이(가) 쓰고 있습니다.";
-        if (candidate.Port != self?.Port && ServerInstance.IsPortListening(candidate.Port))
-            return $"포트 {candidate.Port}을(를) 다른 프로그램이 쓰고 있습니다.";
+        if (candidate.ResolvedHttpsPort == candidate.Port)
+            return "HTTPS 포트는 HTTP 포트와 달라야 합니다.";
+        foreach (var port in candidate.Ports)
+        {
+            if (_config.Instances.FirstOrDefault(c => c != self && c.Ports.Contains(port)) is { } samePort)
+                return $"포트 {port}은(는) '{samePort.Name}'이(가) 쓰고 있습니다.";
+            if (self?.Ports.Contains(port) != true && ServerInstance.IsPortListening(port))
+                return $"포트 {port}을(를) 다른 프로그램이 쓰고 있습니다.";
+        }
         var data = Path.GetFullPath(candidate.ResolvedDataDirectory);
         if (_config.Instances.FirstOrDefault(c => c != self && string.Equals(Path.GetFullPath(c.ResolvedDataDirectory), data, StringComparison.OrdinalIgnoreCase)) is { } sameData)
             return $"데이터 폴더를 '{sameData.Name}'이(가) 쓰고 있습니다.";
@@ -406,10 +428,10 @@ internal sealed partial class MainForm : Form
 
     private void OpenFirewall(InstanceConfig config)
     {
-        if (!Firewall.TryOpen(config.Name, config.Port, out var error))
+        if (!Firewall.TryOpen(config.Name, config.Ports, out var error))
             SetStatus($"방화벽 규칙을 만들지 못했습니다: {error} (나중에 [설정]에서 다시 할 수 있습니다)");
         else
-            SetStatus($"방화벽: TCP {config.Port} 허용 ({Firewall.RuleName(config.Name)})");
+            SetStatus($"방화벽: TCP {string.Join(", ", config.Ports)} 허용 ({Firewall.RuleName(config.Name)})");
     }
 
     private void Save()
@@ -569,8 +591,45 @@ internal sealed partial class MainForm : Form
 
     private void OpenDashboard()
     {
-        if (Selected is { State: InstanceState.Running } instance)
-            OpenPath($"http://localhost:{instance.Config.Port}/");
+        if (Selected is not { State: InstanceState.Running } instance)
+            return;
+        var https = instance.Config.ResolvedHttpsPort;
+        OpenPath(https > 0 && ServerCertificate.Exists ? $"https://localhost:{https}/" : $"http://localhost:{instance.Config.Port}/");
+    }
+
+    // ── HTTPS 인증서 (모든 서버가 같이 씀)
+
+    /// <summary>인증서를 준비하고, 이 PC가 아직 신뢰하지 않으면 신뢰할지 묻는다</summary>
+    private void EnsureCertificate(bool askTrust)
+    {
+        if (!_instances.Any(i => i.Config.ResolvedHttpsPort > 0))
+            return;
+        try
+        {
+            if (ServerCertificate.Ensure())
+                SetStatus("HTTPS 인증서를 만들었습니다 (이 PC 이름·IP용). 에이전트는 다시 연결될 때 자동으로 신뢰합니다.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            SetStatus("HTTPS 인증서를 만들지 못했습니다: " + ex.Message);
+            return;
+        }
+        _certificateTrusted = ServerCertificate.IsTrustedHere();
+        if (!_certificateTrusted && askTrust && MessageBox.Show(this,
+                "이 PC에서 대시보드를 HTTPS로 경고 없이 열려면 서버 인증서를 신뢰 저장소에 넣어야 합니다 (관리자 승인 한 번).\n\n지금 넣을까요?",
+                "HTTPS 인증서", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+            TrustCertificate();
+        UpdateButtons();
+    }
+
+    private void TrustCertificate()
+    {
+        if (ServerCertificate.TryTrustHere(out var error))
+            SetStatus("이 PC가 HTTPS 인증서를 신뢰합니다. 열려 있던 브라우저는 다시 열어야 반영됩니다.");
+        else
+            SetStatus("인증서 신뢰 실패: " + error);
+        _certificateTrusted = ServerCertificate.IsTrustedHere();
+        UpdateButtons();
     }
 
     private void OpenPath(string target)

@@ -69,9 +69,9 @@ internal sealed class ServerInstance
             SetState(InstanceState.Failed, "서버 파일이 없습니다. [일괄 업데이트]로 먼저 받으세요.");
             return;
         }
-        if (IsPortListening(Config.Port))
+        if (Config.Ports.FirstOrDefault(IsPortListening) is var busy and > 0)
         {
-            SetState(InstanceState.PortBusy, $"포트 {Config.Port}을(를) 다른 프로그램이 쓰고 있습니다.");
+            SetState(InstanceState.PortBusy, $"포트 {busy}을(를) 다른 프로그램이 쓰고 있습니다.");
             return;
         }
 
@@ -94,6 +94,13 @@ internal sealed class ServerInstance
         info.ArgumentList.Add(Config.Port.ToString());
         info.ArgumentList.Add("--data");
         info.ArgumentList.Add(Config.ResolvedDataDirectory);
+        if (Config.ResolvedHttpsPort > 0 && ServerCertificate.Exists)
+        {
+            info.ArgumentList.Add("--https-port");
+            info.ArgumentList.Add(Config.ResolvedHttpsPort.ToString());
+            info.ArgumentList.Add("--cert");
+            info.ArgumentList.Add(ServerCertificate.PfxPath);
+        }
         info.Environment[TokenVariable] = _token;
 
         try
@@ -108,7 +115,7 @@ internal sealed class ServerInstance
             process.BeginErrorReadLine();
             _process = process;
             StartedAt = DateTime.Now;
-            WriteLog($"[launcher] 시작: 포트 {Config.Port}, 데이터 {Config.ResolvedDataDirectory} (PID {process.Id})");
+            WriteLog($"[launcher] 시작: 포트 {Config.Port}{(Config.ResolvedHttpsPort > 0 ? $" (HTTPS {Config.ResolvedHttpsPort})" : "")}, 데이터 {Config.ResolvedDataDirectory} (PID {process.Id})");
             SetState(InstanceState.Starting, null);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
@@ -222,9 +229,9 @@ internal sealed class ServerInstance
         }
         if (process is null && State is InstanceState.Stopped or InstanceState.PortBusy)
         {
-            var busy = IsPortListening(Config.Port);
-            SetState(busy ? InstanceState.PortBusy : InstanceState.Stopped,
-                busy ? $"포트 {Config.Port}을(를) 다른 프로그램이 쓰고 있습니다." : null);
+            var busy = Config.Ports.FirstOrDefault(IsPortListening);
+            SetState(busy > 0 ? InstanceState.PortBusy : InstanceState.Stopped,
+                busy > 0 ? $"포트 {busy}을(를) 다른 프로그램이 쓰고 있습니다." : null);
         }
     }
 

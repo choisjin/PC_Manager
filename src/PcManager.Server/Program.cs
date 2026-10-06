@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting.WindowsServices;
@@ -9,7 +10,7 @@ using PcManager.Server.Hubs;
 using PcManager.Server.Services;
 using PcManager.Shared;
 
-// 포터블 실행: PcManager.Server.exe --port 5070 [--data D:\pcm-data]
+// 포터블 실행: PcManager.Server.exe --port 5070 [--data D:\pcm-data] [--https-port 5071 --cert D:\...\server.pfx]
 // 프로젝트별 포털이 자식 프로세스로 띄우는 용도. 설치형 설정(server.json)을 읽지 않으므로
 // 같은 PC의 설치형 서버나 다른 프로젝트 인스턴스와 포트·데이터가 겹치지 않는다
 var portablePort = ServerArgs.Port(args);
@@ -27,9 +28,28 @@ if (portable)
 {
     // 런처가 출력을 받아 로그 파일로 남긴다 (기본 OEM 코드 페이지면 한글이 깨짐)
     try { Console.OutputEncoding = Encoding.UTF8; } catch (IOException) { }
-    builder.WebHost.UseUrls($"http://*:{portablePort}");
     if (ServerArgs.Value(args, "--data") is { Length: > 0 } dataDir)
         builder.Configuration["Server:DataDirectory"] = dataDir;
+
+    // HTTPS(선택): 런처가 만든 자체 서명 인증서(pfx). 원격조작 키보드 잠금·WebCodecs는 HTTPS에서만 된다.
+    // 같은 이름의 .cer(공개 인증서)를 에이전트·대시보드 PC가 받아 신뢰한다
+    var httpsPort = ServerArgs.Port(args, "--https-port");
+    if (httpsPort is not null && ServerArgs.Value(args, "--cert") is { Length: > 0 } certFile)
+    {
+        var certificate = X509CertificateLoader.LoadPkcs12FromFile(certFile, password: null);
+        builder.WebHost.ConfigureKestrel(kestrel =>
+        {
+            kestrel.ListenAnyIP(portablePort!.Value);
+            kestrel.ListenAnyIP(httpsPort.Value, listen => listen.UseHttps(certificate));
+        });
+        builder.Configuration["Server:PortableHttpsPort"] = httpsPort.Value.ToString();
+        builder.Configuration["Server:PortableHttpPort"] = portablePort!.Value.ToString();
+        builder.Configuration["Server:CertificateFile"] = Path.ChangeExtension(certFile, ".cer");
+    }
+    else
+    {
+        builder.WebHost.UseUrls($"http://*:{portablePort}");
+    }
 }
 else
 {

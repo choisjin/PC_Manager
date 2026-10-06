@@ -5,6 +5,8 @@ internal sealed class InstanceDialog : Form
 {
     private readonly TextBox _name = new() { Width = 260 };
     private readonly NumericUpDown _port = new() { Minimum = 1, Maximum = 65535, Width = 100 };
+    private readonly CheckBox _https = new() { Text = "HTTPS", AutoSize = true, Margin = new Padding(12, 6, 4, 0) };
+    private readonly NumericUpDown _httpsPort = new() { Minimum = 1, Maximum = 65535, Width = 100 };
     private readonly TextBox _data = new() { Width = 340 };
     private readonly CheckBox _autoStart = new() { Text = "런처를 켤 때 자동 시작", AutoSize = true, Checked = true };
     private readonly CheckBox _firewall = new() { Text = "방화벽에서 이 포트 열기 (관리자 승인)", AutoSize = true, Checked = true };
@@ -33,6 +35,14 @@ internal sealed class InstanceDialog : Form
         _name.Text = existing?.Name ?? "";
         _name.ReadOnly = !_isNew;
         _port.Value = existing?.Port ?? suggestedPort;
+        var httpsPort = existing?.ResolvedHttpsPort ?? suggestedPort + 1;
+        _https.Checked = httpsPort > 0;
+        _httpsPort.Value = httpsPort > 0 ? httpsPort : Math.Min((int)_port.Value + 1, 65535);
+        _httpsPort.Enabled = _https.Checked;
+        _https.CheckedChanged += (_, _) => _httpsPort.Enabled = _https.Checked;
+        // 새로 만들 때는 HTTP 포트를 바꾸면 HTTPS 포트도 따라간다
+        if (_isNew)
+            _port.ValueChanged += (_, _) => _httpsPort.Value = Math.Min(_port.Value + 1, 65535);
         _data.Text = existing?.DataDirectory ?? "";
         _data.PlaceholderText = "비우면 instances\\이름\\data";
         _autoStart.Checked = existing?.AutoStart ?? true;
@@ -55,7 +65,11 @@ internal sealed class InstanceDialog : Form
             grid.Controls.Add(control);
         }
         Row("이름", _name);
-        Row("포트", _port);
+        var portRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        portRow.Controls.Add(_port);
+        portRow.Controls.Add(_https);
+        portRow.Controls.Add(_httpsPort);
+        Row("포트", portRow);
         var dataRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
         dataRow.Controls.Add(_data);
         dataRow.Controls.Add(browse);
@@ -73,7 +87,7 @@ internal sealed class InstanceDialog : Form
             MaximumSize = new Size(440, 0),
             Margin = new Padding(0, 10, 0, 0),
             Text = _isNew
-                ? "이름은 영문·숫자·-_ 만 쓸 수 있고 나중에 바꿀 수 없습니다. 이미 쓰던 데이터 폴더를 지정하면 그 데이터를 그대로 씁니다."
+                ? "이름은 영문·숫자·-_ 만 쓸 수 있고 나중에 바꿀 수 없습니다. 이미 쓰던 데이터 폴더를 지정하면 그 데이터를 그대로 씁니다. HTTPS는 원격조작에서 Alt+Tab·Win 키를 쓰려면 필요합니다."
                 : "포트·데이터 폴더를 바꾸면 실행 중인 서버는 다시 시작됩니다. 에이전트들의 서버 주소도 바꿔야 합니다.",
         };
 
@@ -103,6 +117,7 @@ internal sealed class InstanceDialog : Form
         {
             Name = _name.Text.Trim(),
             Port = (int)_port.Value,
+            HttpsPort = _https.Checked ? (int)_httpsPort.Value : 0,
             DataDirectory = string.IsNullOrWhiteSpace(_data.Text) ? null : _data.Text.Trim(),
             AutoStart = _autoStart.Checked,
         };

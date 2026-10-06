@@ -26,34 +26,45 @@ public static class InstallEndpoints
     /// <summary>설치 스크립트가 내보낸 공개 인증서. 대시보드 PC에서 신뢰 설치하면 HTTPS 경고가 사라진다</summary>
     public const string CertificateFileName = InstallPaths.ServerCertificateFile;
     public const string CertificateInstallerName = InstallPaths.CertificateInstallerFile;
-    private static string CertificatePath => Path.Combine(Path.GetDirectoryName(ServerOptions.InstalledConfigPath)!, CertificateFileName);
-
     public static void MapInstallApi(this WebApplication app, ServerOptions options)
     {
+        // 설치형: 설치 스크립트가 ProgramData에 내보낸 인증서 / 포터블: 런처가 만든 인증서
+        var certificatePath = string.IsNullOrWhiteSpace(options.CertificateFile)
+            ? Path.Combine(Path.GetDirectoryName(ServerOptions.InstalledConfigPath)!, CertificateFileName)
+            : options.CertificateFile;
+
+        string? HttpsUrl(HttpRequest request) =>
+            !string.IsNullOrWhiteSpace(options.DashboardHttpsUrl) ? options.DashboardHttpsUrl.TrimEnd('/')
+            : options.PortableHttpsPort > 0 ? $"https://{request.Host.Host}:{options.PortableHttpsPort}"
+            : null;
+
         var setupPath = Path.Combine(app.Environment.ContentRootPath, PackageFolder, SetupFileName);
         var version = typeof(InstallEndpoints).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
+        // 에이전트는 HTTPS 인증서를 등록한 뒤에야 신뢰하므로, 대시보드를 HTTPS로 열었어도 HTTP 주소를 알려준다
         string ServerUrl(HttpRequest request) =>
-            (string.IsNullOrWhiteSpace(options.PublicUrl) ? $"{request.Scheme}://{request.Host}" : options.PublicUrl).TrimEnd('/');
+            (!string.IsNullOrWhiteSpace(options.PublicUrl) ? options.PublicUrl
+            : request.IsHttps && options.PortableHttpPort > 0 ? $"http://{request.Host.Host}:{options.PortableHttpPort}"
+            : $"{request.Scheme}://{request.Host}").TrimEnd('/');
 
         var api = app.MapGroup("/api/install");
 
         api.MapGet("/info", (HttpRequest request) =>
             new InstallInfo(ServerUrl(request), version, File.Exists(setupPath), $"/api/install/{SetupFileName}",
-                string.IsNullOrWhiteSpace(options.DashboardHttpsUrl) ? null : options.DashboardHttpsUrl.TrimEnd('/'),
-                File.Exists(CertificatePath) ? $"/api/install/{CertificateFileName}" : null,
-                File.Exists(CertificatePath) ? $"/api/install/{CertificateInstallerName}" : null,
+                HttpsUrl(request),
+                File.Exists(certificatePath) ? $"/api/install/{CertificateFileName}" : null,
+                File.Exists(certificatePath) ? $"/api/install/{CertificateInstallerName}" : null,
                 Environment.MachineName,
                 ClientIp(request)));
 
         api.MapGet($"/{CertificateFileName}", () =>
-            File.Exists(CertificatePath)
-                ? Results.File(CertificatePath, "application/x-x509-ca-cert", CertificateFileName)
+            File.Exists(certificatePath)
+                ? Results.File(certificatePath, "application/x-x509-ca-cert", CertificateFileName)
                 : Results.NotFound());
 
         // 에이전트가 없는 PC(관리자 워크스테이션)용: 더블클릭 → UAC 승인 → 서버 인증서를 신뢰 저장소에 설치
         api.MapGet($"/{CertificateInstallerName}", (HttpRequest request) =>
-            File.Exists(CertificatePath)
+            File.Exists(certificatePath)
                 ? Results.File(
                     System.Text.Encoding.UTF8.GetBytes(BuildCertificateInstaller($"{ServerUrl(request)}/api/install/{CertificateFileName}")),
                     "application/octet-stream", CertificateInstallerName)

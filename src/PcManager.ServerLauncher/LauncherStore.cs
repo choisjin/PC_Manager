@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PcManager.ServerLauncher;
 
@@ -29,11 +30,22 @@ internal sealed class InstanceConfig
     /// <summary>이름 (폴더 이름으로도 씀, 바꿀 수 없음)</summary>
     public string Name { get; set; } = "";
     public int Port { get; set; }
+    /// <summary>대시보드 HTTPS 포트. null이면 포트+1, 0이면 HTTPS 안 씀</summary>
+    public int? HttpsPort { get; set; }
     /// <summary>비우면 instances\이름\data</summary>
     public string? DataDirectory { get; set; }
     /// <summary>런처가 켜질 때 자동 시작</summary>
     public bool AutoStart { get; set; } = true;
 
+    /// <summary>실제 HTTPS 포트. 0이면 끔</summary>
+    [JsonIgnore]
+    public int ResolvedHttpsPort => HttpsPort ?? (Port < 65535 ? Port + 1 : 0);
+
+    /// <summary>이 서버가 쓰는 포트들 (HTTP, HTTPS)</summary>
+    [JsonIgnore]
+    public IEnumerable<int> Ports => ResolvedHttpsPort > 0 ? [Port, ResolvedHttpsPort] : [Port];
+
+    [JsonIgnore]
     public string ResolvedDataDirectory =>
         string.IsNullOrWhiteSpace(DataDirectory) ? LauncherPaths.DefaultDataDirectory(Name) : DataDirectory;
 }

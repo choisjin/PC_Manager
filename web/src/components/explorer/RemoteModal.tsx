@@ -462,7 +462,9 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     }
 
     // 전체 화면에서만 키보드 잠금이 가능: Alt+Tab, Win, Alt+F4, Ctrl+W 등이 로컬 대신 원격으로 간다
-    if (keyLock === 'unavailable') {
+    // 다른 화면(NPMS 포털 등) 안의 iframe이면 HTTPS여도 브라우저가 키보드 잠금을 허용하지 않는다 (최상위 창만)
+    const embedded = window.self !== window.top
+    if (keyLock === 'unavailable' || embedded) {
       // HTTP 접속: 브라우저가 Keyboard Lock API를 노출하지 않는다 → HTTPS 주소를 안내
       let https: string | null = null
       try {
@@ -471,7 +473,9 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
         // 안내만 생략
       }
       showHint(
-        https
+        embedded
+          ? `다른 화면 안에 열린 대시보드에서는 Alt+Tab·Win 키를 직접 보낼 수 없습니다. 새 창으로 여세요: ${https ?? location.origin}  (상단 '새 창에서 열기'). 지금은 위 아이콘으로 보낼 수 있습니다.`
+          : https
           ? `Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: ${https}  (인증서 경고가 뜨면 'PC 추가' 창의 인증서 설치 도구를 한 번 실행). 지금은 위 아이콘으로 보낼 수 있습니다.`
           : 'Alt+Tab·Win 키를 직접 누르려면 HTTPS(또는 localhost)로 접속해야 합니다. 지금은 위 아이콘으로 보낼 수 있습니다.',
       )

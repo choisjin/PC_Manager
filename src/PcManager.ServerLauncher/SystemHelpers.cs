@@ -11,13 +11,13 @@ internal static class Firewall
 {
     public static string RuleName(string instanceName) => $"PC Manager Server ({instanceName})";
 
-    public static bool TryOpen(string instanceName, int port, out string? error)
+    public static bool TryOpen(string instanceName, IEnumerable<int> ports, out string? error)
     {
         // 같은 이름 규칙을 지우고 다시 만든다 (포트가 바뀐 경우)
         var name = RuleName(instanceName);
         return RunElevated(
             $"/c netsh advfirewall firewall delete rule name=\"{name}\" >nul & " +
-            $"netsh advfirewall firewall add rule name=\"{name}\" dir=in action=allow protocol=TCP localport={port}",
+            $"netsh advfirewall firewall add rule name=\"{name}\" dir=in action=allow protocol=TCP localport={string.Join(',', ports)}",
             out error);
     }
 

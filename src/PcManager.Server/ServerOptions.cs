@@ -27,6 +27,15 @@ public class ServerOptions
     /// <summary>업데이트 자동 확인 주기(분). 0이면 자동 확인 안 함(수동 확인만)</summary>
     public int UpdateCheckIntervalMinutes { get; set; } = 180;
 
+    /// <summary>포터블 실행의 HTTP 포트 (--port). 에이전트 접속 주소는 대시보드를 HTTPS로 열어도 이 HTTP 주소로 알려준다</summary>
+    public int PortableHttpPort { get; set; }
+
+    /// <summary>포터블 실행의 HTTPS 포트 (--https-port). 0이면 HTTPS 없음. 대시보드 HTTPS 주소는 요청한 호스트 이름 + 이 포트</summary>
+    public int PortableHttpsPort { get; set; }
+
+    /// <summary>에이전트·대시보드 PC에 내려줄 공개 인증서(.cer). 비우면 설치형 위치(ProgramData)</summary>
+    public string? CertificateFile { get; set; }
+
     /// <summary>--port로 띄운 포터블 실행 (설정 파일이 아니라 실행 인자로 정해짐). 서버 자가 업데이트는 하지 않는다</summary>
     public bool Portable { get; set; }
 
@@ -50,14 +59,14 @@ public static class ServerArgs
         return null;
     }
 
-    /// <summary>--port 값. 없으면 null, 잘못된 값이면 시작하지 않는다</summary>
-    public static int? Port(string[] args)
+    /// <summary>포트 인자 값. 없으면 null, 잘못된 값이면 시작하지 않는다</summary>
+    public static int? Port(string[] args, string name = "--port")
     {
-        var raw = Value(args, "--port");
+        var raw = Value(args, name);
         if (raw is null)
             return null;
         if (!int.TryParse(raw, out var port) || port is < 1 or > 65535)
-            throw new ArgumentException($"--port 값이 올바르지 않습니다: {raw} (1~65535)");
+            throw new ArgumentException($"{name} 값이 올바르지 않습니다: {raw} (1~65535)");
         return port;
     }
 }
