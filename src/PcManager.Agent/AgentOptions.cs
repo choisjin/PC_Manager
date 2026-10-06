@@ -17,8 +17,10 @@ public class AgentOptions
     /// <summary>AgentId, 기본 작업 폴더, 결과 폴더 저장 위치</summary>
     public string DataDirectory { get; set; } = DefaultDataDirectory;
 
-    public static string DefaultDataDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "PcManager", "Agent");
+    /// <remarks>Linux: CommonApplicationData가 /usr/share라 서비스 데이터 위치(/var/lib)를 직접 쓴다</remarks>
+    public static string DefaultDataDirectory => OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "PcManager", "Agent")
+        : "/var/lib/pcmanager-agent";
 
     /// <summary>연결 설정 파일 (서버 주소, 연결 여부, 태그)</summary>
     public static string InstalledConfigPath => Path.Combine(DefaultDataDirectory, "agent.json");

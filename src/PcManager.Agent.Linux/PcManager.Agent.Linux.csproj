@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Linux(Ubuntu/Debian x86_64, X11) 테스트 PC용 에이전트. 단일 실행 파일 pcmanager-agent
+    - systemd 서비스 (서버 연결, 명령·파일 처리)
+    - 원격조작·썸네일 도우미 (remote-session 모드): ffmpeg x11grab → H.264, XTest 입력
+    - 설치·제거 (install / uninstall 모드)
+    서버와의 규약·파일 처리 코드는 Windows 에이전트와 같은 소스를 공유한다 (아래 Compile Include)
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>pcmanager-agent</AssemblyName>
+    <RootNamespace>PcManager.Agent.Linux</RootNamespace>
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <!-- ICU(libicu) 없이 실행: 최소 설치 Ubuntu에서도 시작되도록. 문자열은 UTF-8이라 한글 영향 없음 -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- libX11/libXtst 호출 (LibraryImport) -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.DependencyInjection" />
+    <Using Include="Microsoft.Extensions.Hosting" />
+    <Using Include="Microsoft.Extensions.Logging" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PcManager.Shared\PcManager.Shared.csproj" />
+  </ItemGroup>
+
+  <!-- Windows 에이전트와 공유하는 플랫폼 중립 소스 (Linux 차이는 소스 안에서 OperatingSystem.IsWindows()로 분기) -->
+  <ItemGroup>
+    <Compile Include="..\PcManager.Agent\AgentOptions.cs" Link="Shared\AgentOptions.cs" />
+    <Compile Include="..\PcManager.Agent\AgentSettingsStore.cs" Link="Shared\AgentSettingsStore.cs" />
+    <Compile Include="..\PcManager.Agent\AgentStatusTracker.cs" Link="Shared\AgentStatusTracker.cs" />
+    <Compile Include="..\PcManager.Agent\AgentIdentity.cs" Link="Shared\AgentIdentity.cs" />
+    <Compile Include="..\PcManager.Agent\LocalControl.cs" Link="Shared\LocalControl.cs" />
+    <Compile Include="..\PcManager.Agent\OutboundQueue.cs" Link="Shared\OutboundQueue.cs" />
+    <Compile Include="..\PcManager.Agent\CommandRunner.cs" Link="Shared\CommandRunner.cs" />
+    <Compile Include="..\PcManager.Agent\FileTransferService.cs" Link="Shared\FileTransferService.cs" />
+    <Compile Include="..\PcManager.Agent\ServerInfoClient.cs" Link="Shared\ServerInfoClient.cs" />
+  </ItemGroup>
+</Project>

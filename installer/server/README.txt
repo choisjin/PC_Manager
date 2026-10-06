@@ -34,6 +34,19 @@
    (서버 주소는 같은 창에 표시되며 복사할 수 있습니다)
 5. 대시보드에 PC가 온라인으로 표시됩니다.
 
+Linux 테스트 PC 추가 (Ubuntu/Debian x86_64)
+1. 대시보드 Setting › [PC 추가 · 인증서] 창의 "Linux 테스트 PC" 명령을 복사합니다.
+     curl -fsSL http://서버IP:포트/api/install/linux.sh | sudo bash
+2. Linux PC 터미널에서 실행하면 필요한 프로그램(ffmpeg, xdotool, xclip, xrandr) 설치,
+   /opt/pcmanager-agent 복사, systemd 서비스(pcmanager-agent) 등록·시작까지 자동으로 합니다.
+3. 원격조작은 X11 데스크톱 세션이 필요합니다 (Ubuntu 로그인 화면 톱니바퀴 › 'Ubuntu on Xorg').
+   Wayland 세션은 화면 캡처가 막혀 있어 지원하지 않습니다. 파일 탐색·전송·명령 실행은 세션과 무관하게 됩니다.
+- 서버 주소 변경: sudo pcmanager-agent --set-server http://서버IP:포트
+- 제거: sudo pcmanager-agent --uninstall   (설정·데이터까지: --purge)
+- 로그: journalctl -u pcmanager-agent -f   (원격 도우미 오류: /tmp/pcmanager-remote.log)
+- Linux에서 안 되는 기능: 내 PC 프로그램으로 열기(대시보드 PC 기능), Ctrl+Alt+Del, 해상도 맞춤
+- 에이전트 업데이트는 Windows와 같이 대시보드 업데이트 창에서 합니다 (서버의 Linux 에이전트로 교체 후 재시작)
+
 업그레이드
 - 새 버전 zip을 풀고 같은 설치 명령을 실행합니다. 포트, DB, 결과 파일은 유지됩니다.
 - 에이전트는 테스트 PC에서 새 설치 파일을 다시 더블클릭하면 업그레이드됩니다.

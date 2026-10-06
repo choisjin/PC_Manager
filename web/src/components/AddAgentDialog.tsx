@@ -89,6 +89,25 @@ export function AddAgentDialog({ onClose }: Props) {
           런처 창에서 언제든 바꿀 수 있습니다.
         </p>
 
+        {info?.linuxInstallCommand && (
+          <>
+            <h3 className="install-subhead">Linux 테스트 PC (Ubuntu/Debian)</h3>
+            <label>
+              터미널에서 실행 (서비스 등록·필요한 프로그램 설치까지 자동)
+              <div className="server-url-row">
+                <input className="mono" readOnly value={info.linuxInstallCommand} onFocus={(e) => e.currentTarget.select()} />
+                <button type="button" onClick={() => void copyText(info.linuxInstallCommand!)}>
+                  복사
+                </button>
+              </div>
+            </label>
+            <p className="hint">
+              원격조작은 X11 데스크톱 세션이 필요합니다 (Ubuntu 로그인 화면 톱니바퀴에서 'Ubuntu on Xorg'). 서버 주소 변경:{' '}
+              <code>sudo pcmanager-agent --set-server 주소</code>
+            </p>
+          </>
+        )}
+
         {info?.httpsUrl && (
           <>
             <label>

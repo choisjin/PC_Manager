@@ -28,6 +28,10 @@ public class FileTransferService(
     {
         try
         {
+            // Linux: 드라이브가 없으므로 "내 PC" = 루트(/)
+            if (string.IsNullOrWhiteSpace(path) && !OperatingSystem.IsWindows())
+                path = "/";
+
             if (string.IsNullOrWhiteSpace(path))
             {
                 var drives = DriveInfo.GetDrives()
@@ -56,8 +60,9 @@ public class FileTransferService(
                 .ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            // 드라이브 루트의 상위는 드라이브 목록("")
-            return new DirectoryListing(directory.FullName, directory.Parent?.FullName ?? "", entries, null);
+            // 드라이브 루트의 상위는 드라이브 목록(""), Linux 루트(/)는 상위 없음
+            return new DirectoryListing(directory.FullName,
+                directory.Parent?.FullName ?? (OperatingSystem.IsWindows() ? "" : null), entries, null);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
         {
@@ -172,7 +177,9 @@ public class FileTransferService(
                     var parent = Path.GetDirectoryName(request.Path.TrimEnd('\\', '/'))
                         ?? throw new IOException("상위 폴더를 찾을 수 없습니다.");
                     var dest = Path.Combine(parent, CleanName(Require(request.Target, "새 이름")));
-                    if (!string.Equals(dest, request.Path, StringComparison.OrdinalIgnoreCase) && Exists(dest))
+                    // Linux는 대소문자를 구분하므로 a.txt → A.txt도 다른 이름
+                    var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                    if (!string.Equals(dest, request.Path, comparison) && Exists(dest))
                         throw new IOException("같은 이름이 이미 있습니다.");
                     MovePath(request.Path, dest);
                     return new FileOpResult(true, null, dest);

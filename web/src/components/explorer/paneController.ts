@@ -57,6 +57,12 @@ export interface PaneController {
   upload: () => void
 }
 
+/** 경로 구분자: Linux 경로(/로 시작)면 /, 아니면 \ */
+export const pathSep = (path: string) => (path.startsWith('/') ? '/' : '\\')
+
+/** 마지막 구분자 위치 (\ 또는 /) */
+export const lastSep = (path: string) => Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
+
 /** 윈도우 탐색기식 유형 표시 */
 export function fileTypeLabel(entry: FileEntry): string {
   if (entry.isDirectory) return '파일 폴더'
@@ -88,6 +94,17 @@ export interface Crumb {
 export function buildCrumbs(path: string): Crumb[] {
   const crumbs: Crumb[] = [{ label: '내 PC', target: '' }]
   if (!path) return crumbs
+  // Linux 경로: / › home › user
+  if (path.startsWith('/')) {
+    const parts = path.split('/').filter(Boolean)
+    crumbs.push({ label: '/', target: '/' })
+    let acc = ''
+    for (const part of parts) {
+      acc = `${acc}/${part}`
+      crumbs.push({ label: part, target: acc })
+    }
+    return crumbs
+  }
   const normalized = path.replace(/\//g, '\\')
   const parts = normalized.split('\\').filter(Boolean)
   if (parts.length === 0) return crumbs

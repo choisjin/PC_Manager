@@ -160,6 +160,16 @@ public class CommandRunner(OutboundQueue outbound, IOptions<AgentOptions> option
         if (request.JobRunId is not null)
             startInfo.Environment[AgentEnvironment.JobRunId] = request.JobRunId;
 
+        if (!OperatingSystem.IsWindows())
+        {
+            // Linux: 셸 종류와 무관하게 bash로 실행 (PowerShell은 pwsh가 있으면 pwsh)
+            var usePwsh = request.Shell == ShellKind.PowerShell && File.Exists("/usr/bin/pwsh");
+            startInfo.FileName = usePwsh ? "/usr/bin/pwsh" : "/bin/bash";
+            startInfo.ArgumentList.Add(usePwsh ? "-Command" : "-c");
+            startInfo.ArgumentList.Add(request.CommandLine);
+            return startInfo;
+        }
+
         switch (request.Shell)
         {
             case ShellKind.Cmd:
@@ -214,8 +224,8 @@ public class CommandRunner(OutboundQueue outbound, IOptions<AgentOptions> option
             }
         }
 
-        // cmd, 콘솔 프로그램이 파이프로 출력할 때 쓰는 OEM 코드 페이지 (한국어 Windows는 949)
-        return Encoding.GetEncoding((int)GetOEMCP());
+        // cmd, 콘솔 프로그램이 파이프로 출력할 때 쓰는 OEM 코드 페이지 (한국어 Windows는 949). Linux는 UTF-8
+        return OperatingSystem.IsWindows() ? Encoding.GetEncoding((int)GetOEMCP()) : new UTF8Encoding(false);
     }
 
     [DllImport("kernel32.dll")]

@@ -32,7 +32,7 @@ function loadColumns(): ColumnVisibility {
     return DEFAULT_COLUMNS
   }
 }
-import { fileTypeLabel, type PaneController, sortEntries, type SortKey, type ViewMode, type ColumnVisibility, type OptionalColumn } from './paneController'
+import { fileTypeLabel, lastSep, pathSep, type PaneController, sortEntries, type SortKey, type ViewMode, type ColumnVisibility, type OptionalColumn } from './paneController'
 import { SplitCompressModal } from './SplitCompressModal'
 import { RemoteModal } from './RemoteModal'
 import { TerminalModal } from './TerminalModal'
@@ -99,7 +99,7 @@ const formatFileDate = (iso: string) => {
 }
 
 const joinPath = (directory: string, name: string) =>
-  /[\\/]$/.test(directory) ? directory + name : `${directory}\\${name}`
+  /[\\/]$/.test(directory) ? directory + name : `${directory}${pathSep(directory)}${name}`
 
 const toMessage = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
@@ -514,7 +514,7 @@ export function ExplorerPane({
   }
   /** 다른 폴더로 압축 풀기: 경로를 입력받는다 */
   const extractTo = (archive: string, entries: FileEntry[]) => {
-    const parent = archive.slice(0, archive.lastIndexOf('\\')) || archive
+    const parent = archive.slice(0, lastSep(archive)) || archive
     const dest = window.prompt('압축을 풀 폴더 (이 PC 안의 경로, 없으면 만듭니다)', parent)
     if (dest?.trim()) extract(archive, entries, dest.trim())
   }
@@ -617,7 +617,7 @@ export function ExplorerPane({
       const parent = item.path.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '')
       if (samePath(parent, targetFolder)) continue // 같은 위치
       const norm = item.path.replace(/[\\/]+$/, '').toLowerCase()
-      if (item.isDir && (samePath(item.path, targetFolder) || `${targetFolder.replace(/[\\/]+$/, '').toLowerCase()}`.startsWith(`${norm}\\`))) {
+      if (item.isDir && (samePath(item.path, targetFolder) || `${targetFolder.replace(/[\\/]+$/, '').toLowerCase()}`.startsWith(`${norm}${pathSep(norm)}`))) {
         errors.push(`${item.name}: 자기 자신 안으로 이동할 수 없습니다`)
         continue
       }
@@ -844,7 +844,7 @@ export function ExplorerPane({
   const buildArchiveMenu = (targets: FileEntry[]): MenuItem[] => {
     const archive = archivePath!
     const files = targets.filter((t) => !t.isDirectory)
-    const archiveFolder = archive.slice(0, archive.lastIndexOf('\\')) || archive
+    const archiveFolder = archive.slice(0, lastSep(archive)) || archive
     const items: MenuItem[] = []
     if (targets.length === 1 && !targets[0].isDirectory) {
       const kind = viewerKind(targets[0].name)
@@ -882,8 +882,8 @@ export function ExplorerPane({
       else if (t.size <= 5 * 1024 * 1024 && !isArchiveFile(t.name) && !isVideoFile(t.name))
         items.push({ label: '내려받지 않고 텍스트로 편집', onClick: () => openViewer(t, 'text') })
       if (isArchiveFile(t.name)) {
-        const folderOf = t.fullPath.slice(0, t.fullPath.lastIndexOf('\\'))
-        const sub = `${folderOf}\\${archiveBaseName(t.name)}`
+        const folderOf = t.fullPath.slice(0, lastSep(t.fullPath))
+        const sub = `${folderOf}${pathSep(t.fullPath)}${archiveBaseName(t.name)}`
         items.push({ label: '압축 파일 열기 (폴더처럼 보기)', onClick: () => navigate(t.fullPath) })
         items.push({ label: `압축 풀기 → '${archiveBaseName(t.name)}' 폴더에`, onClick: () => extract(t.fullPath, [], sub) })
         items.push({ label: '압축 풀기 → 여기에', onClick: () => extract(t.fullPath, [], folderOf) })

@@ -365,6 +365,8 @@ export interface InstallInfo {
   serverMachineName: string | null
   /** 대시보드를 연 이 PC의 IP. 이 IP를 가진 에이전트도 Remote 모드에서 숨긴다. 서버 PC에서 열면 null */
   clientIp: string | null
+  /** Linux 테스트 PC에서 실행할 설치 한 줄 (서버에 Linux 에이전트가 없으면 null) */
+  linuxInstallCommand: string | null
 }
 
 export const isActiveRun = (state: RunState) => state === 'Pending' || state === 'Running'

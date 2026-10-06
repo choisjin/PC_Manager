@@ -3975,3 +3975,10 @@ th.sortable:hover {
   align-items: center;
   justify-content: space-between;
 }
+
+/* PC 추가 창: Linux 설치 안내 제목 */
+.install-subhead {
+  margin: 16px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}

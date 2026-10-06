@@ -8,6 +8,7 @@
   - PcManager-Server-<버전>.zip     : 서버 + 대시보드 + 에이전트 설치 파일 + 설치 스크립트
   - PcManager-Agent-Setup-<버전>.exe : 테스트 PC용 더블클릭 설치 파일 (단독 배포용)
   - PcManager-ServerLauncher-<버전>.exe : 한 PC에서 서버 여러 개를 실행·업데이트하는 런처
+  - PcManager-Agent-Linux-<버전>      : Linux(Ubuntu/Debian x86_64) 테스트 PC용 에이전트
 
   에이전트는 단일 실행 파일 하나로 설치/서비스/런처를 모두 담당합니다.
   필요: .NET 10 SDK, Node.js 20 이상. 결과물은 .NET 런타임 없이 실행됩니다.
@@ -87,6 +88,16 @@ dotnet publish (Join-Path $root 'src/PcManager.Agent') @publishArgs `
 $setupExe = Join-Path $OutputDir "PcManager-Agent-Setup-$Version.exe"
 Copy-Item -Path (Join-Path $agentPublishDir 'PcManager.Agent.exe') -Destination $setupExe -Force
 
+Write-Step 'Linux 에이전트 게시 (Ubuntu/Debian x86_64 단일 실행 파일)'
+$linuxAgentPublishDir = Join-Path $staging 'linux-agent-publish'
+# 같은 배포 옵션에서 런타임만 linux-x64로
+$linuxPublishArgs = $publishArgs -replace "^$Runtime$", 'linux-x64'
+dotnet publish (Join-Path $root 'src/PcManager.Agent.Linux') @linuxPublishArgs `
+    -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -o $linuxAgentPublishDir
+$linuxAgent = Join-Path $OutputDir "PcManager-Agent-Linux-$Version"
+Copy-Item -Path (Join-Path $linuxAgentPublishDir 'pcmanager-agent') -Destination $linuxAgent -Force
+
 Write-Step '서버 런처 게시 (단일 exe: 한 PC에서 서버 여러 개 실행·일괄 업데이트)'
 $launcherPublishDir = Join-Path $staging 'launcher-publish'
 dotnet publish (Join-Path $root 'src/PcManager.ServerLauncher') @publishArgs `
@@ -106,6 +117,8 @@ Copy-Item -Path (Join-Path $root 'web/dist') -Destination (Join-Path $serverDir 
 # 대시보드 'PC 추가'에서 내려받는 설치 파일
 $serverAgentDir = New-Item -ItemType Directory -Path (Join-Path $serverDir 'agent') -Force
 Copy-Item -Path $setupExe -Destination (Join-Path $serverAgentDir 'PcManager-Agent-Setup.exe')
+# Linux 테스트 PC 설치(curl … /api/install/linux.sh | sudo bash)와 자가 업데이트가 받는 파일
+Copy-Item -Path $linuxAgent -Destination (Join-Path $serverAgentDir 'pcmanager-agent-linux')
 
 Copy-Item -Path (Join-Path $root 'installer/server/*') -Destination $serverPackageDir
 
@@ -116,5 +129,5 @@ Compress-Archive -Path (Join-Path $serverPackageDir '*') -DestinationPath $serve
 Remove-Item $staging -Recurse -Force
 
 Write-Step '완료'
-Get-Item $serverZip, $setupExe, $launcherExe |
+Get-Item $serverZip, $setupExe, $launcherExe, $linuxAgent |
     Format-Table Name, @{ Name = 'MB'; Expression = { [math]::Round($_.Length / 1MB, 1) } } -AutoSize
