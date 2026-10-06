@@ -283,7 +283,7 @@ public class UpdateService
         if (_options.Portable)
         {
             // 설치기는 Windows 서비스(PcManagerServer)를 고치므로 포터블 실행에는 쓸 수 없다
-            error = "포터블 실행(--port) 중인 서버는 여기서 업데이트할 수 없습니다. 서버를 띄운 포털에서 업데이트하세요.";
+            error = "포터블 실행(--port) 중인 서버는 여기서 업데이트할 수 없습니다. 서버 런처(PcManager-ServerLauncher)의 [일괄 업데이트]를 쓰세요.";
             return false;
         }
         lock (_lock)

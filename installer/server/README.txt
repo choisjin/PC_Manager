@@ -45,7 +45,18 @@
 - 데이터:   C:\ProgramData\PcManager\Server\data (DB, 실행 로그, 결과 파일)
 - 로그:     이벤트 뷰어 > Windows 로그 > 응용 프로그램 (원본: PcManager.Server)
 
-포터블 실행 (서비스 설치 없이, 프로젝트별로 여러 개)
+한 PC에서 서버 여러 개 (프로젝트별) — 서버 런처
+- 릴리스의 PcManager-ServerLauncher-버전.exe를 쓰기 가능한 빈 폴더(예: D:\PcManagerServers)에 두고 실행합니다.
+  서비스 설치(install-server.ps1)는 필요 없습니다.
+- [일괄 업데이트]로 최신 서버를 받고, [서버 추가]로 이름·포트를 정해 서버를 만듭니다.
+  (방화벽 포트는 추가할 때 관리자 승인 한 번으로 열림)
+- 서버마다 데이터는 instances\이름\data, 출력은 instances\이름\server.log 에 남습니다.
+- 서버들은 런처의 자식 프로세스입니다. 창을 닫으면 트레이로 내려가고, 런처를 종료하면 서버도 모두 종료됩니다.
+  "Windows 로그인 시 런처 실행"을 켜 두면 로그인할 때 자동 시작이 켜진 서버들이 다시 뜹니다.
+- 비정상 종료된 서버는 자동으로 다시 시작합니다 (5분 안에 3번 반복되면 멈추고 오류 표시).
+- 인터넷이 막힌 곳에서는 [zip으로 업데이트…]에 PcManager-Server-버전.zip을 지정합니다.
+
+포터블 실행 (런처 없이 직접)
 - server 폴더의 PcManager.Server.exe를 포트를 지정해 실행합니다.
 
    PcManager.Server.exe --port 5070 --data D:\PcManager\프로젝트A
@@ -53,7 +64,7 @@
    - --port: 대시보드·에이전트 접속 포트 (HTTP만, 방화벽은 직접 열어야 함)
    - --data: DB·로그·결과 파일 폴더 (생략하면 exe 폴더의 App_Data)
    - 설치형 설정(server.json)을 읽지 않으므로 같은 PC의 설치형 서버·다른 포터블 서버와 겹치지 않습니다.
-   - 대시보드의 서버 업데이트 버튼은 동작하지 않습니다. 새 버전 zip의 server 폴더로 교체하세요.
+   - 대시보드의 서버 업데이트 버튼은 동작하지 않습니다. 런처의 [일괄 업데이트]를 쓰거나 새 버전 zip의 server 폴더로 교체하세요.
 
 제거
    powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall-server.ps1

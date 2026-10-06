@@ -2,6 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/PcManager.Agent/PcManager.Agent.csproj" />
     <Project Path="src/PcManager.Server/PcManager.Server.csproj" />
+    <Project Path="src/PcManager.ServerLauncher/PcManager.ServerLauncher.csproj" />
     <Project Path="src/PcManager.Shared/PcManager.Shared.csproj" />
   </Folder>
 </Solution>

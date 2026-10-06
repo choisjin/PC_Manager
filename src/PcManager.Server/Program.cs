@@ -25,6 +25,8 @@ builder.Services.AddWindowsService(o => o.ServiceName = "PcManagerServer");
 
 if (portable)
 {
+    // 런처가 출력을 받아 로그 파일로 남긴다 (기본 OEM 코드 페이지면 한글이 깨짐)
+    try { Console.OutputEncoding = Encoding.UTF8; } catch (IOException) { }
     builder.WebHost.UseUrls($"http://*:{portablePort}");
     if (ServerArgs.Value(args, "--data") is { Length: > 0 } dataDir)
         builder.Configuration["Server:DataDirectory"] = dataDir;
@@ -149,6 +151,7 @@ app.MapSharedFolderApi();
 app.MapOrgApi();
 app.MapDownloadLinkApi();
 app.MapInstallApi(serverOptions);
+app.MapLauncherApi();
 
 // 설치 파일은 크므로 요청 크기 제한과 무관하게 스트리밍 (다운로드만, 업로드 아님)
 

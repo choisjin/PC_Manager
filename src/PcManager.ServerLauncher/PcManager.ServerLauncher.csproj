@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    PC Manager 서버 런처 (단일 실행 파일 PcManager-ServerLauncher.exe)
+    - 한 PC에서 PC Manager 서버를 여러 개(프로젝트별) 포터블 모드로 실행·중지
+    - 공용 서버 바이너리 일괄 업데이트 (GitHub 릴리스 또는 zip 파일)
+    서버들은 런처의 자식 프로세스라 런처를 끄면 함께 종료된다
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <AssemblyName>PcManager.ServerLauncher</AssemblyName>
+    <RootNamespace>PcManager.ServerLauncher</RootNamespace>
+  </PropertyGroup>
+
+</Project>

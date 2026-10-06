@@ -7,6 +7,7 @@
   artifacts 폴더에 다음을 만듭니다.
   - PcManager-Server-<버전>.zip     : 서버 + 대시보드 + 에이전트 설치 파일 + 설치 스크립트
   - PcManager-Agent-Setup-<버전>.exe : 테스트 PC용 더블클릭 설치 파일 (단독 배포용)
+  - PcManager-ServerLauncher-<버전>.exe : 한 PC에서 서버 여러 개를 실행·업데이트하는 런처
 
   에이전트는 단일 실행 파일 하나로 설치/서비스/런처를 모두 담당합니다.
   필요: .NET 10 SDK, Node.js 20 이상. 결과물은 .NET 런타임 없이 실행됩니다.
@@ -86,6 +87,14 @@ dotnet publish (Join-Path $root 'src/PcManager.Agent') @publishArgs `
 $setupExe = Join-Path $OutputDir "PcManager-Agent-Setup-$Version.exe"
 Copy-Item -Path (Join-Path $agentPublishDir 'PcManager.Agent.exe') -Destination $setupExe -Force
 
+Write-Step '서버 런처 게시 (단일 exe: 한 PC에서 서버 여러 개 실행·일괄 업데이트)'
+$launcherPublishDir = Join-Path $staging 'launcher-publish'
+dotnet publish (Join-Path $root 'src/PcManager.ServerLauncher') @publishArgs `
+    -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+    -o $launcherPublishDir
+$launcherExe = Join-Path $OutputDir "PcManager-ServerLauncher-$Version.exe"
+Copy-Item -Path (Join-Path $launcherPublishDir 'PcManager.ServerLauncher.exe') -Destination $launcherExe -Force
+
 Write-Step '서버 게시'
 $serverPackageDir = Join-Path $staging 'server-package'
 $serverDir = Join-Path $serverPackageDir 'server'
@@ -107,5 +116,5 @@ Compress-Archive -Path (Join-Path $serverPackageDir '*') -DestinationPath $serve
 Remove-Item $staging -Recurse -Force
 
 Write-Step '완료'
-Get-Item $serverZip, $setupExe |
+Get-Item $serverZip, $setupExe, $launcherExe |
     Format-Table Name, @{ Name = 'MB'; Expression = { [math]::Round($_.Length / 1MB, 1) } } -AutoSize
