@@ -26,7 +26,13 @@ public static class RemoteEndpoints
     {
         app.Map("/api/agents/{agentId}/remote", HandleViewerAsync);
         app.Map("/api/agent/remote/{sessionId}", HandleAgentAsync);
-        app.MapPost("/api/agents/{agentId}/remote/cad", SendSecureAttentionAsync);
+        app.MapPost("/api/agents/{agentId}/remote/cad",
+            (string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+                InvokeAgentAsync(agentId, AgentClientMethods.SendSecureAttention, registry, agentHub, ct));
+        // Linux PC: Xorg로 바꾸고 재부팅 (Wayland에서는 원격조작 불가)
+        app.MapPost("/api/agents/{agentId}/linux/x11",
+            (string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+                InvokeAgentAsync(agentId, AgentClientMethods.SwitchToX11, registry, agentHub, ct));
     }
 
     private static async Task HandleViewerAsync(
@@ -274,7 +280,8 @@ public static class RemoteEndpoints
         await pending.Done.Task.WaitAsync(context.RequestAborted).ContinueWith(_ => { }, TaskScheduler.Default);
     }
 
-    private static async Task<IResult> SendSecureAttentionAsync(string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct)
+    /// <summary>에이전트의 () → string? 오류 메서드를 부른다 (null이면 204, 오류면 400)</summary>
+    private static async Task<IResult> InvokeAgentAsync(string agentId, string method, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct)
     {
         if (!registry.TryGetConnection(agentId, out var connectionId))
             return Results.Conflict("PC가 오프라인입니다.");
@@ -282,7 +289,7 @@ public static class RemoteEndpoints
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(StartTimeout);
-            var error = await agentHub.Clients.Client(connectionId).InvokeAsync<string?>(AgentClientMethods.SendSecureAttention, cts.Token);
+            var error = await agentHub.Clients.Client(connectionId).InvokeAsync<string?>(method, cts.Token);
             return error is null ? Results.NoContent() : Results.BadRequest(error);
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)

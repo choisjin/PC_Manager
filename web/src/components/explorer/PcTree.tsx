@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { type Agent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type SharedFolder } from '../../api'
+import { api, type Agent, isLinuxAgent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type SharedFolder } from '../../api'
 import { AddShareModal } from './AddShareModal'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { Icon } from './Icon'
@@ -419,6 +419,27 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
                 ? projectItems
                 : [{ label: '프로젝트 없음 (설정에서 추가)', disabled: true, onClick: () => {} }]),
               ...(currentPid ? [{ label: '프로젝트 해제', onClick: () => void setAgentProject(a.id, null) }] : []),
+              ...(isLinuxAgent(a)
+                ? [
+                    { separator: true },
+                    {
+                      label: 'Xorg로 전환 후 재시작 (원격조작용)…',
+                      disabled: !a.online,
+                      onClick: () => {
+                        const name = displayName(a, groups)
+                        if (!window.confirm(
+                          `'${name}'의 로그인 화면·데스크톱을 Xorg(X11)로 바꾸고 PC를 재부팅합니다.\n\n` +
+                            '원격조작은 X11에서만 됩니다 (Wayland는 화면 캡처가 막혀 있음).\n' +
+                            '로그인한 사용자의 저장하지 않은 작업은 사라집니다. 계속할까요?',
+                        )) return
+                        api
+                          .switchToX11(a.id)
+                          .then(() => window.alert(`'${name}'을(를) 재부팅합니다. 1~2분 뒤 다시 연결되면 원격조작을 열어 보세요.`))
+                          .catch((err) => window.alert(`전환하지 못했습니다: ${err instanceof Error ? err.message : String(err)}`))
+                      },
+                    },
+                  ]
+                : []),
               { separator: true },
               {
                 label: a.online ? '목록에서 삭제 (연결 끊긴 PC만)' : '목록에서 삭제…',

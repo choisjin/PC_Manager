@@ -264,6 +264,9 @@ public static class AgentClientMethods
 
     /// <summary>() → string? 오류. Ctrl+Alt+Del(SAS)을 보낸다 (서비스만 가능)</summary>
     public const string SendSecureAttention = "SendSecureAttention";
+
+    /// <summary>() → string? 오류. Linux: 로그인 관리자(GDM)의 Wayland를 끄고(Xorg 사용) 재부팅한다 (원격조작은 X11에서만 됨)</summary>
+    public const string SwitchToX11 = "SwitchToX11";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<FileOpKind>))]

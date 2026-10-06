@@ -25,7 +25,7 @@ public class LinuxRemoteControl(AgentSettingsStore settings, ILogger<LinuxRemote
 
         var display = DisplayLocator.Find();
         if (display is null)
-            return "화면(X11 데스크톱 세션)을 찾지 못했습니다. 로그인된 X11 세션이 있어야 합니다 (Wayland는 지원하지 않음).";
+            return "화면(X11 데스크톱 세션)을 찾지 못했습니다. Wayland 세션이면 PC 목록에서 이 PC를 우클릭 › 'Xorg로 전환 후 재시작'을 누르세요.";
 
         var server = new Uri(current.ServerUrl);
         var url = new UriBuilder(server)

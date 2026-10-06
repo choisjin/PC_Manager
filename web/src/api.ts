@@ -349,6 +349,9 @@ export interface Thumbnail {
   at: string
 }
 
+/** Windows 에이전트의 OS 설명은 'Microsoft Windows …', Linux는 배포판 이름 (예: Ubuntu 24.04 LTS) */
+export const isLinuxAgent = (agent: Agent) => !!agent.osVersion && !agent.osVersion.startsWith('Microsoft Windows')
+
 export interface InstallInfo {
   serverUrl: string
   serverVersion: string
@@ -528,6 +531,8 @@ export const api = {
     `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/agents/${agentId}/remote${userId ? `?user=${encodeURIComponent(userId)}` : ''}`,
   /** Ctrl+Alt+Del 보내기 (에이전트 서비스가 SAS 전송) */
   sendCtrlAltDel: (agentId: string) => request<void>(`/api/agents/${agentId}/remote/cad`, { method: 'POST' }),
+  /** Linux PC: Wayland를 끄고(Xorg) 재부팅 */
+  switchToX11: (agentId: string) => request<void>(`/api/agents/${agentId}/linux/x11`, { method: 'POST' }),
 
   /** 파일을 브라우저 다운로드 폴더로 바로 내려받는 URL (첨부) */
   downloadUrl: (agentId: string, path: string) =>

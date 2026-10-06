@@ -155,6 +155,7 @@ public class LinuxAgentWorker(
         connection.On<string, string?>(AgentClientMethods.StartThumbnail,
             sessionId => Task.Run(() => remote.Start(sessionId, thumbnail: true)));
         connection.On<string?>(AgentClientMethods.SendSecureAttention, () => NotSupported);
+        connection.On<string?>(AgentClientMethods.SwitchToX11, () => X11Session.SwitchAndReboot(logger));
 
         connection.On<string?>(nameof(IAgentClient.UpdateAgent), _ => updater.Start());
 
