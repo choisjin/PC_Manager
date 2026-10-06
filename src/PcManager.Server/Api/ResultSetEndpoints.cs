@@ -27,6 +27,7 @@ public static class ResultSetEndpoints
     public record UpdateResultSetRequest(string? Name, JsonElement? Config);
 
     public record TrimRequest(string Path, double Start, double End);
+    public record PrepareRequest(string Path, bool Convert);
 
     public static void MapResultSetApi(this WebApplication app)
     {
@@ -111,6 +112,26 @@ public static class ResultSetEndpoints
                 timeout.CancelAfter(TimeSpan.FromMinutes(31));
                 var result = await agentHub.Clients.Client(connectionId)
                     .InvokeAsync<VideoTrimResult>(AgentClientMethods.TrimVideo, request.Path, request.Start, request.End, timeout.Token);
+                return result.Error is null ? Results.Ok(result) : Results.BadRequest(result.Error);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                return Results.Problem($"에이전트 호출 실패 (에이전트를 업데이트하세요): {ex.Message}", statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+
+        // 영상 재생 준비: 길이·fps 읽기, convert면 탐색 가능한 재생용 사본 (테스트 PC 캐시)
+        app.MapPost("/api/agents/{agentId}/video/prepare", async (string agentId, PrepareRequest request, AgentRegistry registry,
+            IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+        {
+            if (!registry.TryGetConnection(agentId, out var connectionId))
+                return Results.Conflict("PC가 오프라인입니다.");
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromMinutes(61));
+                var result = await agentHub.Clients.Client(connectionId)
+                    .InvokeAsync<VideoPrepareResult>(AgentClientMethods.PrepareVideo, request.Path, request.Convert, timeout.Token);
                 return result.Error is null ? Results.Ok(result) : Results.BadRequest(result.Error);
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)

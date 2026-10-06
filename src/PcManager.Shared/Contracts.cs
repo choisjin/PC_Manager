@@ -137,6 +137,13 @@ public record EditCleanResult(int Deleted, long Bytes, int InUse, int Pending, E
 /// <param name="OutputPath">자른 영상 경로 (원래 영상과 같은 폴더). 실패면 null</param>
 public record VideoTrimResult(string? OutputPath, string? Error);
 
+/// <summary>
+/// 결과 확인 도구의 영상 재생 준비. PlayPath: 브라우저가 재생·탐색할 파일 (원본이 그대로 되면 원본, 아니면 변환한 캐시 파일, 아직 변환 전이면 null).
+/// NeedsConvert: 길이·탐색 색인이 없거나(브라우저 녹화 webm 등) 브라우저가 못 푸는 코덱이라 변환이 필요함.
+/// Duration·Fps: ffmpeg가 읽은 값 (모르면 null)
+/// </summary>
+public record VideoPrepareResult(string? PlayPath, bool NeedsConvert, double? Duration, double? Fps, string? Note, string? Error);
+
 /// <summary>원격조작 WebSocket 경로</summary>
 public static class AgentRemotePaths
 {
@@ -276,6 +283,8 @@ public static class AgentClientMethods
 
     /// <summary>(string path, double startSec, double endSec) → VideoTrimResult. 영상 구간을 ffmpeg로 잘라 원래 영상 폴더에 저장 (결과 확인 도구)</summary>
     public const string TrimVideo = "TrimVideo";
+    /// <summary>(string path, bool convert) → VideoPrepareResult. 영상 길이·fps를 읽고, convert면 탐색 가능한 재생용 사본을 만든다 (캐시)</summary>
+    public const string PrepareVideo = "PrepareVideo";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<FileOpKind>))]

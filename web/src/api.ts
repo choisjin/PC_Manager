@@ -350,6 +350,16 @@ export interface Thumbnail {
 }
 
 // ── 결과 확인 도구 (Result·영상·이미지 맞춰 보기)
+/** 영상 재생 준비 결과. playPath: 재생할 파일 (원본 또는 탐색 가능한 사본, 변환 전이면 null) */
+export interface VideoPrepareResult {
+  playPath: string | null
+  needsConvert: boolean
+  duration: number | null
+  fps: number | null
+  note: string | null
+  error: string | null
+}
+
 export interface ResultSetBackup {
   state: 'running' | 'done' | 'failed'
   filesDone: number
@@ -603,6 +613,12 @@ export const api = {
     request<{ outputPath: string | null; error: string | null }>(`/api/agents/${agentId}/video/trim`, {
       method: 'POST',
       body: JSON.stringify({ path, start, end }),
+    }),
+  /** 영상 길이·fps 읽기. convert면 탐색 가능한 재생용 사본을 테스트 PC에 만든다 (캐시) */
+  prepareVideo: (agentId: string, path: string, convert: boolean) =>
+    request<VideoPrepareResult>(`/api/agents/${agentId}/video/prepare`, {
+      method: 'POST',
+      body: JSON.stringify({ path, convert }),
     }),
   /** '원격 사용 중' 표시가 남았을 때 지우기 */
   clearRemoteUsage: (agentId: string) => request<void>(`/api/remote-usage/${agentId}`, { method: 'DELETE' }),

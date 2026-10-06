@@ -18,15 +18,23 @@ interface Props {
   /** 도구 모음 오른쪽 추가 버튼 (자르기 등) */
   extra?: ReactNode
   error?: string | null
+  /** 영상 대신 보여 줄 안내 (재생용 영상 만드는 중 등) */
+  waiting?: string | null
+  /** ffmpeg가 읽은 길이 (브라우저가 길이를 모르는 영상: Infinity) */
+  durationHint?: number | null
+  /** ffmpeg가 읽은 fps (한 프레임 이동 간격) */
+  fps?: number | null
 }
 
-export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, onSwitch, extra, error }: Props) {
+export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, onSwitch, extra, error, waiting, durationHint, fps }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [jump, setJump] = useState(1)
   const [time, setTime] = useState(0)
-  const [duration, setDuration] = useState(0)
+  const [mediaDuration, setMediaDuration] = useState(0)
+  // 브라우저가 길이를 모르면(Infinity) ffmpeg가 읽은 길이
+  const duration = Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : (durationHint ?? 0)
   const [osd, setOsd] = useState<string | null>(null)
   const osdTimer = useRef(0)
   const frameRef = useRef(1 / 30)
@@ -37,7 +45,16 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
     osdTimer.current = window.setTimeout(() => setOsd(null), 700)
   }
 
-  // 프레임 길이: 재생 중 실제 프레임 간격의 중앙값 (기본 30fps)
+  // 영상이 바뀌면 이전 영상의 위치·길이를 지운다
+  useEffect(() => {
+    setTime(0)
+    setMediaDuration(0)
+  }, [src])
+
+  // 프레임 길이: ffmpeg가 읽은 fps, 없으면 재생 중 실제 프레임 간격의 중앙값 (기본 30fps)
+  useEffect(() => {
+    if (fps) frameRef.current = 1 / fps
+  }, [fps, src])
   useEffect(() => {
     const video = videoRef.current as (HTMLVideoElement & { requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number }) | null
     if (!video?.requestVideoFrameCallback) return
@@ -46,7 +63,7 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
     let stop = false
     const tick = (_: number, meta: { mediaTime: number }) => {
       if (stop) return
-      if (last >= 0 && video.playbackRate === 1) {
+      if (!fps && last >= 0 && video.playbackRate === 1) {
         const d = meta.mediaTime - last
         if (d > 0.005 && d < 0.2) deltas.push(d)
         if (deltas.length >= 15) {
@@ -61,7 +78,7 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
     return () => {
       stop = true
     }
-  }, [src, videoRef])
+  }, [src, videoRef, fps])
 
   const applySpeed = (next: number) => {
     const video = videoRef.current
@@ -80,7 +97,8 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
   const seekBy = (seconds: number) => {
     const video = videoRef.current
     if (!video) return
-    video.currentTime = Math.max(0, Math.min((video.duration || 0) - 0.05, video.currentTime + seconds))
+    const target = video.currentTime + seconds
+    video.currentTime = Math.max(0, duration > 0 ? Math.min(duration - 0.05, target) : target)
   }
 
   const togglePlay = () => {
@@ -158,14 +176,30 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
               onTime(e.currentTarget.currentTime)
             }}
             onLoadedMetadata={(e) => {
-              setDuration(e.currentTarget.duration)
-              e.currentTarget.playbackRate = speed || 1
-              onLoaded(e.currentTarget.duration)
+              const video = e.currentTarget
+              video.playbackRate = speed || 1
+              if (!Number.isFinite(video.duration) && !durationHint) {
+                // 길이가 없는 영상(브라우저 녹화 webm 등): 끝으로 한 번 보내면 브라우저가 길이를 알아낸다
+                const restore = () => {
+                  video.removeEventListener('durationchange', restore)
+                  if (Number.isFinite(video.duration)) setMediaDuration(video.duration)
+                  video.currentTime = 0
+                  onLoaded(video.duration)
+                }
+                video.addEventListener('durationchange', restore)
+                video.currentTime = 1e9
+                return
+              }
+              setMediaDuration(video.duration)
+              onLoaded(video.duration)
+            }}
+            onDurationChange={(e) => {
+              if (Number.isFinite(e.currentTarget.duration)) setMediaDuration(e.currentTarget.duration)
             }}
             onClick={togglePlay}
           />
         ) : (
-          <div className="rv-video-empty muted">영상이 없습니다</div>
+          <div className="rv-video-empty muted">{waiting ?? '영상이 없습니다'}</div>
         )}
         {osd && <div className="rv-osd">{osd}</div>}
         {error && <div className="rv-video-error">{error}</div>}

@@ -18,6 +18,8 @@ import { VideoTransport } from './VideoTransport'
 interface ViewConfig {
   mapping: Partial<ResultMapping>
   sync: SyncState
+  /** 원본 영상 → 재생용 사본 (탐색 색인을 넣거나 변환한 것). 셋에 사본을 백업해 PC가 꺼져 있어도 탐색되게 */
+  playPaths?: Record<string, { playPath: string; duration: number | null; fps: number | null }>
 }
 
 interface Source {
@@ -35,7 +37,18 @@ interface RawVideo {
   modified: number | null
   size: number | null
   metaStarted: string | null
+  /** 브라우저가 재생할 파일 (원본 또는 재생용 사본) */
+  playPath: string | null
+  fps: number | null
+  /** checking: 길이·형식 확인 중 · converting: 재생용 사본 만드는 중 · ready · failed */
+  prep: 'checking' | 'needs-convert' | 'converting' | 'ready' | 'failed'
+  prepNote: string | null
 }
+
+const newRawVideo = (p: string): RawVideo => ({
+  path: p, name: baseName(p), duration: null, modified: null, size: null, metaStarted: null,
+  playPath: null, fps: null, prep: 'checking', prepNote: null,
+})
 
 interface Props {
   agentId: string
@@ -321,13 +334,12 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
   const [rawText, setRawText] = useState<string | null>(null)
   const [mapping, setMapping] = useState<Partial<ResultMapping>>(savedConfig?.mapping ?? {})
   const [sync, setSync] = useState<SyncState>(savedConfig?.sync ?? emptySync())
-  const [rawVideos, setRawVideos] = useState<RawVideo[]>(() =>
-    source.videoPaths.map((p) => ({ path: p, name: baseName(p), duration: null, modified: null, size: null, metaStarted: null })))
+  const [rawVideos, setRawVideos] = useState<RawVideo[]>(() => source.videoPaths.map(newRawVideo))
   const [current, setCurrent] = useState<string | null>(source.videoPaths[0] ?? null)
   // 영상이 늘어나면(자른 영상 '목록에 추가') 목록에 넣는다
   useEffect(() => {
     setRawVideos((list) => source.videoPaths.map((p) =>
-      list.find((v) => v.path === p) ?? { path: p, name: baseName(p), duration: null, modified: null, size: null, metaStarted: null }))
+      list.find((v) => v.path === p) ?? newRawVideo(p)))
   }, [source.videoPaths])
   const [images, setImages] = useState<FileEntry[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -369,11 +381,16 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
   const sortedRows = useMemo(() => rows.filter((r) => r.time !== null).sort((a, b) => a.time! - b.time! || a.index - b.index), [rows])
   const firstTime = sortedRows[0]?.time ?? null
 
-  // 영상: 수정 시각·크기(목록), 메타 파일(started_at), 길이(메타데이터)
+  const updateVideo = useCallback(
+    (path: string, patch: Partial<RawVideo>) => setRawVideos((list) => list.map((x) => (x.path === path ? { ...x, ...patch } : x))),
+    [],
+  )
+
+  // 영상: 수정 시각·크기(목록), 메타 파일(started_at), 길이·fps·형식(테스트 PC의 ffmpeg)
   useEffect(() => {
     let alive = true
     for (const v of source.videoPaths) {
-      const update = (patch: Partial<RawVideo>) => alive && setRawVideos((list) => list.map((x) => (x.path === v ? { ...x, ...patch } : x)))
+      const update = (patch: Partial<RawVideo>) => alive && updateVideo(v, patch)
       api.listFiles(source.agentId, dirName(v)).then(
         (l) => {
           const entry = l.entries.find((e) => e.fullPath === v || e.name === baseName(v))
@@ -384,20 +401,49 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
       fetch(api.mediaUrl(source.agentId, `${v}.meta.json`))
         .then((res) => (res.ok ? res.json() : null))
         .then((meta: { started_at?: string } | null) => meta?.started_at && update({ metaStarted: meta.started_at }), () => {})
-      const probe = document.createElement('video')
-      probe.preload = 'metadata'
-      probe.muted = true
-      probe.onloadedmetadata = () => {
-        update({ duration: probe.duration })
-        probe.removeAttribute('src')
-        probe.load()
-      }
-      probe.src = fileUrl(v)
+      api.prepareVideo(source.agentId, v, false).then(
+        (r) => update(r.playPath
+          ? { playPath: r.playPath, duration: r.duration, fps: r.fps, prep: 'ready', prepNote: r.note }
+          : { duration: r.duration, fps: r.fps, prep: 'needs-convert', prepNote: r.note }),
+        () => {
+          // PC가 꺼졌거나 옛 에이전트: 셋에 백업한 재생용 사본 → 원본을 브라우저가 읽는 만큼
+          const saved = savedConfig?.playPaths?.[v]
+          if (saved && set?.files[saved.playPath]) {
+            update({ playPath: saved.playPath, duration: saved.duration, fps: saved.fps, prep: 'ready' })
+            return
+          }
+          update({ playPath: v, prep: 'ready' })
+          const probe = document.createElement('video')
+          probe.preload = 'metadata'
+          probe.muted = true
+          probe.onloadedmetadata = () => {
+            if (Number.isFinite(probe.duration)) update({ duration: probe.duration })
+            probe.removeAttribute('src')
+            probe.load()
+          }
+          probe.src = fileUrl(v)
+        },
+      )
     }
     return () => {
       alive = false
     }
-  }, [source.agentId, source.videoPaths, fileUrl])
+    // savedConfig·set은 셋을 열 때 정해지고 그 뒤 바뀌어도 다시 확인할 필요 없음
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source.agentId, source.videoPaths, fileUrl, updateVideo])
+
+  // 지금 영상이 탐색이 안 되는 형식이면 테스트 PC에서 재생용 사본을 만든다 (한 번 만들면 캐시)
+  const currentRaw = rawVideos.find((v) => v.path === current) ?? null
+  useEffect(() => {
+    if (!current || currentRaw?.prep !== 'needs-convert') return
+    updateVideo(current, { prep: 'converting' })
+    api.prepareVideo(source.agentId, current, true).then(
+      (r) => updateVideo(current, r.playPath
+        ? { playPath: r.playPath, duration: r.duration, fps: r.fps, prep: 'ready', prepNote: r.note }
+        : { prep: 'failed', prepNote: r.error ?? r.note }),
+      (err) => updateVideo(current, { prep: 'failed', prepNote: toMessage(err) }),
+    )
+  }, [current, currentRaw?.prep, source.agentId, updateVideo])
 
   const videos: VideoInfo[] = useMemo(
     () => rawVideos.map((v) => {
@@ -457,7 +503,8 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
   const seekVideo = (t: number) => {
     const video = videoRef.current
     if (!video) return
-    const max = Number.isFinite(video.duration) ? video.duration - 0.05 : t
+    const length = Number.isFinite(video.duration) ? video.duration : currentRaw?.duration
+    const max = length ? length - 0.05 : t
     if (t < 0 || t > max) setNotice(t < 0 ? '이 스텝은 영상 시작 전입니다' : '이 스텝은 영상이 끝난 뒤입니다')
     video.currentTime = Math.max(0, Math.min(max, t))
   }
@@ -539,14 +586,23 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
       <div className="rv-main">
         <section className="rv-left">
           <VideoTransport
-            src={current ? fileUrl(current) : null}
+            src={currentRaw?.prep === 'ready' && currentRaw.playPath ? fileUrl(currentRaw.playPath) : null}
+            waiting={
+              !currentRaw ? null
+                : currentRaw.prep === 'checking' ? '영상 확인 중…'
+                  : currentRaw.prep === 'converting' || currentRaw.prep === 'needs-convert'
+                    ? `탐색할 수 있는 재생용 영상을 테스트 PC에서 만드는 중… (${currentRaw.prepNote ?? ''}, 한 번 만들면 다시 쓰고 원본은 그대로)`
+                    : currentRaw.prep === 'failed' ? `재생용 영상을 만들지 못했습니다: ${currentRaw.prepNote ?? ''}` : null
+            }
+            durationHint={currentRaw?.duration ?? null}
+            fps={currentRaw?.fps ?? null}
             videoRef={videoRef}
             keysEnabled={dialog === null}
             error={videoError}
             onTime={onTime}
             onLoaded={(duration) => {
               setVideoError(null)
-              setRawVideos((list) => list.map((v) => (v.path === current ? { ...v, duration } : v)))
+              if (current && Number.isFinite(duration)) updateVideo(current, { duration })
               if (pendingSeek.current !== null) {
                 seekVideo(pendingSeek.current)
                 pendingSeek.current = null
@@ -673,7 +729,12 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
         <SaveDialog
           source={source}
           set={set}
-          config={{ mapping, sync }}
+          config={{
+            mapping,
+            sync,
+            playPaths: Object.fromEntries(rawVideos.filter((v) => v.playPath && v.playPath !== v.path)
+              .map((v) => [v.path, { playPath: v.playPath!, duration: v.duration, fps: v.fps }])),
+          }}
           videos={rawVideos}
           backupFiles={[...new Set([...images.map((i) => i.fullPath), ...rows.flatMap((r) => r.images.map(resolveImage))])]}
           onSaved={setSet}
@@ -1012,7 +1073,9 @@ function SaveDialog({ source, set, config, videos, backupFiles, onSaved, onClose
     setError(null)
     api.createResultSet({
       name: name.trim(), agentId: source.agentId, machineName: source.machineName, resultPath: source.resultPath,
-      videoPaths: source.videoPaths, imageDir: source.imageDir, copyVideo, config, files: backupFiles,
+      videoPaths: source.videoPaths, imageDir: source.imageDir, copyVideo, config,
+      // 영상을 백업하면 재생용 사본(탐색 색인)도 함께: PC가 꺼져 있어도 탐색되게
+      files: copyVideo ? [...backupFiles, ...Object.values(config.playPaths ?? {}).map((p) => p.playPath)] : backupFiles,
     }).then((s) => {
       setSaved(s)
       onSaved(s)
