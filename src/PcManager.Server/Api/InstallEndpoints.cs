@@ -66,7 +66,7 @@ public static class InstallEndpoints
         api.MapGet($"/{CertificateInstallerName}", (HttpRequest request) =>
             File.Exists(certificatePath)
                 ? Results.File(
-                    System.Text.Encoding.UTF8.GetBytes(BuildCertificateInstaller($"{ServerUrl(request)}/api/install/{CertificateFileName}")),
+                    System.Text.Encoding.UTF8.GetBytes(BuildCertificateInstaller(File.ReadAllBytes(certificatePath))),
                     "application/octet-stream", CertificateInstallerName)
                 : Results.NotFound());
 
@@ -87,16 +87,17 @@ public static class InstallEndpoints
         return ip.ToString();
     }
 
-    /// <summary>인증서를 내려받아 LocalMachine\Root에 넣는 배치 파일. 관리자가 아니면 스스로 승격한다</summary>
-    private static string BuildCertificateInstaller(string certificateUrl)
+    /// <summary>
+    /// 인증서를 LocalMachine\Root에 넣는 배치 파일. 관리자가 아니면 스스로 승격한다.
+    /// 인증서를 파일 안에 넣어 둔다 — 서버 주소를 쓰면 프록시(NPMS 등)를 거쳐 받았을 때 127.0.0.1 같은 주소가 박혀 다른 PC에서 실패한다
+    /// </summary>
+    private static string BuildCertificateInstaller(byte[] certificate)
     {
         // cmd는 ASCII + CRLF. 한글·따옴표는 피하고 PowerShell 한 줄로 실행한다 (cmd 코드 페이지·인용 문제 회피)
         var ps = string.Join("; ",
             "$ErrorActionPreference='Stop'",
-            $"$u='{certificateUrl}'",
-            "$p=Join-Path $env:TEMP 'PcManager-Server.cer'",
-            "Invoke-WebRequest -Uri $u -OutFile $p -UseBasicParsing",
-            "$c=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($p)",
+            $"$b=[Convert]::FromBase64String('{Convert.ToBase64String(certificate)}')",
+            "$c=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(,$b)",
             "$s=New-Object System.Security.Cryptography.X509Certificates.X509Store('Root','LocalMachine')",
             "$s.Open('ReadWrite')",
             "$s.Certificates | Where-Object { $_.Subject -eq $c.Subject -and $_.Thumbprint -ne $c.Thumbprint } | ForEach-Object { $s.Remove($_) }",
