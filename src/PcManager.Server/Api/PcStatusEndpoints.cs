@@ -30,6 +30,13 @@ public static class PcStatusEndpoints
         });
 
         app.MapGet("/api/remote-usage", (RemoteUsageRegistry usage) => usage.Snapshot());
+        // '원격 사용 중' 표시가 남았을 때 지우기 (연결은 건드리지 않는다)
+        app.MapDelete("/api/remote-usage/{agentId}", async (string agentId, RemoteUsageRegistry usage, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
+        {
+            usage.ForceRelease(agentId);
+            await dashboard.Clients.All.RemoteUsageChanged(usage.Snapshot());
+            return Results.NoContent();
+        });
 
     }
 

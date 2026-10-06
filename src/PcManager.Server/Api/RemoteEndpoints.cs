@@ -74,6 +74,16 @@ public static class RemoteEndpoints
         }
         await dashboard.Clients.All.RemoteUsageChanged(usage.Snapshot());
 
+        // 한 번만 해제 (창이 닫히는 즉시, 그리고 예외로 빠져나갈 때를 대비해 finally에서도)
+        var released = 0;
+        async Task ReleaseUsageAsync()
+        {
+            if (Interlocked.Exchange(ref released, 1) == 1)
+                return;
+            usage.Release(agentId, userId);
+            await dashboard.Clients.All.RemoteUsageChanged(usage.Snapshot());
+        }
+
         var sessions = new List<string>();
         try
         {
@@ -125,10 +135,20 @@ public static class RemoteEndpoints
             try
             {
                 await Task.WhenAny(fromViewer, fromAgents);
+                await ReleaseUsageAsync();
                 await CloseAsync(viewer, WebSocketCloseStatus.NormalClosure, "원격조작이 종료되었습니다.");
                 await relay.CloseCurrentAsync();
                 relayCts.CancelAfter(TimeSpan.FromSeconds(3));
-                try { await Task.WhenAll(fromViewer, fromAgents); } catch (OperationCanceledException) { }
+                // 에이전트 쪽이 응답하지 않아도 정리가 끝나도록 (취소가 안 먹는 경우 소켓을 끊는다)
+                try
+                {
+                    await Task.WhenAll(fromViewer, fromAgents).WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or WebSocketException)
+                {
+                    viewer.Abort();
+                    relay.Current.Abort();
+                }
             }
             finally
             {
@@ -143,8 +163,7 @@ public static class RemoteEndpoints
         {
             foreach (var id in sessions)
                 pendingDone(id);
-            usage.Release(agentId, userId);
-            await dashboard.Clients.All.RemoteUsageChanged(usage.Snapshot());
+            await ReleaseUsageAsync();
         }
 
         static void pendingDone(string id)
@@ -214,7 +233,11 @@ public static class RemoteEndpoints
 
         public async Task CloseCurrentAsync()
         {
-            await _sendLock.WaitAsync();
+            if (!await _sendLock.WaitAsync(TimeSpan.FromSeconds(3)))
+            {
+                _current.Abort();
+                return;
+            }
             try
             {
                 await CloseAsync(_current, WebSocketCloseStatus.NormalClosure, "종료");

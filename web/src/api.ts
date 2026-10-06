@@ -531,6 +531,8 @@ export const api = {
     `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/agents/${agentId}/remote${userId ? `?user=${encodeURIComponent(userId)}` : ''}`,
   /** Ctrl+Alt+Del 보내기 (에이전트 서비스가 SAS 전송) */
   sendCtrlAltDel: (agentId: string) => request<void>(`/api/agents/${agentId}/remote/cad`, { method: 'POST' }),
+  /** '원격 사용 중' 표시가 남았을 때 지우기 */
+  clearRemoteUsage: (agentId: string) => request<void>(`/api/remote-usage/${agentId}`, { method: 'DELETE' }),
   /** Linux PC: Wayland를 끄고(Xorg) 재부팅 */
   switchToX11: (agentId: string) => request<void>(`/api/agents/${agentId}/linux/x11`, { method: 'POST' }),
 

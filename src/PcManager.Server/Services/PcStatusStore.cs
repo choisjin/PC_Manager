@@ -98,6 +98,13 @@ public class RemoteUsageRegistry
         }
     }
 
+    /// <summary>표시가 남았을 때 수동으로 지운다 (세션 수와 무관하게)</summary>
+    public bool ForceRelease(string agentId)
+    {
+        lock (_lock)
+            return _inUse.Remove(agentId);
+    }
+
     public RemoteUsageView Snapshot()
     {
         lock (_lock)

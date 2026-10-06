@@ -151,6 +151,8 @@ internal sealed class RemoteSession(SocketChannel channel, string display)
         }
         finally
         {
+            // 정리(ffmpeg 종료·입력 스레드)가 어떤 이유로 막혀도 프로세스는 끝낸다
+            _ = Task.Delay(TimeSpan.FromSeconds(5)).ContinueWith(_ => Environment.Exit(0), TaskScheduler.Default);
             await stop.CancelAsync();
             RestartCapture();
             _input.CompleteAdding();

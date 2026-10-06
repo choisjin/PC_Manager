@@ -148,7 +148,8 @@ if (!string.IsNullOrWhiteSpace(serverOptions.AgentToken))
 
 // 배포 패키지는 대시보드 빌드 결과를 wwwroot에 포함한다 (개발 중에는 Vite 개발 서버 사용)
 // 원격조작 화면 중계 (브라우저 ↔ 서버 ↔ 에이전트)
-app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(15) });
+// KeepAliveTimeout: ping에 30초 동안 응답이 없으면 끊는다 (탭 강제 종료·네트워크 끊김으로 '원격 사용 중'이 남지 않게)
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(15), KeepAliveTimeout = TimeSpan.FromSeconds(30) });
 
 app.UseDefaultFiles();
 app.UseStaticFiles();

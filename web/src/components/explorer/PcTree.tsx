@@ -405,8 +405,18 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
                 void setPcStatus(a.id, v, note.trim() || null)
               },
             }))
+            const remoteBy = remoteUsage[a.id]?.userId
             return [
               { label: '열기', onClick: () => onOpenAgent(a.id) },
+              ...(remoteBy
+                ? [{
+                    label: `원격 사용 중 표시 지우기 (${userName(remoteBy)})`,
+                    onClick: () => {
+                      if (!window.confirm(`'${displayName(a, groups)}'의 '원격 ${userName(remoteBy)}' 표시를 지울까요?\n\n원격 창을 닫았는데도 표시가 남았을 때만 쓰세요.`)) return
+                      api.clearRemoteUsage(a.id).catch((err) => window.alert(`지우지 못했습니다: ${err instanceof Error ? err.message : String(err)}`))
+                    },
+                  }]
+                : []),
               { separator: true },
               ...statusItems,
               { separator: true },
