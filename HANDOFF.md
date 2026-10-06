@@ -1,13 +1,13 @@
 # HANDOFF — PC Manager ("Don't Move")
 
 작성: 2026-10-06 · 최신 릴리스 **v0.8.24** (main = `bd458cc`, 작업 트리 깨끗, 모두 푸시됨)
-연동 프로젝트: NPMS 포털 `E:/Project/Jira_MCP` (원격 `choisjin/NPMS`, main = `71cf295`, 푸시됨)
+연동 프로젝트: NPMS 포털 `E:/Project/Jira_MCP` (원격 `choisjin/NPMS`, main = `c1230ae`, 푸시됨)
 
 테스트 PC 관리 도구. 웹 대시보드(React) + ASP.NET Core 서버 + 단일 exe .NET 에이전트 + **서버 런처**.
 구조·설계는 `docs/ARCHITECTURE.md`, 발표용 설명은 `docs/PRESENTATION.md`.
 
 실제 운영 환경(사용자 서버 PC): 런처 폴더 `D:\PC_ManagerServers`, 서버 `Nissan` (HTTP 5065 / HTTPS 5066),
-서버 PC IP `10.176.144.50`, NPMS `https://10.176.144.50:5000`.
+서버 PC IP `10.176.144.50`, NPMS 폴더 `D:\NPMS`, 주소 `https://10.176.144.50:5000` (http:// 도 https 로 넘어감).
 
 ---
 
@@ -54,11 +54,17 @@
   iframe은 **프록시 없이** PC Manager 포트로 직접 (대시보드가 SignalR/WebSocket을 써서 Flask 프록시 불가).
 - `server.py` `GET /api/pcm/info` → `{port, host, up, https_port, host_ip}` (PC Manager `/api/install/info`의 `httpsUrl`에서 HTTPS 포트 추출).
   설정 `services/PC_Manager/config.json` `{"port":5063,"host":""}` (요청마다 읽음). 포털은 PC Manager를 띄우지도 업데이트하지도 않음.
-- **HTTPS (기존 포트 5000 하나)**: `NPMS_HTTPS_PFX`가 있으면 `app.run(ssl_context=...)`로 같은 포트를 HTTPS로 (HTTP는 안 열림).
-  pfx는 PC Manager 런처 인증서를 그대로 사용, `cryptography`로 PEM 변환. 실패하면 HTTP로 열고 콘솔에 사유 출력.
-- HTTPS일 때: iframe·에이전트 다운로드·새 창 모두 PC Manager HTTPS 주소. 페이지가 `message`를 받아 `navigator.keyboard.lock()` 대행 (iframe 출처만 허용).
-- `run_server.bat`: PC별 설정은 **`run_server.local.bat`**(gitignore)에서 읽음, `NPMS_HTTPS_PFX` 있으면 `cryptography` 자동 설치.
-- **사용자 확인 완료: NPMS 탭 안에서 원격조작 Alt+Tab·Win 키가 정상 동작** (5443 별도 포트로 시험 → 5000 단일 포트로 정리).
+- **실행 = `run_server.bat` 하나** (사용자 요청: "서버 실행하면 모든 게 되도록")
+  - **임베디드 Python 3.10.11** (`python\`, gitignore): `setup_python.ps1`이 첫 실행 때 python.org 임베더블 zip + get-pip + `requirements.txt` 설치.
+    `requirements.txt` 해시가 바뀌면 재설치(실행 시, 관리 [패치] 시). PC에 설치된 파이썬과 완전히 분리(PYTHONPATH·사용자 site 무시).
+    임베디드는 스크립트 폴더를 `sys.path`에 안 넣음 → `python\sitecustomize.py`가 넣어 줌(각 서비스가 자기 폴더 모듈 import).
+    서비스는 `sys.executable`로 뜨므로 모두 같은 임베디드 파이썬.
+  - **HTTPS 자동 (포트 5000 하나)**: 설정 없이, 이 PC에서 도는 `PcManager.Server.exe`의 `--cert` 값(없으면 런처 exe 폴더 `https\PcManager-Server.pfx`)을
+    PowerShell CIM으로 찾아 사용 (`_find_pcm_pfx`). `NPMS_HTTPS_PFX`로 직접 지정, `NPMS_HTTPS=0`이면 끔. 못 찾거나 실패하면 HTTP.
+    `_serve_https`: werkzeug `ThreadedWSGIServer.finish_request`에서 첫 바이트를 엿봐(TLS=0x16) TLS로 감싸거나, 평문이면 `301 https://…`로 넘김.
+  - HTTPS일 때: iframe·에이전트 다운로드·새 창 모두 PC Manager HTTPS 주소. 페이지가 `message`를 받아 `navigator.keyboard.lock()` 대행 (iframe 출처만 허용).
+  - `run_server.local.bat`(gitignore)이 있으면 읽음 — PC별 덮어쓰기용(보통 불필요).
+- **사용자 확인 완료: NPMS 탭 안에서 원격조작 Alt+Tab·Win 키 정상 동작.**
 
 ---
 
@@ -88,9 +94,9 @@
 
 ## 5. 다음 할 일
 
-1. **서버 PC 적용 확인 (사용자)**: `git checkout run_server.bat` → `run_server.local.bat`에 `set NPMS_HTTPS_PFX=D:\PC_ManagerServers\https\PcManager-Server.pfx`
-   → `git pull` → 재시작 → `https://10.176.144.50:5000`. 5443 방화벽 규칙 삭제(`netsh advfirewall firewall delete rule name="NPMS HTTPS"`).
-   기존 `http://…:5000` 즐겨찾기는 `https://`로 바꿔야 함. NPMS를 쓰는 다른 PC는 인증서 신뢰 필요.
+1. **서버 PC 적용 (사용자, 1회)**: 서버 PC `run_server.bat`을 직접 고쳐 둔 상태라 pull이 막힘 →
+   `cd /d D:\NPMS && git checkout run_server.bat && git pull` 후 `run_server.bat` 실행 (첫 실행 때 파이썬 자동 설치).
+   이후로는 `run_server.bat` 실행만. 5443 방화벽 규칙은 남아 있어도 무해. NPMS를 여는 다른 PC는 인증서 신뢰(대시보드 [PC 추가] → 인증서 설치 도구)만 필요.
 2. NPMS가 예전 설치형 서버(5063)에 연결돼 있었는지 확인 이슈가 있었음 → 런처 서버(5065)로 통일됐는지, 데이터 이전이 필요했는지 사용자 확인.
 3. 미시험: 런처 [HTTPS 인증서 신뢰(이 PC)](UAC), zip 업데이트, 방화벽 열기, "목록에서 삭제" 후 실제 에이전트 재등록, 연결 중 PC 삭제 거부(409).
 4. 제안(미착수): 런처 자체 업데이트, 서버 삭제 시 방화벽 규칙 삭제, NPMS 백업에 PC Manager 데이터, HTTP→HTTPS 자동 전환(옛 즐겨찾기).
@@ -129,7 +135,8 @@
 ### 개발 환경
 - 개발 서버 `dotnet run --launch-profile http` (5063), 에이전트 `--launch-profile console`, 대시보드 `web`에서 `npm run dev` (5173).
 - 포터블 서버 단독: `src/PcManager.Server/bin/Debug/net10.0/PcManager.Server.exe --port 5099 --data <스크래치>` (대시보드 보려면 `web/dist`를 그 폴더 `wwwroot`로 복사).
-- NPMS 시험: `NPMS_AUTOSTART=0 PORT=5077 py -3.10 server.py` (HTTPS면 `NPMS_HTTPS_PFX=<런처 폴더>\https\PcManager-Server.pfx`).
+- NPMS 시험: `cd E:/Project/Jira_MCP && powershell -File setup_python.ps1` 후 `NPMS_AUTOSTART=0 PORT=5077 python\python.exe server.py`
+  (런처가 떠 있으면 HTTPS 자동, 없으면 HTTP). 포털 출력은 리디렉션 시 버퍼링돼 로그 파일에 늦게 나옴.
   포털 첫 화면 로그인 오버레이(`#portalLogin`)는 JS로 숨기고 `selectMajor('ops','asset','pcmanager')`.
 - 이 PC에는 설치형 서버·에이전트 설정이 있을 수 있음 → 실제 에이전트를 시험 서버에 붙이지 말 것(설정 오염).
 - 패키징(`build/package.ps1`)은 `npm ci`로 `node_modules`를 지우므로 dev 서버(vite)를 끄고 실행.
