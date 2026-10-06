@@ -8,7 +8,7 @@ import { VideoViewer } from '../VideoViewer'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { DriveTree } from './DriveTree'
 import { Icon, ShellIcon } from './Icon'
-import { copyText, type FileClipboard, FILES_MIME, type FilesDragPayload, newId, PANE_MIME } from './pcGroups'
+import { type ClipItem, copyText, type FileClipboard, FILES_MIME, type FilesDragPayload, newId, PANE_MIME } from './pcGroups'
 
 const COL_WIDTH_KEY = 'explorer.colWidths'
 const COLUMNS_KEY = 'explorer.columns'
@@ -35,6 +35,7 @@ function loadColumns(): ColumnVisibility {
 import { fileTypeLabel, lastSep, pathSep, type PaneController, sortEntries, type SortKey, type ViewMode, type ColumnVisibility, type OptionalColumn } from './paneController'
 import { SplitCompressModal } from './SplitCompressModal'
 import { RemoteModal } from './RemoteModal'
+import { ResultViewer } from '../results/ResultViewer'
 import { TerminalModal } from './TerminalModal'
 
 export interface Pane {
@@ -152,6 +153,8 @@ export function ExplorerPane({
   // 텍스트·이미지·PDF 바로 보기 (텍스트는 편집·저장)
   const [viewing, setViewing] = useState<{ path: string; name: string; kind: ViewerKind; readOnly: boolean } | null>(null)
   const [terminal, setTerminal] = useState(false)
+  // 결과 확인: 열 때 고른 항목 (null이면 닫힘)
+  const [results, setResults] = useState<ClipItem[] | null>(null)
   const [remote, setRemote] = useState(false)
   const accessRef = useRef({ pcStatus, remoteUser })
   accessRef.current = { pcStatus, remoteUser }
@@ -748,6 +751,7 @@ export function ExplorerPane({
     toggleBackupOnSave,
     setSearch,
     openTerminal: () => setTerminal(true),
+    openResults: () => setResults(selectedEntries().map((t) => ({ path: t.fullPath, name: t.name, isDir: t.isDirectory }))),
     openRemote: () => {
       // 툴바가 이전 렌더의 컨트롤러를 들고 있을 수 있으므로 상태는 ref에서 읽는다
       const { pcStatus: st, remoteUser: by } = accessRef.current
@@ -1311,6 +1315,9 @@ export function ExplorerPane({
       )}
 
       {remote && <RemoteModal agentId={agentId} machineName={machineName} userId={selfUserId} onClose={() => setRemote(false)} />}
+      {results && (
+        <ResultViewer agentId={agentId} machineName={machineName} startPath={path} initialItems={results} onClose={() => setResults(null)} />
+      )}
 
       {splitTargets && (
         <SplitCompressModal

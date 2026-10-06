@@ -6,7 +6,7 @@ import { extensionOf, fileKind, type FileKind } from '../../fileTypes'
 export type IconName =
   | 'back' | 'forward' | 'up' | 'refresh'
   | 'new-folder' | 'cut' | 'copy' | 'paste' | 'rename' | 'download' | 'delete'
-  | 'sort' | 'view-grid' | 'view-details' | 'terminal' | 'remote' | 'upload' | 'search'
+  | 'sort' | 'view-grid' | 'view-details' | 'terminal' | 'remote' | 'result-review' | 'upload' | 'search'
   | 'folder' | 'file' | 'video' | 'pc' | 'drive' | 'star' | 'chevron' | 'close' | 'plus' | 'share'
   // 원격조작 특수 키
   | 'keyboard' | 'three-keys' | 'alt-tab' | 'play' | 'lock' | 'chart' | 'close-window' | 'camera' | 'text' | 'fullscreen' | 'fullscreen-exit'
@@ -35,6 +35,8 @@ const LINE: Partial<Record<IconName, ReactNode>> = {
   'view-details': <><path d="M8 6h12M8 12h12M8 18h12" /><path d="M4 6h.01M4 12h.01M4 18h.01" /></>,
   terminal: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9l3 3-3 3M13 15h4" /></>,
   remote: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /><path d="M10.5 7.5l4.5 2-2 .6-.6 2z" /></>,
+  // 결과 확인: 영상(필름) + 확인 표시
+  'result-review': <><rect x="3" y="5" width="13" height="14" rx="2" /><path d="M16 10l5-3v10l-5-3" /><path d="M6.5 12.2l2 2 3.8-4" /></>,
   upload: <><path d="M12 20V9" /><path d="M8 13l4-4 4 4" /><path d="M5 4h14" /></>,
   search: <><circle cx="11" cy="11" r="6" /><path d="M20 20l-4-4" /></>,
   file: <><path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9z" /><path d="M13 3v6h6" /></>,

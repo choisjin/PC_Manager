@@ -67,6 +67,11 @@ public static class InstallEndpoints
                     ? $"curl -fsSL {ServerUrl(request)}/api/install/{LinuxInstallScriptName} | sudo bash"
                     : null));
 
+        // Windows 에이전트의 영상 자르기용 ffmpeg (서버 패키지 agent/tools/ffmpeg.exe)
+        var ffmpegPath = Path.Combine(app.Environment.ContentRootPath, PackageFolder, "tools", "ffmpeg.exe");
+        app.MapGet(InstallPaths.FfmpegWindows, () =>
+            File.Exists(ffmpegPath) ? Results.File(ffmpegPath, "application/octet-stream", "ffmpeg.exe") : Results.NotFound());
+
         // Linux 테스트 PC: 실행 파일 + 한 줄 설치 스크립트 (curl … | sudo bash)
         api.MapGet($"/{LinuxAgentFileName}", () =>
             File.Exists(linuxAgentPath)

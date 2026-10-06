@@ -54,6 +54,8 @@ export interface PaneController {
   setSearch: (q: string) => void
   openTerminal: () => void
   openRemote: () => void
+  /** 결과 확인 (Result·영상·이미지 맞춰 보기). 고른 파일·폴더는 자동으로 칸에 넣는다 */
+  openResults: () => void
   upload: () => void
 }
 

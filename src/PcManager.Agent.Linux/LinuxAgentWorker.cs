@@ -15,6 +15,7 @@ public class LinuxAgentWorker(
     AgentIdentity identity,
     CommandRunner runner,
     FileTransferService files,
+    VideoTrimmer trimmer,
     LinuxRemoteControl remote,
     LinuxAgentUpdater updater,
     OutboundQueue outbound,
@@ -136,6 +137,8 @@ public class LinuxAgentWorker(
             path => Task.Run(() => files.ListDirectory(path)));
         connection.On<string, long>(AgentClientMethods.GetFileSize,
             path => Task.Run(() => files.GetFileSize(path)));
+        connection.On<string, double, double, VideoTrimResult>(AgentClientMethods.TrimVideo,
+            (path, start, end) => trimmer.TrimAsync(path, start, end));
         connection.On<string, long, int, byte[]>(AgentClientMethods.ReadFileChunk,
             (path, offset, length) => Task.Run(() => files.ReadFileChunk(path, offset, length)));
         connection.On<FileOpRequest, FileOpResult>(AgentClientMethods.FileOp,

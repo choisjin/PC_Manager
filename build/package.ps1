@@ -117,6 +117,14 @@ Copy-Item -Path (Join-Path $root 'web/dist') -Destination (Join-Path $serverDir 
 # 대시보드 'PC 추가'에서 내려받는 설치 파일
 $serverAgentDir = New-Item -ItemType Directory -Path (Join-Path $serverDir 'agent') -Force
 Copy-Item -Path $setupExe -Destination (Join-Path $serverAgentDir 'PcManager-Agent-Setup.exe')
+# Windows 에이전트의 영상 자르기용 ffmpeg (저장소 tools/ffmpeg에 압축해 둔 것, /api/install/tools/ffmpeg.exe로 배포)
+$ffmpegZip = Join-Path $root 'tools/ffmpeg/ffmpeg-win64.zip'
+if (Test-Path $ffmpegZip) {
+    $toolsDir = New-Item -ItemType Directory -Path (Join-Path $serverAgentDir 'tools') -Force
+    Expand-Archive -LiteralPath $ffmpegZip -DestinationPath $toolsDir -Force
+} else {
+    Write-Warning "ffmpeg 압축 파일이 없습니다: $ffmpegZip (Windows 에이전트 영상 자르기 불가)"
+}
 # Linux 테스트 PC 설치(curl … /api/install/linux.sh | sudo bash)와 자가 업데이트가 받는 파일
 Copy-Item -Path $linuxAgent -Destination (Join-Path $serverAgentDir 'pcmanager-agent-linux')
 

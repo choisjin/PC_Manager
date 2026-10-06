@@ -94,6 +94,9 @@ public static class InstallPaths
 
     /// <summary>대시보드 PC용 인증서 신뢰 설치 도구 (더블클릭, UAC 승인 한 번)</summary>
     public const string CertificateInstallerFile = "PcManager-인증서-설치.cmd";
+
+    /// <summary>Windows 에이전트가 영상 자르기에 쓰는 ffmpeg (PATH에 없을 때 서버에서 받아 둔다)</summary>
+    public const string FfmpegWindows = "/api/install/tools/ffmpeg.exe";
 }
 
 /// <summary>파일 전송용 HTTP 경로 (에이전트 토큰 필요)</summary>
@@ -130,6 +133,9 @@ public record EditFolderInfo(string? Path, int Files, long Bytes, int Pending);
 /// <param name="InUse">프로그램이 열고 있어 남긴 사본 수</param>
 /// <param name="Pending">원래 PC로 못 보낸 변경이 있어 남긴 사본 수</param>
 public record EditCleanResult(int Deleted, long Bytes, int InUse, int Pending, EditFolderInfo Info);
+
+/// <param name="OutputPath">자른 영상 경로 (원래 영상과 같은 폴더). 실패면 null</param>
+public record VideoTrimResult(string? OutputPath, string? Error);
 
 /// <summary>원격조작 WebSocket 경로</summary>
 public static class AgentRemotePaths
@@ -267,6 +273,9 @@ public static class AgentClientMethods
 
     /// <summary>() → string? 오류. Linux: 로그인 관리자(GDM)의 Wayland를 끄고(Xorg 사용) 재부팅한다 (원격조작은 X11에서만 됨)</summary>
     public const string SwitchToX11 = "SwitchToX11";
+
+    /// <summary>(string path, double startSec, double endSec) → VideoTrimResult. 영상 구간을 ffmpeg로 잘라 원래 영상 폴더에 저장 (결과 확인 도구)</summary>
+    public const string TrimVideo = "TrimVideo";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<FileOpKind>))]

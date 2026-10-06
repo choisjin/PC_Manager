@@ -82,6 +82,7 @@ builder.Services.AddSingleton<DownloadLinkStore>();
 builder.Services.AddSingleton<PcStatusStore>();
 builder.Services.AddSingleton<RemoteUsageRegistry>();
 builder.Services.AddSingleton<ChatRoomStore>();
+builder.Services.AddSingleton<ResultSetStore>();
 builder.Services.AddSingleton<ThumbnailService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<RunService>();
@@ -173,6 +174,7 @@ app.MapOrgApi();
 app.MapDownloadLinkApi();
 app.MapInstallApi(serverOptions);
 app.MapLauncherApi();
+app.MapResultSetApi();
 
 // 설치 파일은 크므로 요청 크기 제한과 무관하게 스트리밍 (다운로드만, 업로드 아님)
 

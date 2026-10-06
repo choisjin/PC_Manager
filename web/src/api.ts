@@ -349,6 +349,64 @@ export interface Thumbnail {
   at: string
 }
 
+// ── 결과 확인 도구 (Result·영상·이미지 맞춰 보기)
+export interface ResultSetBackup {
+  state: 'running' | 'done' | 'failed'
+  filesDone: number
+  filesTotal: number
+  bytesDone: number
+  error: string | null
+  /** 테스트 PC에 없어 건너뛴 파일 (Result에 적힌 다른 PC 경로 등) */
+  skipped: number
+}
+
+export interface ResultSetSummary {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  createdBy: string | null
+  agentId: string
+  machineName: string | null
+  resultPath: string
+  videoCount: number
+  copyVideo: boolean
+  backup: ResultSetBackup
+}
+
+export interface ResultSet {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  createdBy: string | null
+  agentId: string
+  machineName: string | null
+  resultPath: string
+  videoPaths: string[]
+  imageDir: string | null
+  copyVideo: boolean
+  /** 화면 설정 (열 지정·동기화 보정) — 형식은 결과 확인 화면이 정한다 */
+  config: unknown
+  requested: string[]
+  /** 원래 경로 → 서버 백업 파일 */
+  files: Record<string, string>
+  backup: ResultSetBackup
+}
+
+export interface CreateResultSet {
+  name: string
+  agentId: string
+  machineName: string | null
+  resultPath: string
+  videoPaths: string[]
+  imageDir: string | null
+  copyVideo: boolean
+  config: unknown
+  /** Result·영상 외에 백업할 파일 (이미지) */
+  files: string[]
+}
+
 /** Windows 에이전트의 OS 설명은 'Microsoft Windows …', Linux는 배포판 이름 (예: Ubuntu 24.04 LTS) */
 export const isLinuxAgent = (agent: Agent) => !!agent.osVersion && !agent.osVersion.startsWith('Microsoft Windows')
 
@@ -531,6 +589,21 @@ export const api = {
     `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/agents/${agentId}/remote${userId ? `?user=${encodeURIComponent(userId)}` : ''}`,
   /** Ctrl+Alt+Del 보내기 (에이전트 서비스가 SAS 전송) */
   sendCtrlAltDel: (agentId: string) => request<void>(`/api/agents/${agentId}/remote/cad`, { method: 'POST' }),
+  resultSets: () => request<ResultSetSummary[]>('/api/result-sets'),
+  resultSet: (id: string) => request<ResultSet>(`/api/result-sets/${id}`),
+  createResultSet: (body: CreateResultSet) =>
+    request<ResultSet>('/api/result-sets', { method: 'POST', body: JSON.stringify(body) }),
+  updateResultSet: (id: string, body: { name?: string; config?: unknown }) =>
+    request<ResultSet>(`/api/result-sets/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+  deleteResultSet: (id: string) => request<void>(`/api/result-sets/${id}`, { method: 'DELETE' }),
+  retryResultSetBackup: (id: string) => request<void>(`/api/result-sets/${id}/backup`, { method: 'POST' }),
+  resultSetFileUrl: (id: string, path: string) => `/api/result-sets/${id}/file?${query({ path })}`,
+  /** 테스트 PC에서 ffmpeg로 영상 구간 자르기 → 원래 영상 폴더에 저장 */
+  trimVideo: (agentId: string, path: string, start: number, end: number) =>
+    request<{ outputPath: string | null; error: string | null }>(`/api/agents/${agentId}/video/trim`, {
+      method: 'POST',
+      body: JSON.stringify({ path, start, end }),
+    }),
   /** '원격 사용 중' 표시가 남았을 때 지우기 */
   clearRemoteUsage: (agentId: string) => request<void>(`/api/remote-usage/${agentId}`, { method: 'DELETE' }),
   /** Linux PC: Wayland를 끄고(Xorg) 재부팅 */

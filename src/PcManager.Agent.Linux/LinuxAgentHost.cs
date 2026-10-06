@@ -28,6 +28,7 @@ public static class LinuxAgentHost
         builder.Services.AddSingleton<OutboundQueue>();
         builder.Services.AddSingleton<CommandRunner>();
         builder.Services.AddSingleton<FileTransferService>();
+        builder.Services.AddSingleton<VideoTrimmer>();
         builder.Services.AddSingleton<LinuxRemoteControl>();
         builder.Services.AddSingleton<LinuxAgentUpdater>();
         builder.Services.AddHostedService<LinuxAgentWorker>();

@@ -50,5 +50,6 @@
     <Compile Include="..\PcManager.Agent\CommandRunner.cs" Link="Shared\CommandRunner.cs" />
     <Compile Include="..\PcManager.Agent\FileTransferService.cs" Link="Shared\FileTransferService.cs" />
     <Compile Include="..\PcManager.Agent\ServerInfoClient.cs" Link="Shared\ServerInfoClient.cs" />
+    <Compile Include="..\PcManager.Agent\VideoTrimmer.cs" Link="Shared\VideoTrimmer.cs" />
   </ItemGroup>
 </Project>

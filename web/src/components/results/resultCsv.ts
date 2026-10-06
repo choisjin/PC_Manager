@@ -1,0 +1,323 @@
+// 결과 확인 도구: Result CSV 읽기 (형식이 제각각이라 열 이름·값 모양으로 자동 판별, 화면에서 바꿀 수 있게)
+//
+// 시간은 모두 "벽시계 밀리초"로 통일한다: 날짜·시각 문자열을 그 지역 시각 그대로(시간대 변환 없이) Date.UTC로 센 값.
+// 테스트 PC가 남긴 시각·파일 이름의 시각·영상 메타가 모두 같은 지역 시각이라는 전제(시간대가 있는 값은 화면의 시간대로 바꿈)
+
+export type ColumnRole = 'time' | 'cycle' | 'status' | 'name' | 'duration' | 'message'
+
+export interface ResultMapping {
+  /** 역할별 열 번호 (없으면 -1) */
+  time: number
+  cycle: number
+  status: number
+  name: number
+  duration: number
+  message: number
+  /** 걸린 시간 단위 */
+  durationUnit: 's' | 'ms'
+  /** 시간 해석: 'auto' 자동, 'absolute' 날짜·시각, 'elapsed' 시작부터 경과 초 */
+  timeMode: 'auto' | 'absolute' | 'elapsed'
+}
+
+export interface ResultRow {
+  /** 원래 데이터 행 순서 (0부터) */
+  index: number
+  cells: string[]
+  /** 벽시계 ms (absolute) 또는 경과 ms (elapsed). 못 읽으면 null */
+  time: number | null
+  cycle: string
+  status: string
+  name: string
+  durationMs: number | null
+  message: string
+  /** 행에 적힌 이미지 경로들 (HYPERLINK 수식·IMAGE:(…) 안 포함) */
+  images: string[]
+}
+
+export interface ParsedResult {
+  /** 머리말(헤더 앞 줄)에서 찾은 'START TIME' 등 시작 시각 (벽시계 ms) */
+  startTime: number | null
+  preamble: string[]
+  headers: string[]
+  mapping: ResultMapping
+  /** 시간 열이 절대 시각인지 경과 시간인지 (mapping.timeMode가 auto일 때 판별 결과) */
+  timeKind: 'absolute' | 'elapsed' | 'unknown'
+  rows: ResultRow[]
+}
+
+// ── 바이트 → 문자열 (BOM이면 UTF-8, 아니면 UTF-8 시도 후 안 되면 CP949)
+export function decodeText(bytes: ArrayBuffer): string {
+  const u8 = new Uint8Array(bytes)
+  if (u8[0] === 0xef && u8[1] === 0xbb && u8[2] === 0xbf) return new TextDecoder('utf-8').decode(u8.subarray(3))
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(u8)
+  } catch {
+    return new TextDecoder('euc-kr').decode(u8)
+  }
+}
+
+// ── CSV (RFC 4180: 따옴표 안 줄바꿈·"" 이스케이프, 줄 끝 CR/LF/CRLF 섞임)
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (quoted) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"'
+          i++
+        } else quoted = false
+      } else cell += ch
+      continue
+    }
+    if (ch === '"' && cell.trim() === '') {
+      quoted = true
+      cell = ''
+    } else if (ch === ',') {
+      row.push(cell)
+      cell = ''
+    } else if (ch === '\r' || ch === '\n') {
+      row.push(cell)
+      rows.push(row)
+      row = []
+      cell = ''
+      if (ch === '\r' && text[i + 1] === '\n') i++
+    } else cell += ch
+  }
+  if (cell !== '' || row.length) {
+    row.push(cell)
+    rows.push(row)
+  }
+  return rows
+}
+
+// ── 시간
+const DATE_TIME = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})[ T_]+(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?\s*(Z|[+-]\d{2}:?\d{2})?$/i
+const TIME_OF_DAY = /^(\d{1,2}):(\d{2}):(\d{2})(?:[.,](\d+))?$/
+const NUMBER = /^[+-]?\d+(?:\.\d+)?$/
+
+const fraction = (f: string | undefined) => (f ? Number(`0.${f}`) * 1000 : 0)
+
+/** 시간대가 있는 값을 화면(브라우저)의 지역 벽시계로 */
+function awareToWall(utcMs: number): number {
+  return utcMs - new Date(utcMs).getTimezoneOffset() * 60_000
+}
+
+export type TimeValue = { kind: 'absolute'; ms: number } | { kind: 'tod'; ms: number } | { kind: 'number'; value: number }
+
+/** 시간 문자열 하나 → 벽시계 ms / 하루 중 시각 ms / 숫자 */
+export function parseTime(raw: string): TimeValue | null {
+  const s = raw.trim().replace(/^\[|\]$/g, '').replace(/^"|"$/g, '').trim()
+  if (!s) return null
+  let m = DATE_TIME.exec(s)
+  if (m) {
+    const [, y, mo, d, h, mi, sec, frac, tz] = m
+    let ms = Date.UTC(+y, +mo - 1, +d, +h, +mi, sec ? +sec : 0) + fraction(frac)
+    if (tz) {
+      const offset = tz.toUpperCase() === 'Z' ? 0 : (tz[0] === '-' ? -1 : 1) * (Number(tz.slice(1, 3)) * 60 + Number(tz.slice(-2)))
+      ms = awareToWall(ms - offset * 60_000)
+    }
+    return { kind: 'absolute', ms }
+  }
+  m = TIME_OF_DAY.exec(s)
+  if (m) {
+    const [, h, mi, sec, frac] = m
+    return { kind: 'tod', ms: ((+h * 60 + +mi) * 60 + +sec) * 1000 + fraction(frac) }
+  }
+  if (NUMBER.test(s)) {
+    const v = Number(s)
+    // 유닉스 시각(초 10자리·밀리초 13자리), 엑셀 날짜 숫자(1990~2100년)
+    if (/^\d{13}$/.test(s)) return { kind: 'absolute', ms: awareToWall(v) }
+    if (/^\d{10}$/.test(s)) return { kind: 'absolute', ms: awareToWall(v * 1000) }
+    if (v > 32874 && v < 73051 && s.includes('.')) return { kind: 'absolute', ms: Math.round((v - 25569) * 86_400_000) }
+    return { kind: 'number', value: v }
+  }
+  return null
+}
+
+/** 파일 이름 등에서 날짜·시각 찾기: 20261006_141230, 2026-10-06_14-12-30, 2026_1006_161341, 20261006_141233_123 */
+export function timeFromName(name: string): number | null {
+  const m = /(\d{4})[-_.]?(\d{2})[-_.]?(\d{2})[-_ T]?(\d{2})[-_.:]?(\d{2})[-_.:]?(\d{2})(?:[-_.](\d{1,3})(?!\d))?/.exec(name)
+  if (!m) return null
+  const [, y, mo, d, h, mi, s, ms] = m
+  if (+mo < 1 || +mo > 12 || +d < 1 || +d > 31 || +h > 23 || +mi > 59 || +s > 59) return null
+  return Date.UTC(+y, +mo - 1, +d, +h, +mi, +s) + (ms ? Number(ms.padEnd(3, '0')) : 0)
+}
+
+export function formatWall(ms: number | null, withDate = false): string {
+  if (ms === null || !Number.isFinite(ms)) return ''
+  const d = new Date(ms)
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0')
+  const time = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`
+  return withDate ? `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${time}` : time
+}
+
+export function formatSeconds(sec: number): string {
+  if (!Number.isFinite(sec)) return '-'
+  const sign = sec < 0 ? '-' : ''
+  sec = Math.abs(sec)
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  return `${sign}${h ? `${h}:` : ''}${String(m).padStart(h ? 2 : 1, '0')}:${s.toFixed(1).padStart(4, '0')}`
+}
+
+// ── 열 역할 자동 판별
+const NAME_PATTERNS: Record<ColumnRole, RegExp> = {
+  time: /time ?stamp|^\s*time\s*$|start ?time|date ?time|^date$|시각|시간|^time\b/i,
+  cycle: /cycle ?index|iteration|^cycle$|current script repeat|회차|반복/i,
+  status: /^status$|result$|^action check$|verdict|판정|결과/i,
+  name: /kw name|keyword|step ?name|test ?step|^control$|command|^action$|description|스텝|명령/i,
+  duration: /elapsed|duration|exec(ution)? ?time|소요/i,
+  message: /message|remark|detail|reason|비고|메시지/i,
+}
+const STATUS_VALUES = /^(pass(ed)?|fail(ed)?|ok|ng|not ?run|error|skip(ped)?|warn(ing)?|block(ed)?|n\/a)$/i
+const IMAGE_PATH = /(?:[A-Za-z]:[\\/]|\\\\|\/)[^"'<>|\r\n,()[\]]*?\.(?:bmp|png|jpe?g|gif|webp)/gi
+
+const unq = (s: string) => s.trim().replace(/^"|"$/g, '').trim()
+
+/** 헤더 행 찾기: 시간처럼 보이는 열 이름이 있고 다음 행 그 열이 시간으로 읽히는 첫 행 */
+function findHeader(rows: string[][]): number {
+  for (let r = 0; r < Math.min(rows.length - 1, 60); r++) {
+    const cells = rows[r].map(unq)
+    if (cells.filter(Boolean).length < 3) continue
+    for (let c = 0; c < cells.length; c++) {
+      if (!NAME_PATTERNS.time.test(cells[c])) continue
+      for (let k = r + 1; k < Math.min(rows.length, r + 4); k++) {
+        if (rows[k][c] !== undefined && parseTime(rows[k][c])) return r
+      }
+    }
+  }
+  return rows.findIndex((r) => r.filter((c) => c.trim()).length >= 3)
+}
+
+function guessMapping(headers: string[], data: string[][]): ResultMapping {
+  const sample = data.slice(0, 300)
+  const used = new Set<number>()
+  const pick = (role: ColumnRole, score: (c: number) => number) => {
+    let best = -1
+    let bestScore = 0
+    headers.forEach((h, c) => {
+      if (used.has(c) || !NAME_PATTERNS[role].test(h)) return
+      const sc = score(c)
+      if (sc > bestScore) {
+        best = c
+        bestScore = sc
+      }
+    })
+    if (best >= 0) used.add(best)
+    return best
+  }
+  const filled = (c: number) => sample.filter((r) => unq(r[c] ?? '') !== '').length
+  const time = pick('time', (c) => sample.filter((r) => parseTime(r[c] ?? '')).length)
+  const cycle = pick('cycle', (c) => sample.filter((r) => NUMBER.test(unq(r[c] ?? ''))).length + 1)
+  // 결과: 이름이 맞는 열 중 PASS/FAIL 같은 값이 가장 많은 열, 없으면 값으로만
+  let status = pick('status', (c) => sample.filter((r) => STATUS_VALUES.test(unq(r[c] ?? ''))).length)
+  if (status < 0 || sample.filter((r) => STATUS_VALUES.test(unq(r[status] ?? ''))).length === 0) {
+    if (status >= 0) used.delete(status)
+    let best = -1
+    let bestCount = 0
+    headers.forEach((_, c) => {
+      if (used.has(c)) return
+      const n = sample.filter((r) => STATUS_VALUES.test(unq(r[c] ?? ''))).length
+      if (n > bestCount) {
+        best = c
+        bestCount = n
+      }
+    })
+    status = best
+    if (best >= 0) used.add(best)
+  }
+  const name = pick('name', filled)
+  const duration = pick('duration', (c) => sample.filter((r) => NUMBER.test(unq(r[c] ?? ''))).length)
+  // 메시지: 짧은 값(INFO, None)보다 내용이 긴 열 (예: 'Message' > 'Message Level')
+  const message = pick('message', (c) => sample.reduce((n, r) => n + unq(r[c] ?? '').replace(/^none$/i, '').length, 0))
+  // 걸린 시간 단위: 이름에 ms, 또는 정수가 대부분이고 값이 크면 ms
+  let durationUnit: 's' | 'ms' = 's'
+  if (duration >= 0) {
+    const values = sample.map((r) => unq(r[duration] ?? '')).filter((v) => NUMBER.test(v)).map(Number)
+    const ints = values.filter((v) => Number.isInteger(v)).length
+    const median = [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? 0
+    if (/ms|msec|밀리/i.test(headers[duration]) || (values.length && ints / values.length > 0.9 && median >= 100)) durationUnit = 'ms'
+  }
+  return { time, cycle, status, name, duration, message, durationUnit, timeMode: 'auto' }
+}
+
+/** 머리말의 시작 시각 (예: START TIME:2026-10-06 14:01:33.379000) */
+function startFromPreamble(lines: string[]): number | null {
+  for (const line of lines) {
+    const m = /(start|시작)[^:：]*[:：]\s*(.+)$/i.exec(line)
+    const v = m && parseTime(m[2])
+    if (v && v.kind === 'absolute') return v.ms
+  }
+  return null
+}
+
+/** CSV 텍스트 → 결과. mapping을 주면 그대로 쓴다 (화면에서 바꾼 열) */
+export function parseResult(text: string, override?: Partial<ResultMapping>): ParsedResult {
+  const all = parseCsv(text)
+  const headerIndex = Math.max(0, findHeader(all))
+  const preamble = all.slice(0, headerIndex).map((r) => r.join(',').trim()).filter(Boolean)
+  const headers = (all[headerIndex] ?? []).map(unq)
+  const data = all.slice(headerIndex + 1).filter((r) => r.some((c) => c.trim() !== ''))
+  const mapping = { ...guessMapping(headers, data), ...override }
+  const startTime = startFromPreamble(preamble)
+
+  // 시간 열 종류: 절대 시각이 대부분이면 absolute, 숫자·시각만이면 elapsed
+  const kinds = { absolute: 0, tod: 0, number: 0 }
+  for (const r of data.slice(0, 300)) {
+    const v = mapping.time >= 0 ? parseTime(r[mapping.time] ?? '') : null
+    if (v) kinds[v.kind]++
+  }
+  const detected: ParsedResult['timeKind'] =
+    kinds.absolute >= kinds.tod + kinds.number && kinds.absolute > 0 ? 'absolute'
+      : kinds.tod + kinds.number > 0 ? 'elapsed' : 'unknown'
+  const mode = mapping.timeMode === 'auto' ? detected : mapping.timeMode
+
+  // 하루 중 시각만 있으면 날짜는 머리말 시작 시각에서 (자정을 넘으면 하루씩 더함)
+  const dayBase = startTime !== null ? startTime - (startTime % 86_400_000) : null
+  let lastTod = -1
+  let dayAdd = 0
+
+  const cell = (r: string[], c: number) => (c >= 0 ? unq(r[c] ?? '') : '')
+  const rows: ResultRow[] = data.map((r, index) => {
+    let time: number | null = null
+    const v = mapping.time >= 0 ? parseTime(r[mapping.time] ?? '') : null
+    if (v) {
+      if (v.kind === 'absolute') time = mode === 'elapsed' && startTime !== null ? v.ms - startTime : v.ms
+      else if (v.kind === 'tod') {
+        if (lastTod >= 0 && v.ms < lastTod - 3_600_000) dayAdd += 86_400_000
+        lastTod = v.ms
+        time = mode === 'absolute' && dayBase !== null ? dayBase + dayAdd + v.ms : v.ms + dayAdd
+      } else time = v.value * 1000
+    }
+    const durRaw = cell(r, mapping.duration)
+    const images = [...new Set(r.join(' ').match(IMAGE_PATH) ?? [])].map((p) => p.replace(/\\\\/g, '\\'))
+    return {
+      index,
+      cells: r.map(unq),
+      time,
+      cycle: cell(r, mapping.cycle),
+      status: cell(r, mapping.status),
+      name: cell(r, mapping.name),
+      durationMs: NUMBER.test(durRaw) ? Number(durRaw) * (mapping.durationUnit === 'ms' ? 1 : 1000) : null,
+      message: cell(r, mapping.message),
+      images,
+    }
+  })
+  return { startTime, preamble, headers, mapping, timeKind: mode, rows }
+}
+
+/** 결과 값 → 색 구분 */
+export function statusTone(status: string): 'ok' | 'bad' | 'warn' | 'idle' | '' {
+  const s = status.trim().toLowerCase()
+  if (!s) return ''
+  if (/^(pass(ed)?|ok)$/.test(s)) return 'ok'
+  if (/^(fail(ed)?|ng|error)$/.test(s)) return 'bad'
+  if (/^(warn(ing)?|block(ed)?)$/.test(s)) return 'warn'
+  if (/not ?run|skip/.test(s)) return 'idle'
+  return ''
+}
