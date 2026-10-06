@@ -9,18 +9,36 @@ using PcManager.Server.Hubs;
 using PcManager.Server.Services;
 using PcManager.Shared;
 
+// 포터블 실행: PcManager.Server.exe --port 5070 [--data D:\pcm-data]
+// 프로젝트별 포털이 자식 프로세스로 띄우는 용도. 설치형 설정(server.json)을 읽지 않으므로
+// 같은 PC의 설치형 서버나 다른 프로젝트 인스턴스와 포트·데이터가 겹치지 않는다
+var portablePort = ServerArgs.Port(args);
+var portable = portablePort is not null;
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
-    // 서비스로 실행되면 작업 폴더가 System32라서 실행 파일 폴더를 기준으로 삼는다
-    ContentRootPath = WindowsServiceHelpers.IsWindowsService() ? AppContext.BaseDirectory : null,
+    // 서비스로 실행되면 작업 폴더가 System32라서 실행 파일 폴더를 기준으로 삼는다 (포터블도 호출한 쪽 작업 폴더와 무관하게)
+    ContentRootPath = WindowsServiceHelpers.IsWindowsService() || portable ? AppContext.BaseDirectory : null,
 });
 builder.Services.AddWindowsService(o => o.ServiceName = "PcManagerServer");
 
-// 설치형 배포: 설치 스크립트가 만든 설정 파일 (바이너리와 분리돼 업그레이드해도 유지)
-builder.Configuration.AddJsonFile(ServerOptions.InstalledConfigPath, optional: true, reloadOnChange: false);
+if (portable)
+{
+    builder.WebHost.UseUrls($"http://*:{portablePort}");
+    if (ServerArgs.Value(args, "--data") is { Length: > 0 } dataDir)
+        builder.Configuration["Server:DataDirectory"] = dataDir;
+}
+else
+{
+    // 설치형 배포: 설치 스크립트가 만든 설정 파일 (바이너리와 분리돼 업그레이드해도 유지)
+    builder.Configuration.AddJsonFile(ServerOptions.InstalledConfigPath, optional: true, reloadOnChange: false);
+}
 
 var serverOptions = builder.Configuration.GetSection("Server").Get<ServerOptions>() ?? new ServerOptions();
+serverOptions.Portable = portable;
+builder.Services.Configure<ServerOptions>(builder.Configuration.GetSection("Server"));
+builder.Services.PostConfigure<ServerOptions>(o => o.Portable = portable);
 
 var paths = new AppPaths(Path.GetFullPath(serverOptions.DataDirectory, builder.Environment.ContentRootPath));
 Directory.CreateDirectory(paths.DataDirectory);

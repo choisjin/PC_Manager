@@ -45,6 +45,16 @@
 - 데이터:   C:\ProgramData\PcManager\Server\data (DB, 실행 로그, 결과 파일)
 - 로그:     이벤트 뷰어 > Windows 로그 > 응용 프로그램 (원본: PcManager.Server)
 
+포터블 실행 (서비스 설치 없이, 프로젝트별로 여러 개)
+- server 폴더의 PcManager.Server.exe를 포트를 지정해 실행합니다.
+
+   PcManager.Server.exe --port 5070 --data D:\PcManager\프로젝트A
+
+   - --port: 대시보드·에이전트 접속 포트 (HTTP만, 방화벽은 직접 열어야 함)
+   - --data: DB·로그·결과 파일 폴더 (생략하면 exe 폴더의 App_Data)
+   - 설치형 설정(server.json)을 읽지 않으므로 같은 PC의 설치형 서버·다른 포터블 서버와 겹치지 않습니다.
+   - 대시보드의 서버 업데이트 버튼은 동작하지 않습니다. 새 버전 zip의 server 폴더로 교체하세요.
+
 제거
    powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall-server.ps1
    (데이터까지 삭제: -RemoveData)

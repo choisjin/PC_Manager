@@ -27,9 +27,39 @@ public class ServerOptions
     /// <summary>업데이트 자동 확인 주기(분). 0이면 자동 확인 안 함(수동 확인만)</summary>
     public int UpdateCheckIntervalMinutes { get; set; } = 180;
 
+    /// <summary>--port로 띄운 포터블 실행 (설정 파일이 아니라 실행 인자로 정해짐). 서버 자가 업데이트는 하지 않는다</summary>
+    public bool Portable { get; set; }
+
     /// <summary>설치 스크립트가 만드는 설정 파일 위치</summary>
     public static string InstalledConfigPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "PcManager", "Server", "server.json");
+}
+
+/// <summary>실행 인자 해석 (--name 값 / --name=값)</summary>
+public static class ServerArgs
+{
+    public static string? Value(string[] args, string name)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+                return i + 1 < args.Length ? args[i + 1] : null;
+            if (args[i].StartsWith(name + "=", StringComparison.OrdinalIgnoreCase))
+                return args[i][(name.Length + 1)..];
+        }
+        return null;
+    }
+
+    /// <summary>--port 값. 없으면 null, 잘못된 값이면 시작하지 않는다</summary>
+    public static int? Port(string[] args)
+    {
+        var raw = Value(args, "--port");
+        if (raw is null)
+            return null;
+        if (!int.TryParse(raw, out var port) || port is < 1 or > 65535)
+            throw new ArgumentException($"--port 값이 올바르지 않습니다: {raw} (1~65535)");
+        return port;
+    }
 }
 
 public record AppPaths(string DataDirectory)
