@@ -153,7 +153,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <h1>Don't Move</h1>
+        <h1>RemoteKit</h1>
         <nav className="tabs" role="tablist">
           <button type="button" role="tab" aria-selected={page === 'files'} className={page === 'files' ? 'active' : ''} onClick={() => setPage('files')}>
             PC Manager

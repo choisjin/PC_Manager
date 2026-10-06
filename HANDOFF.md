@@ -1,4 +1,4 @@
-# HANDOFF — PC Manager ("Don't Move")
+# HANDOFF — PC Manager ("RemoteKit")
 
 작성: 2026-10-06 · 최신 릴리스 **v0.8.24** (main = `bd458cc`, 작업 트리 깨끗, 모두 푸시됨)
 연동 프로젝트: NPMS 포털 `E:/Project/Jira_MCP` (원격 `choisjin/NPMS`, main = `c1230ae`, 푸시됨)

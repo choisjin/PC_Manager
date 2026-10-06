@@ -247,7 +247,7 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
   // 안 읽은 메시지 합계 → 채팅 탭 배지·브라우저 탭 제목
   const unread = chatRooms.reduce((sum, r) => sum + r.unread, 0)
   useEffect(() => {
-    baseTitleRef.current = unread > 0 ? `(💬${unread}) Don't Move` : "Don't Move"
+    baseTitleRef.current = unread > 0 ? `(💬${unread}) RemoteKit` : 'RemoteKit'
     if (!titleTimerRef.current) document.title = baseTitleRef.current
   }, [unread])
 
