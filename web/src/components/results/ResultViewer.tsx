@@ -1,199 +1,135 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { api, type FileEntry, type ResultSet, type ResultSetSummary } from '../../api'
-import { isImageFile, isVideoFile } from '../../fileTypes'
+import { api, type ResultSet, type ResultSetSummary } from '../../api'
 import { formatBytes } from '../../format'
 import { type ClipItem, FILES_MIME, type FilesDragPayload } from '../explorer/pcGroups'
 import {
-  ATS_ACTION_CELL, ATS_RESULT_CELL, type AtsImages, type ColumnRole, compareCells, decodeText, formatSeconds, formatWall, type ParsedResult, parseAts, parseResult,
-  RESULT_MODE_LABEL, type ResultMapping, type ResultMode, type ResultRow, statusTone, timeFromName,
+  ATS_ACTION_CELL, ATS_RESULT_CELL, type AtsImages, type ColumnRole, compareCells, formatSeconds, formatWall, type ParsedResult, parseAts, parseResult,
+  RESULT_MODE_LABEL, type ResultMapping, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
+  addSessionVideo, autoAssign, baseName, closeSets, closeSetup, closeViewer, dirName, dismissToast, openSets, openSetup, openViewer,
+  type RawVideo, type ResultSession, saveSessionConfig, sessionFileUrl, sessionTitle, setSessionSet,
+  type SetupState, type Source, startSession, toMessage, updateSessionVideo, useResults, type ViewConfig,
+} from './resultSessions'
+import {
   type Anchor, baseSeconds, emptySync, resolveStart, rowAtTime, solveAnchors, START_SOURCE_LABEL, type SyncState,
-  toRowTime, toVideoTime, type VideoInfo, videoForRow, wallFromIso,
+  toRowTime, toVideoTime, type VideoInfo, videoForRow,
 } from './sync'
 import { type ColFilters, ColumnFilterMenu, type ColSort } from './ColumnFilter'
-import { type PutSlot, ResultBrowser } from './ResultBrowser'
 import { VideoTransport } from './VideoTransport'
 
-/** 셋에 저장하는 화면 설정 */
-interface ViewConfig {
-  /** 결과 형식 (없으면 예전 셋 = RFW 자동 판별) */
-  mode?: ResultMode
-  /** ATS 원본 이미지 폴더 (결과 이미지 폴더는 셋의 imageDir) */
-  refDir?: string | null
-  mapping: Partial<ResultMapping>
-  sync: SyncState
-  /** 원본 영상 → 재생용 사본 (탐색 색인을 넣거나 변환한 것). 셋에 사본을 백업해 PC가 꺼져 있어도 탐색되게 */
-  playPaths?: Record<string, { playPath: string; duration: number | null; fps: number | null }>
-}
+type PutSlot = 'result' | 'video' | 'image' | 'ref'
+type Dialog = null | 'sync' | 'save' | 'trim'
 
-interface Source {
-  mode: ResultMode
-  agentId: string
-  machineName: string | null
-  resultPath: string
-  videoPaths: string[]
-  /** 이미지 폴더 (ATS: 결과 이미지 폴더) */
-  imageDir: string | null
-  /** ATS 원본 이미지 폴더 (captured_image 등) */
-  refDir: string | null
-}
-
-interface RawVideo {
-  path: string
-  name: string
-  duration: number | null
-  modified: number | null
-  size: number | null
-  metaStarted: string | null
-  /** 브라우저가 재생할 파일 (원본 또는 재생용 사본) */
-  playPath: string | null
-  fps: number | null
-  /** checking: 길이·형식 확인 중 · converting: 재생용 사본 만드는 중 · ready · failed */
-  prep: 'checking' | 'needs-convert' | 'converting' | 'ready' | 'failed'
-  prepNote: string | null
-}
-
-const newRawVideo = (p: string): RawVideo => ({
-  path: p, name: baseName(p), duration: null, modified: null, size: null, metaStarted: null,
-  playPath: null, fps: null, prep: 'checking', prepNote: null,
-})
-
-interface Props {
-  agentId: string
-  machineName: string
-  /** 내 PC 에이전트 (탐색기와 같은 파일 아이콘) */
-  selfAgentId: string | null
-  /** 미니 탐색기 시작 폴더 (지금 탐색기 경로) */
-  startPath: string
-  /** 이 PC의 즐겨찾기 */
-  favorites: string[]
-  /** 탐색기에서 고른 항목 (확장자로 Result·영상·이미지 폴더에 자동 배치) */
-  initialItems: ClipItem[]
-  onClose: () => void
-}
-
-const RESULT_EXT = /\.(csv|tsv|txt|log|json)$/i
 const ROW_HEIGHT = 26
 /** ATS 표에서 값을 가운데 맞추는 짧은 열: ITERATION · ACTION CHECK · STEP RESULT */
 const ATS_CENTER = new Set([1, ATS_ACTION_CELL, ATS_RESULT_CELL])
 const ROLE_LABEL: Record<ColumnRole, string> = {
   time: '시간', cycle: '회차', status: '결과', name: '스텝 이름', duration: '걸린 시간', message: '메시지',
 }
-const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? p
-const dirName = (p: string) => p.replace(/[\\/][^\\/]*$/, '')
-const toMessage = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-/** 결과 확인: Result(CSV)·영상·이미지를 시각으로 맞춰 보는 전체 화면 (ReplayKit 시나리오 상세결과 방식) */
-export function ResultViewer({ agentId, machineName, selfAgentId, startPath, favorites, initialItems, onClose }: Props) {
-  const [stage, setStage] = useState<'setup' | 'view'>('setup')
-  const [source, setSource] = useState<Source>(() => autoAssign(agentId, machineName, initialItems))
-  const [set, setSet] = useState<ResultSet | null>(null)
-  const [dialog, setDialog] = useState<null | 'sync' | 'save' | 'sets' | 'trim'>(null)
+const sourceFromSet = (set: ResultSet): Source => ({
+  mode: (set.config as ViewConfig | null)?.mode ?? 'rfw',
+  agentId: set.agentId, machineName: set.machineName, resultPath: set.resultPath,
+  videoPaths: set.videoPaths, imageDir: set.imageDir, refDir: (set.config as ViewConfig | null)?.refDir ?? null,
+})
+
+/**
+ * 결과 확인 (앱 전체에 하나): 경로 지정 창 · 다 불러온 결과의 전체 화면 · 저장된 셋 · 준비 완료 알림.
+ * Result(CSV)·영상·이미지를 시각으로 맞춰 본다 (ReplayKit 시나리오 상세결과 방식)
+ */
+export function ResultHost({ machineName }: { machineName: (agentId: string) => string }) {
+  const { sessions, activeId, setup, setsOpen, toasts } = useResults()
+  const active = sessions.find((s) => s.id === activeId && s.state === 'ready') ?? null
+  const [dialog, setDialog] = useState<Dialog>(null)
   const [preview, setPreview] = useState<string | null>(null)
-  // 보기 화면을 새로 시작할 때만 바꾼다 (경로로 열기·다른 셋 열기). 저장해서 셋이 생겨도 화면은 그대로
-  const [viewKey, setViewKey] = useState(0)
+
+  // 다른 결과로 바꾸면 열린 창은 닫는다
+  useEffect(() => {
+    setDialog(null)
+    setPreview(null)
+  }, [activeId])
 
   // 전체 화면이라 전송·알림 PiP가 표를 가리지 않게 (백업 진행은 저장 창에서 보여 준다)
+  const viewing = !!active
   useEffect(() => {
+    if (!viewing) return
     document.body.classList.add('rv-open')
     return () => document.body.classList.remove('rv-open')
-  }, [])
+  }, [viewing])
 
-  // Esc: 열린 창 먼저, 없으면 결과 확인 닫기
+  // Esc: 열린 창 먼저, 없으면 결과 확인 닫기 → 경로 지정 창 닫기
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (preview) setPreview(null)
+      else if (setsOpen) closeSets()
       else if (dialog) setDialog(null)
-      else onClose()
+      else if (viewing) closeViewer()
+      else if (setup) closeSetup()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [dialog, preview, onClose])
+  }, [dialog, preview, setsOpen, viewing, setup])
 
   const openSet = async (summary: ResultSetSummary) => {
     const full = await api.resultSet(summary.id)
-    setSet(full)
-    setSource({
-      mode: (full.config as ViewConfig | null)?.mode ?? 'rfw',
-      agentId: full.agentId, machineName: full.machineName, resultPath: full.resultPath,
-      videoPaths: full.videoPaths, imageDir: full.imageDir, refDir: (full.config as ViewConfig | null)?.refDir ?? null,
-    })
-    setDialog(null)
-    setViewKey((k) => k + 1)
-    setStage('view')
+    closeSets()
+    closeSetup()
+    const loaded = sessions.find((s) => s.set?.id === full.id && s.state !== 'failed')
+    if (loaded?.state === 'ready') openViewer(loaded.id)
+    else if (!loaded) startSession(sourceFromSet(full), full)
   }
 
-  return createPortal(
-    <div className="rv-page" role="dialog" aria-label="결과 확인">
-      {stage === 'setup' ? (
-        <Setup
-          source={source}
-          setSource={setSource}
-          selfAgentId={selfAgentId}
-          startPath={startPath}
-          favorites={favorites}
-          onOpen={() => {
-            setSet(null)
-            setViewKey((k) => k + 1)
-            setStage('view')
-          }}
-          onSets={() => setDialog('sets')}
-          onClose={onClose}
-        />
-      ) : (
-        <Viewer
-          key={viewKey}
-          source={source}
-          set={set}
-          setSet={setSet}
-          dialog={dialog}
-          setDialog={setDialog}
-          setPreview={setPreview}
-          onBack={() => setStage('setup')}
-          onClose={onClose}
-          addVideo={(path) => setSource((s) => ({ ...s, videoPaths: [...s.videoPaths, path] }))}
-        />
+  return (
+    <>
+      {setup && <SetupPopup key={setup.key} setup={setup} machineName={machineName} />}
+      {active && createPortal(
+        <div className="rv-page" role="dialog" aria-label="결과 확인">
+          <Viewer
+            key={active.id}
+            session={active}
+            sessions={sessions}
+            dialog={dialog}
+            setDialog={setDialog}
+            setPreview={setPreview}
+          />
+        </div>,
+        document.body,
       )}
-      {dialog === 'sets' && <SetsDialog onOpen={(s) => void openSet(s)} onClose={() => setDialog(null)} />}
-      {preview && (
+      {setsOpen && createPortal(<SetsDialog onOpen={(s) => void openSet(s)} onClose={closeSets} />, document.body)}
+      {preview && createPortal(
         <div className="rv-preview" onClick={() => setPreview(null)}>
           <img src={preview} alt="" />
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>,
-    document.body,
+      {toasts.length > 0 && createPortal(
+        <div className="rv-toasts">
+          {toasts.map((t) => (
+            <div key={t.id} className={`rv-toast panel${t.failed ? ' failed' : ''}`}>
+              <span className="ellipsis" title={t.text}>{t.failed ? '⚠' : '✔'} {t.text}</span>
+              {!t.failed && <button type="button" className="primary" onClick={() => openViewer(t.sessionId)}>열기</button>}
+              <button type="button" className="icon" aria-label="닫기" onClick={() => dismissToast(t.id)}>✕</button>
+            </div>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
   )
 }
 
-/** 탐색기에서 고른 항목을 확장자로 나눠 넣는다 */
-function autoAssign(agentId: string, machineName: string, items: ClipItem[]): Source {
-  const result = items.find((i) => !i.isDir && RESULT_EXT.test(i.name))
-  return {
-    mode: 'ats',
-    agentId,
-    machineName,
-    resultPath: result?.path ?? '',
-    videoPaths: items.filter((i) => !i.isDir && isVideoFile(i.name)).map((i) => i.path),
-    imageDir: items.find((i) => i.isDir)?.path ?? null,
-    refDir: null,
-  }
-}
+// ─────────────────────────────── 경로 지정: 떠 있는 작은 창 (탐색기에서 끌어다 놓기)
 
-// ─────────────────────────────── 설정: 미니 탐색기 + 세 칸
+function SetupPopup({ setup, machineName }: { setup: SetupState; machineName: (agentId: string) => string }) {
+  const [source, setSource] = useState<Source>(setup.source)
+  const [warn, setWarn] = useState<string | null>(null)
+  const [pos, setPos] = useState(() => ({ x: Math.max(8, window.innerWidth - 500), y: 70 }))
+  const ats = source.mode === 'ats'
+  const empty = !source.resultPath && source.videoPaths.length === 0 && !source.imageDir && !source.refDir
 
-function Setup({ source, setSource, selfAgentId, startPath, favorites, onOpen, onSets, onClose }: {
-  source: Source
-  setSource: React.Dispatch<React.SetStateAction<Source>>
-  selfAgentId: string | null
-  startPath: string
-  favorites: string[]
-  onOpen: () => void
-  onSets: () => void
-  onClose: () => void
-}) {
   const put = (slot: PutSlot, item: ClipItem) =>
     setSource((s) =>
       slot === 'result' ? { ...s, resultPath: item.path }
@@ -201,25 +137,59 @@ function Setup({ source, setSource, selfAgentId, startPath, favorites, onOpen, o
           : slot === 'ref' ? { ...s, refDir: item.isDir ? item.path : dirName(item.path) }
             : { ...s, imageDir: item.isDir ? item.path : dirName(item.path) },
     )
-  const ats = source.mode === 'ats'
 
-  const dropInto = (slot: PutSlot) => (e: React.DragEvent) => {
+  /** 끌어온 항목 (탐색기 창). 다른 PC 파일은 비어 있을 때만 그 PC로 바꾼다 */
+  const dropped = (e: React.DragEvent): ClipItem[] | null => {
     e.preventDefault()
+    e.stopPropagation()
     const json = e.dataTransfer.getData(FILES_MIME)
-    const items: ClipItem[] = json
-      ? (JSON.parse(json) as FilesDragPayload).items
-      : e.dataTransfer.getData('text/plain')
-        ? [{ path: e.dataTransfer.getData('text/plain'), name: baseName(e.dataTransfer.getData('text/plain')), isDir: slot === 'image' || slot === 'ref' }]
-        : []
+    if (!json) return null
+    const payload = JSON.parse(json) as FilesDragPayload
+    if (payload.agentId !== source.agentId) {
+      if (!empty) {
+        setWarn(`다른 PC(${machineName(payload.agentId)})의 파일입니다. 한 결과의 파일은 모두 같은 PC(${source.machineName})에 있어야 합니다.`)
+        return null
+      }
+      setSource((s) => ({ ...s, agentId: payload.agentId, machineName: machineName(payload.agentId) }))
+    }
+    setWarn(null)
+    return payload.items
+  }
+  const dropInto = (slot: PutSlot) => (e: React.DragEvent) => {
+    const items = dropped(e)
+    if (!items) return
     for (const item of slot === 'video' ? items : items.slice(0, 1)) put(slot, item)
   }
+  // 칸 밖에 놓으면 확장자로 알아서 (Result·영상·폴더 = 결과 이미지 폴더)
+  const dropAnywhere = (e: React.DragEvent) => {
+    const items = dropped(e)
+    if (items) setSource((s) => autoAssign(s, items))
+  }
   const allowDrop = (e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes(FILES_MIME) || e.dataTransfer.types.includes('text/plain')) e.preventDefault()
+    if (e.dataTransfer.types.includes(FILES_MIME)) e.preventDefault()
   }
 
-  return (
-    <>
-      <header className="rv-head">
+  const startMove = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('button')) return
+    e.preventDefault()
+    const sx = e.clientX
+    const sy = e.clientY
+    const base = pos
+    const onMove = (ev: MouseEvent) => setPos({
+      x: Math.max(0, Math.min(window.innerWidth - 120, base.x + ev.clientX - sx)),
+      y: Math.max(0, Math.min(window.innerHeight - 40, base.y + ev.clientY - sy)),
+    })
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  return createPortal(
+    <div className="rv-setup-pop panel" style={{ left: pos.x, top: pos.y }} onDragOver={allowDrop} onDrop={dropAnywhere}>
+      <header className="rv-setup-pop-head" onMouseDown={startMove} title="끌어서 이동">
         <strong>결과 확인</strong>
         <span className="rv-mode" role="group" aria-label="결과 형식">
           {(['ats', 'rfw'] as const).map((m) => (
@@ -228,46 +198,44 @@ function Setup({ source, setSource, selfAgentId, startPath, favorites, onOpen, o
             </button>
           ))}
         </span>
-        <span className="muted">{source.machineName} · Result·영상·이미지 폴더를 고르세요</span>
+        <span className="muted small ellipsis">{source.machineName}</span>
         <span className="rv-spacer" />
-        <button type="button" onClick={onSets}>저장된 셋 열기</button>
-        <button type="button" className="icon" aria-label="닫기" onClick={onClose}>✕</button>
+        <button type="button" className="small" onClick={openSets}>저장된 셋</button>
+        <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc)" onClick={closeSetup}>✕</button>
       </header>
-      <div className="rv-setup">
-        <ResultBrowser
-          agentId={source.agentId}
-          selfAgentId={selfAgentId}
-          startPath={startPath}
-          favorites={favorites}
-          isResult={(name) => RESULT_EXT.test(name)}
-          folderSlots={ats ? [{ slot: 'ref', label: '원본' }, { slot: 'image', label: '결과' }] : [{ slot: 'image', label: '이미지' }]}
-          onPut={put}
-        />
-        <section className="rv-slots">
-          <Slot title={`Result 파일 (${RESULT_MODE_LABEL[source.mode]} CSV)`} hint="CSV 파일을 끌어다 놓으세요" onDrop={dropInto('result')} onDragOver={allowDrop}
-            items={source.resultPath ? [source.resultPath] : []} onRemove={() => setSource((s) => ({ ...s, resultPath: '' }))} />
-          <Slot title="영상 (여러 개 가능)" hint="영상 파일을 끌어다 놓으세요 (회차별 녹화 등)" onDrop={dropInto('video')} onDragOver={allowDrop}
-            items={source.videoPaths} onRemove={(p) => setSource((s) => ({ ...s, videoPaths: s.videoPaths.filter((v) => v !== p) }))} />
-          {ats && (
-            <Slot title="원본 이미지 폴더" hint="비교 기준 이미지 폴더 (예: D:\excelrunner_report\captured_image) — 끌어다 놓거나 '이 폴더 = 원본'" onDrop={dropInto('ref')} onDragOver={allowDrop}
-              items={source.refDir ? [source.refDir] : []} onRemove={() => setSource((s) => ({ ...s, refDir: null }))} />
-          )}
-          <Slot
-            title={ats ? '결과 이미지 폴더' : '이미지 폴더'}
-            hint={ats ? "실행 때 캡처한 이미지 폴더 (예: D:\\excelrunner_report\\2026-10-06-1403\\RVC_001) — 끌어다 놓거나 '이 폴더 = 결과'" : "폴더를 끌어다 놓거나 '이 폴더 = 이미지'"}
-            onDrop={dropInto('image')} onDragOver={allowDrop}
-            items={source.imageDir ? [source.imageDir] : []} onRemove={() => setSource((s) => ({ ...s, imageDir: null }))} />
-          <p className="hint">
-            {ats
-              ? 'Result에 적힌 이미지를 두 폴더에서 파일 이름으로 찾습니다 (폴더를 안 주면 Result에 적힌 경로 그대로). 영상 아래에 원본·결과 이미지를 나란히 보여 줍니다.'
-              : 'Result에 적힌 이미지 경로는 자동으로 찾습니다. 이미지 폴더를 주면 폴더 안 같은 이름의 파일로도 찾고, 파일 이름의 시각으로 영상 위치에 맞춥니다.'}
-          </p>
-          <div className="rv-setup-actions">
-            <button type="button" className="primary" disabled={!source.resultPath} onClick={onOpen}>열기</button>
-          </div>
-        </section>
+      <p className="hint">탐색기 창에서 파일·폴더를 아래 칸으로 끌어다 놓으세요 (칸 밖에 놓으면 확장자로 알아서 넣습니다)</p>
+      <div className="rv-slots">
+        <Slot title={`Result 파일 (${RESULT_MODE_LABEL[source.mode]} CSV)`} hint="CSV 파일을 끌어다 놓으세요" onDrop={dropInto('result')} onDragOver={allowDrop}
+          items={source.resultPath ? [source.resultPath] : []} onRemove={() => setSource((s) => ({ ...s, resultPath: '' }))} />
+        <Slot title="영상 (여러 개 가능)" hint="영상 파일을 끌어다 놓으세요 (회차별 녹화 등)" onDrop={dropInto('video')} onDragOver={allowDrop}
+          items={source.videoPaths} onRemove={(p) => setSource((s) => ({ ...s, videoPaths: s.videoPaths.filter((v) => v !== p) }))} />
+        {ats && (
+          <Slot title="원본 이미지 폴더" hint="비교 기준 이미지 폴더 (예: D:\excelrunner_report\captured_image)" onDrop={dropInto('ref')} onDragOver={allowDrop}
+            items={source.refDir ? [source.refDir] : []} onRemove={() => setSource((s) => ({ ...s, refDir: null }))} />
+        )}
+        <Slot
+          title={ats ? '결과 이미지 폴더' : '이미지 폴더'}
+          hint={ats ? '실행 때 캡처한 이미지 폴더 (예: D:\\excelrunner_report\\2026-10-06-1403\\RVC_001)' : '폴더를 끌어다 놓으세요'}
+          onDrop={dropInto('image')} onDragOver={allowDrop}
+          items={source.imageDir ? [source.imageDir] : []} onRemove={() => setSource((s) => ({ ...s, imageDir: null }))} />
       </div>
-    </>
+      {warn && <p className="error small">{warn}</p>}
+      <p className="hint">'열기'를 누르면 뒤에서 모두 불러오고(영상은 필요하면 재생용으로 변환), 다 되면 알려 줍니다. 진행은 진행상황 탭에서 볼 수 있습니다.</p>
+      <div className="rv-setup-actions">
+        <button
+          type="button"
+          className="primary"
+          disabled={!source.resultPath}
+          onClick={() => {
+            startSession(source, null, setup.replaceId)
+            closeSetup()
+          }}
+        >
+          열기
+        </button>
+      </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -310,29 +278,20 @@ function Slot({ title, hint, items, onDrop, onDragOver, onRemove }: {
 
 // ─────────────────────────────── 보기
 
-function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, onClose, addVideo }: {
-  source: Source
-  set: ResultSet | null
-  setSet: (s: ResultSet | null) => void
-  dialog: null | 'sync' | 'save' | 'sets' | 'trim'
-  setDialog: (d: null | 'sync' | 'save' | 'sets' | 'trim') => void
+function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
+  session: ResultSession
+  sessions: ResultSession[]
+  dialog: Dialog
+  setDialog: (d: Dialog) => void
   setPreview: (url: string | null) => void
-  onBack: () => void
-  onClose: () => void
-  addVideo: (path: string) => void
 }) {
-  const savedConfig = (set?.config ?? null) as ViewConfig | null
-  const [rawText, setRawText] = useState<string | null>(null)
+  const { id, source, set, rawText, videos: rawVideos, images, refImages } = session
+  const savedConfig = session.config
   const [mapping, setMapping] = useState<Partial<ResultMapping>>(savedConfig?.mapping ?? {})
   const [sync, setSync] = useState<SyncState>(savedConfig?.sync ?? emptySync())
-  const [rawVideos, setRawVideos] = useState<RawVideo[]>(() => source.videoPaths.map(newRawVideo))
+  // 열 지정·보정은 세션에 남겨 다른 결과로 갔다 와도 그대로
+  useEffect(() => saveSessionConfig(id, { mapping, sync }), [id, mapping, sync])
   const [current, setCurrent] = useState<string | null>(source.videoPaths[0] ?? null)
-  // 영상이 늘어나면(자른 영상 '목록에 추가') 목록에 넣는다
-  useEffect(() => {
-    setRawVideos((list) => source.videoPaths.map((p) =>
-      list.find((v) => v.path === p) ?? newRawVideo(p)))
-  }, [source.videoPaths])
-  const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [videoError, setVideoError] = useState<string | null>(null)
   const [selected, setSelected] = useState<number | null>(null)
@@ -349,25 +308,11 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const pendingSeek = useRef<number | null>(null)
 
-  // 셋에 백업된 파일이면 서버에서, 아니면 테스트 PC에서 바로
-  const fileUrl = useCallback(
-    (path: string) => (set && set.files[path] ? api.resultSetFileUrl(set.id, path) : api.mediaUrl(source.agentId, path)),
-    [set, source.agentId],
-  )
-
-  // Result 읽기
-  useEffect(() => {
-    let alive = true
-    fetch(fileUrl(source.resultPath))
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`Result 파일을 읽지 못했습니다 (${res.status}): ${await res.text()}`)
-        return decodeText(await res.arrayBuffer())
-      })
-      .then((text) => alive && setRawText(text), (err) => alive && setError(toMessage(err)))
-    return () => {
-      alive = false
-    }
-  }, [fileUrl, source.resultPath])
+  const fileUrl = useCallback((path: string) => sessionFileUrl(set, source.agentId, path), [set, source.agentId])
+  const onBack = () => {
+    closeViewer()
+    openSetup(source, id)
+  }
 
   const ats = source.mode === 'ats'
   const parsed: ParsedResult | null = useMemo(
@@ -379,73 +324,8 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
   const sortedRows = useMemo(() => rows.filter((r) => r.time !== null).sort((a, b) => a.time! - b.time! || a.index - b.index), [rows])
   const firstTime = sortedRows[0]?.time ?? null
 
-  const updateVideo = useCallback(
-    (path: string, patch: Partial<RawVideo>) => setRawVideos((list) => list.map((x) => (x.path === path ? { ...x, ...patch } : x))),
-    [],
-  )
-
-  // 영상: 수정 시각·크기(목록), 메타 파일(started_at), 길이·fps·형식(테스트 PC의 ffmpeg)
-  useEffect(() => {
-    let alive = true
-    for (const v of source.videoPaths) {
-      const update = (patch: Partial<RawVideo>) => alive && updateVideo(v, patch)
-      api.listFiles(source.agentId, dirName(v)).then(
-        (l) => {
-          const entry = l.entries.find((e) => e.fullPath === v || e.name === baseName(v))
-          if (entry) update({ modified: wallFromIso(entry.modifiedAt), size: entry.size })
-          // 녹화 시작 시각 사이드카 (ReplayKit: 영상.meta.json) — 있을 때만 읽는다
-          const metaName = `${baseName(v)}.meta.json`.toLowerCase()
-          if (l.entries.some((e) => e.name.toLowerCase() === metaName))
-            fetch(api.mediaUrl(source.agentId, `${v}.meta.json`))
-              .then((res) => (res.ok ? res.json() : null))
-              .then((meta: { started_at?: string } | null) => meta?.started_at && update({ metaStarted: meta.started_at }), () => {})
-        },
-        () => {},
-      )
-      api.prepareVideo(source.agentId, v, false).then(
-        (r) => update(r.playPath
-          ? { playPath: r.playPath, duration: r.duration, fps: r.fps, prep: 'ready', prepNote: r.note }
-          : { duration: r.duration, fps: r.fps, prep: 'needs-convert', prepNote: r.note }),
-        (err) => {
-          // PC가 꺼졌거나 옛 에이전트: 셋에 백업한 재생용 사본 → 원본을 브라우저가 읽는 만큼
-          const saved = savedConfig?.playPaths?.[v]
-          if (saved && set?.files[saved.playPath]) {
-            update({ playPath: saved.playPath, duration: saved.duration, fps: saved.fps, prep: 'ready' })
-            return
-          }
-          // 원본 그대로 재생: 길이·탐색 색인이 없는 영상(mkv·webm 등)은 위치가 어긋날 수 있어 알린다
-          update({ playPath: v, prep: 'ready', prepNote: `재생용 영상을 준비하지 못해 원본을 그대로 재생합니다 (${toMessage(err)})` })
-          const probe = document.createElement('video')
-          probe.preload = 'metadata'
-          probe.muted = true
-          probe.onloadedmetadata = () => {
-            if (Number.isFinite(probe.duration)) update({ duration: probe.duration })
-            probe.removeAttribute('src')
-            probe.load()
-          }
-          probe.src = fileUrl(v)
-        },
-      )
-    }
-    return () => {
-      alive = false
-    }
-    // savedConfig·set은 셋을 열 때 정해지고 그 뒤 바뀌어도 다시 확인할 필요 없음
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source.agentId, source.videoPaths, fileUrl, updateVideo])
-
-  // 지금 영상이 탐색이 안 되는 형식이면 테스트 PC에서 재생용 사본을 만든다 (한 번 만들면 캐시)
+  const updateVideo = useCallback((path: string, p: Partial<RawVideo>) => updateSessionVideo(id, path, p), [id])
   const currentRaw = rawVideos.find((v) => v.path === current) ?? null
-  useEffect(() => {
-    if (!current || currentRaw?.prep !== 'needs-convert') return
-    updateVideo(current, { prep: 'converting' })
-    api.prepareVideo(source.agentId, current, true).then(
-      (r) => updateVideo(current, r.playPath
-        ? { playPath: r.playPath, duration: r.duration, fps: r.fps, prep: 'ready', prepNote: r.note }
-        : { prep: 'failed', prepNote: r.error ?? r.note }),
-      (err) => updateVideo(current, { prep: 'failed', prepNote: toMessage(err) }),
-    )
-  }, [current, currentRaw?.prep, source.agentId, updateVideo])
 
   const videos: VideoInfo[] = useMemo(
     () => rawVideos.map((v) => {
@@ -455,10 +335,6 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
     [rawVideos, sync.manualStarts, firstTime],
   )
   const currentVideo = videos.find((v) => v.path === current) ?? null
-
-  // 이미지 폴더 (ATS: 결과 이미지 폴더) · ATS 원본 이미지 폴더
-  const images = useFolderImages(source.agentId, source.imageDir, set)
-  const refImages = useFolderImages(source.agentId, ats ? source.refDir : null, set)
 
   // 파일 이름으로 찾기: 결과 폴더 → 원본 폴더 → Result에 적힌 경로 그대로
   const imagesByName = useMemo(
@@ -579,18 +455,9 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
     setNotice('기준점을 넣었습니다. 두 곳 이상 맞추면 시계 속도 차이까지 보정합니다.')
   }
 
-  if (error) {
-    return (
-      <>
-        <ViewerHead source={source} set={set} onBack={onBack} onClose={onClose} setDialog={setDialog} />
-        <p className="error rv-error">{error}</p>
-      </>
-    )
-  }
-
   return (
     <>
-      <ViewerHead source={source} set={set} onBack={onBack} onClose={onClose} setDialog={setDialog} />
+      <ViewerHead session={session} sessions={sessions} onBack={onBack} setDialog={setDialog} />
       <div className="rv-main">
         <section className={`rv-left${ats ? ' fit' : ''}`}>
           <VideoTransport
@@ -686,35 +553,38 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
           </div>
         </section>
         <section className="rv-right">
-          <div className="rv-filters">
-            <input placeholder="검색 (모든 열)" value={query} onChange={(e) => setQuery(e.target.value)} />
-            {ats ? (Object.keys(colFilters).length > 0 || colSort) && (
+          {ats ? (Object.keys(colFilters).length > 0 || colSort) && (
+            // ATS: 거르기·정렬은 머리글에서, 표는 항상 재생 중인 스텝을 따라간다
+            <div className="rv-filters">
               <button type="button" className="link small" onClick={() => {
                 setColFilters({})
                 setColSort(null)
               }}>
                 머리글 필터·정렬 지우기 ({Object.keys(colFilters).length})
               </button>
-            ) : (
+            </div>
+          ) : (
+            <div className="rv-filters">
+              <input placeholder="검색 (모든 열)" value={query} onChange={(e) => setQuery(e.target.value)} />
               <select value={cycle} onChange={(e) => setCycle(e.target.value)} title="회차">
                 <option value="">전체 회차</option>
                 {cycles.map((c) => <option key={c} value={c}>회차 {c}</option>)}
               </select>
-            )}
-            <label className="small"><input type="checkbox" checked={onlyFail} onChange={(e) => setOnlyFail(e.target.checked)} /> 실패만</label>
-            <label className="small" title="재생 중인 스텝으로 표를 따라 움직임"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> 따라가기</label>
-            <span className="muted small">{visible.length.toLocaleString()} / {rows.length.toLocaleString()}행</span>
-          </div>
+              <label className="small"><input type="checkbox" checked={onlyFail} onChange={(e) => setOnlyFail(e.target.checked)} /> 실패만</label>
+              <label className="small" title="재생 중인 스텝으로 표를 따라 움직임"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> 따라가기</label>
+              <span className="muted small">{visible.length.toLocaleString()} / {rows.length.toLocaleString()}행</span>
+            </div>
+          )}
           {!parsed ? <p className="muted rv-loading">Result 읽는 중…</p> : (
             <RowTable
               headers={ats ? parsed.headers : null}
               filtered={colFilters}
               sort={colSort}
-              onHeader={(col, rect) => setFilterMenu({ col, x: rect.left, y: rect.bottom + 2 })}
+              onHeader={(col, rect) => setFilterMenu((m) => (m?.col === col ? null : { col, x: rect.left, y: rect.bottom + 2 }))}
               rows={visible}
               selected={selected}
               playing={playing}
-              follow={follow}
+              follow={ats || follow}
               anchors={sync.anchors}
               videoTime={(row) => {
                 const t = videoTimeOf(row, videoForRow(row, videos, currentVideo, absolute))
@@ -777,7 +647,7 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
           now={videoRef.current?.currentTime ?? 0}
           duration={currentVideo?.duration ?? null}
           readNow={() => videoRef.current?.currentTime ?? 0}
-          onAdd={addVideo}
+          onAdd={(path) => addSessionVideo(id, path)}
           onClose={() => setDialog(null)}
         />
       )}
@@ -798,7 +668,7 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
             ...images.filter((i) => !ats || !/_full\.\w+$/i.test(i.name)).map((i) => i.fullPath),
             ...rows.flatMap((r) => [...r.images, ...atsVariants(r.ats, imagesByName)].map(resolveImage)),
           ])]}
-          onSaved={setSet}
+          onSaved={(saved) => setSessionSet(id, saved)}
           onClose={() => setDialog(null)}
         />
       )}
@@ -806,18 +676,30 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
   )
 }
 
-function ViewerHead({ source, set, onBack, onClose, setDialog }: {
-  source: Source
-  set: ResultSet | null
+function ViewerHead({ session, sessions, onBack, setDialog }: {
+  session: ResultSession
+  sessions: ResultSession[]
   onBack: () => void
-  onClose: () => void
-  setDialog: (d: 'sync' | 'save' | 'sets') => void
+  setDialog: (d: Dialog) => void
 }) {
+  const { source, set } = session
   return (
     <header className="rv-head">
-      <button type="button" onClick={onBack} title="Result·영상·이미지 다시 고르기">← 경로</button>
-      <strong>결과 확인 · {RESULT_MODE_LABEL[source.mode]}{set ? ` · ${set.name}` : ''}</strong>
-      <span className="muted ellipsis" title={source.resultPath}>{source.machineName} · {baseName(source.resultPath)}</span>
+      <button type="button" onClick={onBack} title="Result·영상·이미지 다시 고르기 (다시 불러옴)">← 경로</button>
+      <strong>결과 확인 · {RESULT_MODE_LABEL[source.mode]}</strong>
+      {/* 불러온 다른 결과로 바로 전환 */}
+      <select
+        className="rv-switch"
+        value={session.id}
+        title={`${source.machineName} · ${source.resultPath}`}
+        onChange={(e) => openViewer(e.target.value)}
+      >
+        {sessions.map((s) => (
+          <option key={s.id} value={s.id} disabled={s.state !== 'ready'}>
+            {sessionTitle(s)} · {s.source.machineName}{s.state === 'loading' ? ` (불러오는 중 ${s.done}/${s.total})` : s.state === 'failed' ? ' (실패)' : ''}
+          </option>
+        ))}
+      </select>
       {set && set.backup.state !== 'done' && (
         <span className={`small ${set.backup.state === 'failed' ? 'error' : 'muted'}`}>
           백업 {set.backup.state === 'failed' ? '실패' : `중 ${set.backup.filesDone}/${set.backup.filesTotal}`}
@@ -825,9 +707,9 @@ function ViewerHead({ source, set, onBack, onClose, setDialog }: {
       )}
       <span className="rv-spacer" />
       <button type="button" onClick={() => setDialog('sync')}>동기화·열 설정</button>
-      <button type="button" onClick={() => setDialog('sets')}>저장된 셋</button>
+      <button type="button" onClick={openSets}>저장된 셋</button>
       <button type="button" className="primary" onClick={() => setDialog('save')}>셋 저장</button>
-      <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc)" onClick={onClose}>✕</button>
+      <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc) — 진행상황에서 다시 열 수 있습니다" onClick={closeViewer}>✕</button>
     </header>
   )
 }
@@ -938,29 +820,6 @@ function AtsImageCard({ title, path, url, onPreview, empty, tools }: {
           : <img src={url(path)} alt="" onClick={() => onPreview(url(path))} onError={() => setFailed(path)} title="누르면 크게" />}
     </figure>
   )
-}
-
-/** 폴더의 이미지 목록 (테스트 PC가 꺼져 있으면 셋에 백업된 목록) */
-function useFolderImages(agentId: string, dir: string | null, set: ResultSet | null): FileEntry[] {
-  const [images, setImages] = useState<FileEntry[]>([])
-  useEffect(() => {
-    if (!dir) return
-    let alive = true
-    api.listFiles(agentId, dir).then(
-      (l) => alive && setImages(l.entries.filter((e) => !e.isDirectory && isImageFile(e.name))),
-      () => {
-        if (alive && set) {
-          const lower = dir.toLowerCase()
-          setImages(Object.keys(set.files).filter((p) => p.toLowerCase().startsWith(lower) && isImageFile(p))
-            .map((p) => ({ name: baseName(p), fullPath: p, isDirectory: false, size: 0, modifiedAt: null })))
-        }
-      },
-    )
-    return () => {
-      alive = false
-    }
-  }, [agentId, dir, set])
-  return dir ? images : []
 }
 
 // ─────────────────────────────── 스텝 표 (행이 많아 보이는 부분만 그린다)

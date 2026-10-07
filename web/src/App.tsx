@@ -8,6 +8,7 @@ import { SettingsModal } from './components/SettingsModal'
 import { SettingsPage } from './components/SettingsPage'
 import { TransfersPage } from './components/TransfersPage'
 import { TransfersPip } from './components/TransfersPip'
+import { ResultHost } from './components/results/ResultViewer'
 import { UpdateDialog } from './components/UpdateDialog'
 import { PinDialog } from './components/PinDialog'
 import { pcLockStore } from './pcLocks'
@@ -240,6 +241,9 @@ export default function App() {
 
       {/* 잠긴 PC를 열 때 PIN 입력 */}
       <PinDialog />
+
+      {/* 결과 확인: 경로 지정 창 · 불러온 결과의 전체 화면 · 준비 완료 알림 */}
+      <ResultHost machineName={machineName} />
 
       {/* 어디서든 보이는 전송 진행률·알림 위젯 */}
       <TransfersPip

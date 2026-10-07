@@ -8,6 +8,8 @@ import { NotesPanel } from './NotesPanel'
 import type { NoteEvent } from '../useDashboard'
 import { formatBytes } from '../format'
 import { kindLabel } from './explorer/useTransfers'
+import { RESULT_MODE_LABEL } from './results/resultCsv'
+import { openViewer, removeSession, type ResultSession, sessionTitle, startSession, useResults } from './results/resultSessions'
 
 interface Props {
   transfers: Transfer[]
@@ -248,6 +250,20 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
   const activeList = transfers.filter((t) => t.state === 'Pending')
   const recent = transfers.filter((t) => t.state !== 'Pending').slice(0, 5)
 
+  // 결과 확인 불러오기: 진행상황 탭에 함께. 새로 시작하면 탭을 펼쳐 보여 준다
+  const { sessions } = useResults()
+  const loadingCount = sessions.filter((s) => s.state === 'loading').length
+  const freshReady = sessions.filter((s) => s.state === 'ready' && !s.opened).length
+  const sessionCount = useRef(sessions.length)
+  useEffect(() => {
+    if (sessions.length > sessionCount.current) {
+      switchTab('transfers')
+      setCollapsed(false)
+    }
+    sessionCount.current = sessions.length
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions.length])
+
   // 안 읽은 메시지 합계 → 채팅 탭 배지·브라우저 탭 제목
   const unread = chatRooms.reduce((sum, r) => sum + r.unread, 0)
   useEffect(() => {
@@ -370,8 +386,9 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
               메모
             </button>
             <button type="button" role="tab" aria-selected={tab === 'transfers'} className={tab === 'transfers' ? 'active' : ''} onClick={() => switchTab('transfers')}>
-              파일 전송
-              {activeList.length > 0 && <span className="pip-count">{activeList.length}</span>}
+              진행상황
+              {activeList.length + loadingCount > 0 && <span className="pip-count">{activeList.length + loadingCount}</span>}
+              {freshReady > 0 && <span className="pip-count ready" title="열어 볼 수 있는 결과 확인">{freshReady}</span>}
             </button>
           </span>
         </span>
@@ -403,7 +420,15 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
 
       {!collapsed && tab === 'transfers' && (
         <div className="pip-body" style={bodyStyle}>
-          {activeList.length === 0 && recent.length === 0 && <div className="pip-empty muted small">전송 없음</div>}
+          {activeList.length === 0 && recent.length === 0 && sessions.length === 0 && <div className="pip-empty muted small">진행 중인 작업 없음</div>}
+
+          {sessions.length > 0 && (
+            <div className="pip-results">
+              <div className="pip-recent-title muted small">결과 확인</div>
+              {sessions.map((s) => <ResultItem key={s.id} session={s} />)}
+            </div>
+          )}
+          {(activeList.length > 0 || recent.length > 0) && sessions.length > 0 && <div className="pip-recent-title muted small">파일 전송</div>}
 
           {activeList.map((t) => {
             const who = userName(t.startedByUserId)
@@ -441,5 +466,36 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
       )}
 </div>,
     layer,
+  )
+}
+
+/** 진행상황: 결과 확인 불러오기 한 건 (다 되면 바로 전체 화면으로) */
+function ResultItem({ session: s }: { session: ResultSession }) {
+  const pct = s.total ? Math.round((s.done / s.total) * 100) : 0
+  const title = sessionTitle(s)
+  const ready = s.state === 'ready'
+  return (
+    <div className={`pip-item pip-result ${s.state}${ready && !s.opened ? ' fresh' : ''}`} title={s.source.resultPath}>
+      <div className="pip-item-top">
+        <button type="button" className="pip-result-name small ellipsis" disabled={!ready} onClick={() => openViewer(s.id)}>
+          {RESULT_MODE_LABEL[s.source.mode]} · {title}
+        </button>
+        {s.state === 'loading' && <span className="pip-pct small">{s.done}/{s.total}</span>}
+        {ready && <button type="button" className="primary small pip-result-open" onClick={() => openViewer(s.id)}>열기</button>}
+        {s.state === 'failed' && (
+          <button type="button" className="small" title="다시 불러오기" onClick={() => startSession(s.source, s.set, s.id)}>다시</button>
+        )}
+        <button type="button" className="icon-mini" title="목록에서 빼기" onClick={() => removeSession(s.id)}>✕</button>
+      </div>
+      {s.state === 'loading' && (
+        <div className="pip-bar">
+          <div className="pip-bar-fill" style={{ width: `${Math.max(4, pct)}%` }} />
+        </div>
+      )}
+      <div className={`pip-sub small ellipsis${s.state === 'failed' ? ' error' : ' muted'}`} title={s.error ?? s.step}>
+        {s.source.machineName}
+        {s.state === 'loading' ? ` · ${s.step}` : s.state === 'failed' ? ` · ${s.error ?? '실패'}` : ` · 준비 완료 (영상 ${s.videos.length}개${s.videos.some((v) => v.prep === 'failed') ? ', 일부 실패' : ''})`}
+      </div>
+    </div>
   )
 }

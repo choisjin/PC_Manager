@@ -44,7 +44,9 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+      const target = e.target as Element
+      // 머리글 누름은 머리글이 처리 (같은 머리글 = 닫기, 다른 머리글 = 바꿔 열기)
+      if (ref.current && !ref.current.contains(target) && !target.closest?.('.rv-colhead')) onClose()
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)

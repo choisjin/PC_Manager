@@ -4183,6 +4183,27 @@ th.sortable:hover {
 .rv-mini { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
 .rv-mini select, .rv-transport select, .rv-filters select { width: auto; }
 body.rv-open .pip { display: none; }
+
+/* 결과 확인: 경로 지정 창 (떠 있음, 탐색기에서 끌어다 놓기) */
+.rv-setup-pop { position: fixed; z-index: 2900; width: min(470px, 94vw); max-height: calc(100vh - 20px); overflow: auto; padding: 8px 12px 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28); }
+.rv-setup-pop-head { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 0 6px; cursor: move; user-select: none; border-bottom: 1px solid var(--border); }
+.rv-setup-pop .hint { margin: 6px 0; }
+.rv-setup-pop .rv-slots { overflow: visible; }
+.rv-setup-pop .rv-slot { min-height: 52px; padding: 8px 10px; }
+/* 준비 완료 알림 */
+.rv-toasts { position: fixed; z-index: 3300; right: 16px; top: 16px; display: flex; flex-direction: column; gap: 8px; max-width: min(460px, 92vw); }
+.rv-toast { display: flex; align-items: center; gap: 8px; padding: 8px 10px; min-width: 0; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); border-left: 4px solid var(--ok); }
+.rv-toast.failed { border-left-color: var(--bad); }
+.rv-toast > .ellipsis { flex: 1; min-width: 0; }
+.rv-switch { width: auto; max-width: 36vw; }
+/* 진행상황 탭: 결과 확인 불러오기 */
+.pip-results { margin-bottom: 6px; }
+.pip-result-name { flex: 1; min-width: 0; text-align: left; background: none; border: 0; padding: 0; font-weight: 600; color: var(--text); cursor: pointer; }
+.pip-result-name:disabled { cursor: default; }
+.pip-result.ready .pip-result-name:hover { color: var(--accent); }
+.pip-result.fresh { box-shadow: inset 3px 0 0 var(--ok); }
+.pip-result-open { padding: 0 8px; }
+.pip-count.ready { background: var(--ok); }
 .rv-keys { cursor: help; }
 .rv-sync-line { padding: 4px 10px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .rv-sync-line .link { margin-left: auto; }
