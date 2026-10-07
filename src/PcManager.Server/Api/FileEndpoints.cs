@@ -14,11 +14,14 @@ public static class FileEndpoints
 {
     private static readonly TimeSpan ListTimeout = TimeSpan.FromSeconds(15);
 
+    private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(40);
+    private static readonly string[] ArchiveFormats = ["zip", "7z", "tar", "tar.gz"];
+
     /// <summary>압축 파일 이름을 정한다: 한 개면 그 이름, 여러 개면 "첫이름 외 N개".</summary>
-    private static string DefaultArchiveName(IReadOnlyList<string> paths)
+    private static string DefaultArchiveName(IReadOnlyList<string> paths, string format)
     {
         var first = Path.GetFileName(paths[0].TrimEnd('\\', '/'));
-        return paths.Count == 1 ? first + ".zip" : $"{first} 외 {paths.Count - 1}개.zip";
+        return paths.Count == 1 ? $"{first}.{format}" : $"{first} 외 {paths.Count - 1}개.{format}";
     }
 
     public static void MapFileApi(this WebApplication app)
@@ -139,10 +142,15 @@ public static class FileEndpoints
         {
             if (request.Paths is null or { Count: 0 } || string.IsNullOrWhiteSpace(request.DestinationFolder))
                 return Results.BadRequest("압축할 항목과 대상 폴더가 필요합니다.");
-            var name = string.IsNullOrWhiteSpace(request.ArchiveName) ? DefaultArchiveName(request.Paths) : request.ArchiveName!;
+            var format = (request.Format ?? "zip").Trim().TrimStart('.').ToLowerInvariant();
+            if (!ArchiveFormats.Contains(format))
+                return Results.BadRequest("지원하지 않는 압축 형식입니다: " + format);
+            var name = string.IsNullOrWhiteSpace(request.ArchiveName) ? DefaultArchiveName(request.Paths, format) : request.ArchiveName!;
 
             if (shares.TryGet(agentId, out var share))
             {
+                if (format != "zip")
+                    return Results.BadRequest("공유 폴더는 zip으로만 압축할 수 있습니다.");
                 try
                 {
                     var size = localShare.Compress(share, request.Paths, request.DestinationFolder!, name);
@@ -154,7 +162,7 @@ public static class FileEndpoints
                     return Results.BadRequest("압축 실패: " + ex.Message);
                 }
             }
-            return Results.Ok(await transfers.CompressAsync(agentId, request.Paths, request.DestinationFolder!, name, Math.Max(0, request.SplitBytes)));
+            return Results.Ok(await transfers.CompressAsync(agentId, request.Paths, request.DestinationFolder!, name, Math.Max(0, request.SplitBytes), format));
         });
 
         // PC 간 붙여넣기 (원본 → 서버 중계 → 대상, 디스크 미경유). 단일 파일만.
@@ -197,6 +205,43 @@ public static class FileEndpoints
             }
             return Results.Ok(await transfers.PushAsync(agentId, path, request.Body, ct));
         }).WithMetadata(new DisableRequestSizeLimitAttribute());
+
+        // 진행 중인 전송 취소 (진행상황 PiP): PC에서 하는 일은 에이전트에게, 서버가 중계하는 PC 간 복사는 서버에서 멈춘다
+        api.MapPost("/transfers/{transferId}/cancel", async (string transferId, TransferService transfers) =>
+        {
+            var error = await transfers.CancelAsync(transferId);
+            return error is null ? Results.Ok() : Results.NotFound(error);
+        });
+
+        // 하위 폴더까지 이름 검색 (PC에서 직접)
+        api.MapGet("/agents/{agentId}/files/search", async (
+            string agentId, string? path, string? q, AgentRegistry registry, IHubContext<AgentHub> agentHub,
+            SharedFolderStore shares, CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(path) || string.IsNullOrWhiteSpace(q))
+                return Results.BadRequest("폴더와 검색어가 필요합니다.");
+            if (shares.TryGet(agentId, out _))
+                return Results.BadRequest("공유 폴더는 하위 폴더 검색을 지원하지 않습니다.");
+            if (!registry.TryGetConnection(agentId, out var connectionId))
+                return Results.Conflict("에이전트가 오프라인입니다.");
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(SearchTimeout);
+            try
+            {
+                var listing = await agentHub.Clients.Client(connectionId)
+                    .InvokeAsync<DirectoryListing>(AgentClientMethods.SearchFiles, path, q, 2000, timeout.Token);
+                return Results.Ok(listing);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return Results.Problem("검색이 너무 오래 걸립니다. 더 아래 폴더에서 검색해 보세요.", statusCode: StatusCodes.Status504GatewayTimeout);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return Results.Problem(TextEndpoints.OldAgentMessage(ex), statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
 
         api.MapGet("/transfers", async (string? agentId, string? jobRunId, int? take, IDbContextFactory<AppDbContext> dbFactory) =>
         {

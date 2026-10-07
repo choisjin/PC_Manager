@@ -182,7 +182,8 @@ public record DownloadFileRequest(string TransferId, string DestinationPath);
 /// <param name="DestinationFolder">.zip을 만들 폴더 (보통 원본과 같은 폴더)</param>
 /// <param name="ArchiveName">만들 zip 파일 이름 (충돌 시 자동 번호)</param>
 /// <param name="SplitBytes">0보다 크면 이 크기로 나눠 .zip.001, .zip.002… 볼륨으로 만든다</param>
-public record CompressRequest(string TransferId, IReadOnlyList<string> Paths, string DestinationFolder, string ArchiveName, long SplitBytes = 0);
+/// <param name="Format">zip · 7z · tar · tar.gz (옛 서버는 보내지 않음 → zip)</param>
+public record CompressRequest(string TransferId, IReadOnlyList<string> Paths, string DestinationFolder, string ArchiveName, long SplitBytes = 0, string Format = "zip");
 
 /// <param name="EntryPaths">풀 항목의 전체 경로("a.zip\폴더\파일"). 비면 전부</param>
 public record ExtractRequest(string TransferId, string ArchivePath, IReadOnlyList<string> EntryPaths, string DestinationFolder);
@@ -200,7 +201,8 @@ public record FileEntry(string Name, string FullPath, bool IsDirectory, long Siz
 
 /// <param name="Path">빈 문자열이면 드라이브 목록</param>
 /// <param name="ArchivePath">압축 파일 안을 보고 있으면 그 압축 파일 경로 (읽기 전용)</param>
-public record DirectoryListing(string Path, string? ParentPath, IReadOnlyList<FileEntry> Entries, string? Error, string? ArchivePath = null);
+/// <param name="Truncated">하위 폴더 검색(SearchFiles)에서 결과가 많거나 오래 걸려 일부만 돌려줬다</param>
+public record DirectoryListing(string Path, string? ParentPath, IReadOnlyList<FileEntry> Entries, string? Error, string? ArchivePath = null, bool Truncated = false);
 
 /// <summary>서버 → 에이전트 호출 (응답 없음)</summary>
 public interface IAgentClient
@@ -211,6 +213,9 @@ public interface IAgentClient
     Task UploadFile(UploadFileRequest request);
     Task DownloadFile(DownloadFileRequest request);
     Task Compress(CompressRequest request);
+
+    /// <summary>진행 중인 전송(압축·풀기·가져오기·올리기·결과 수집)을 멈춘다. 끝나면 TransferCompleted(실패, "취소했습니다")</summary>
+    Task CancelTransfer(string transferId);
 
     Task Extract(ExtractRequest request);
 
@@ -299,6 +304,8 @@ public static class AgentClientMethods
     /// 브라우저 영상 재생용: SignalR 조각 중계보다 훨씬 빠르다. 시작하면 바로 true (보내기는 뒤에서), 못 열면 false. 옛 에이전트는 없음 → 조각 중계로
     /// </summary>
     public const string StreamFileRange = "StreamFileRange";
+    /// <summary>(string root, string query, int max) → DirectoryListing. root 아래(하위 폴더까지)에서 이름에 query가 든 파일·폴더를 찾는다 (최대 max개)</summary>
+    public const string SearchFiles = "SearchFiles";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<FileOpKind>))]

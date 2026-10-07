@@ -7,6 +7,8 @@ export interface MenuItem {
   danger?: boolean
   /** 구분선 */
   separator?: boolean
+  /** 하위 메뉴 (마우스를 올리면 옆에 펼친다) */
+  children?: MenuItem[]
 }
 
 interface Props {
@@ -20,6 +22,9 @@ interface Props {
 export function ContextMenu({ x, y, items, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x, y })
+  const [openSub, setOpenSub] = useState<number | null>(null)
+  // 오른쪽 공간이 모자라면 하위 메뉴를 왼쪽으로
+  const [subLeft, setSubLeft] = useState(false)
 
   // 화면 밖으로 나가지 않게 위치 보정
   useLayoutEffect(() => {
@@ -29,6 +34,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     const nx = x + rect.width > window.innerWidth ? Math.max(4, window.innerWidth - rect.width - 4) : x
     const ny = y + rect.height > window.innerHeight ? Math.max(4, window.innerHeight - rect.height - 4) : y
     setPos({ x: nx, y: ny })
+    setSubLeft(nx + rect.width * 2 + 8 > window.innerWidth)
   }, [x, y])
 
   useEffect(() => {
@@ -50,24 +56,49 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     }
   }, [onClose])
 
+  const renderItem = (item: MenuItem, i: number) =>
+    item.separator ? (
+      <div key={i} className="context-sep" />
+    ) : (
+      <button
+        key={i}
+        type="button"
+        className={`context-item${item.danger ? ' danger' : ''}`}
+        disabled={item.disabled}
+        onClick={() => {
+          onClose()
+          item.onClick?.()
+        }}
+      >
+        {item.label}
+      </button>
+    )
+
   return (
     <div ref={ref} className="context-menu" style={{ left: pos.x, top: pos.y }} onClick={(e) => e.stopPropagation()}>
       {items.map((item, i) =>
-        item.separator ? (
-          <div key={i} className="context-sep" />
-        ) : (
-          <button
+        item.children ? (
+          <div
             key={i}
-            type="button"
-            className={`context-item${item.danger ? ' danger' : ''}`}
-            disabled={item.disabled}
-            onClick={() => {
-              onClose()
-              item.onClick?.()
-            }}
+            className="context-sub"
+            onMouseEnter={() => !item.disabled && setOpenSub(i)}
+            onMouseLeave={() => setOpenSub((v) => (v === i ? null : v))}
           >
-            {item.label}
-          </button>
+            <button
+              type="button"
+              className={`context-item context-sub-head${openSub === i ? ' open' : ''}`}
+              disabled={item.disabled}
+              onClick={() => setOpenSub(i)}
+            >
+              <span>{item.label}</span>
+              <span className="context-sub-arrow">▸</span>
+            </button>
+            {openSub === i && (
+              <div className={`context-menu context-submenu${subLeft ? ' left' : ''}`}>{item.children.map(renderItem)}</div>
+            )}
+          </div>
+        ) : (
+          renderItem(item, i)
         ),
       )}
     </div>

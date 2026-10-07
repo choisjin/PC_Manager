@@ -27,6 +27,10 @@ export interface PaneController {
   columns: ColumnVisibility
   showHidden: boolean
   search: string
+  /** 이미지 미리보기 (큰 아이콘에서 이미지 파일을 그림으로) */
+  previews: boolean
+  /** 하위 폴더 검색 결과를 보고 있음 */
+  deepSearching: boolean
   // 동작 (항상 최신 상태에 적용)
   navigate: (path: string) => void
   up: () => void
@@ -52,6 +56,9 @@ export interface PaneController {
   backupOnSave: boolean
   toggleBackupOnSave: () => void
   setSearch: (q: string) => void
+  /** 하위 폴더까지 이름 검색 (검색창 Enter) */
+  deepSearch: (q: string) => void
+  togglePreviews: () => void
   openTerminal: () => void
   openRemote: () => void
   /** 결과 확인 (Result·영상·이미지 맞춰 보기). 고른 파일·폴더는 자동으로 칸에 넣는다 */

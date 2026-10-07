@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTopLayer } from '../useTopLayer'
-import type { ChatMessage, ChatRoom, Org, Transfer } from '../api'
+import { api, type ChatMessage, type ChatRoom, type Org, type Transfer } from '../api'
 import { roomTitle } from '../chatRoom'
 import { type ChatActions, ChatPanel } from './ChatPanel'
 import { NotesPanel } from './NotesPanel'
@@ -437,6 +437,7 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
                 <div className="pip-item-top">
                   <span className="pip-flow small ellipsis">{flowText(t, machineName(t.agentId))}</span>
                   <span className="pip-pct small">{typeof t.percent === 'number' ? `${t.percent}%` : '…'}</span>
+                  <CancelButton transfer={t} />
                 </div>
                 <div className="pip-bar">
                   <div className={`pip-bar-fill${typeof t.percent !== 'number' ? ' indet' : ''}`} style={{ width: `${typeof t.percent === 'number' ? t.percent : 100}%` }} />
@@ -497,5 +498,28 @@ function ResultItem({ session: s }: { session: ResultSession }) {
         {s.state === 'loading' ? ` · ${s.step}` : s.state === 'failed' ? ` · ${s.error ?? '실패'}` : ` · 준비 완료 (영상 ${s.videos.length}개${s.videos.some((v) => v.prep === 'failed') ? ', 일부 실패' : ''})`}
       </div>
     </div>
+  )
+}
+
+/** 진행 중인 전송 취소 (압축·풀기·가져오기·올리기·PC 간 복사·이동) */
+function CancelButton({ transfer }: { transfer: Transfer }) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      type="button"
+      className="icon-mini pip-cancel"
+      title="취소"
+      disabled={busy}
+      onClick={() => {
+        if (!window.confirm(`'${leafOf(transfer.path) || kindLabel(transfer.kind)}' ${kindLabel(transfer.kind)}을(를) 취소할까요?`)) return
+        setBusy(true)
+        api.cancelTransfer(transfer.id).catch((err) => {
+          setBusy(false)
+          window.alert(`취소하지 못했습니다: ${err instanceof Error ? err.message : String(err)}`)
+        })
+      }}
+    >
+      {busy ? '…' : '✕'}
+    </button>
   )
 }

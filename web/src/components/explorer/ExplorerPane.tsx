@@ -1,5 +1,5 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
-import { ARCHIVE_PASSWORD_PREFIX, api, type DirectoryListing, type FileEntry, type PcStatus, type Transfer } from '../../api'
+import { ARCHIVE_FORMATS, ARCHIVE_PASSWORD_PREFIX, api, type ArchiveFormat, type DirectoryListing, type FileEntry, type PcStatus, type Transfer } from '../../api'
 import { archiveBaseName, BACKUP_SETTING_EVENT, isArchiveFile, isImageFile, isPdfFile, isTextFile, isVideoFile, loadBackupSetting, saveBackupSetting } from '../../fileTypes'
 import { formatBytes } from '../../format'
 import type { SubscribeTransfers, WatchRun } from '../../useDashboard'
@@ -149,6 +149,10 @@ export function ExplorerPane({
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortAsc, setSortAsc] = useState(true)
   const [search, setSearch] = useState('')
+  // 하위 폴더까지 검색 (툴바 검색창에서 Enter): 결과가 있으면 지금 폴더 목록 대신 보여 준다
+  const [deep, setDeep] = useState<{ query: string; loading: boolean; results: FileEntry[]; truncated: boolean; error: string | null } | null>(null)
+  // 이미지 미리보기 (보기 메뉴): 큰 아이콘으로 바꾸고 이미지 파일은 아이콘 대신 그림으로
+  const [previews, setPreviews] = useState(false)
   const [playing, setPlaying] = useState<{ path: string; name: string } | null>(null)
   // 텍스트·이미지·PDF 바로 보기 (텍스트는 편집·저장)
   const [viewing, setViewing] = useState<{ path: string; name: string; kind: ViewerKind; readOnly: boolean } | null>(null)
@@ -270,6 +274,7 @@ export function ExplorerPane({
     const requestId = ++requestRef.current
     setLoading(true)
     setSearch('')
+    setDeep(null)
     api.listFiles(agentId, target).then(
       (result) => showListing(requestId, result),
       (err) => {
@@ -427,20 +432,31 @@ export function ExplorerPane({
     }
   }
 
-  const compress = (targets: FileEntry[]) => {
+  const compress = (targets: FileEntry[], format: ArchiveFormat) => {
     if (!path || targets.length === 0) return
     setError(null)
-    void api.compressFiles(agentId, targets.map((t) => t.fullPath), path).catch((err) => setError(toMessage(err)))
+    void api.compressFiles(agentId, targets.map((t) => t.fullPath), path, undefined, 0, format).catch((err) => setError(toMessage(err)))
   }
-  const compressEach = (targets: FileEntry[]) => {
+  const compressEach = (targets: FileEntry[], format: ArchiveFormat) => {
     if (!path || targets.length === 0) return
     setError(null)
-    for (const t of targets) void api.compressFiles(agentId, [t.fullPath], path).catch((err) => setError(toMessage(err)))
+    for (const t of targets) void api.compressFiles(agentId, [t.fullPath], path, undefined, 0, format).catch((err) => setError(toMessage(err)))
   }
-  const compressSplit = (targets: FileEntry[], splitBytes: number) => {
+  const compressSplit = (targets: FileEntry[], splitBytes: number, format: ArchiveFormat) => {
     if (!path || targets.length === 0) return
     setError(null)
-    void api.compressFiles(agentId, targets.map((t) => t.fullPath), path, undefined, splitBytes).catch((err) => setError(toMessage(err)))
+    void api.compressFiles(agentId, targets.map((t) => t.fullPath), path, undefined, splitBytes, format).catch((err) => setError(toMessage(err)))
+  }
+
+  // 하위 폴더까지 이름 검색 (PC에서 직접 찾는다)
+  const deepSearch = (q: string) => {
+    const query = q.trim()
+    if (!query || !path || inArchive) return
+    setDeep({ query, loading: true, results: [], truncated: false, error: null })
+    api.searchFiles(agentId, path, query).then(
+      (r) => setDeep((d) => (d?.query === query ? { query, loading: false, results: r.entries, truncated: !!r.truncated, error: r.error } : d)),
+      (err) => setDeep((d) => (d?.query === query ? { query, loading: false, results: [], truncated: false, error: toMessage(err) } : d)),
+    )
   }
 
   const pushFiles = async (files: FileList) => {
@@ -456,12 +472,14 @@ export function ExplorerPane({
 
   // 검색·정렬을 적용한 화면 표시용 목록
   const displayed = useMemo(() => {
+    // 하위 폴더 검색 결과가 있으면 그것을 (이미 이름으로 찾은 것이라 검색어로 다시 거르지 않는다)
+    if (deep) return sortEntries(showHidden ? deep.results : deep.results.filter((e) => !e.hidden), sortKey, sortAsc)
     const all = listing?.entries ?? []
     const entries = showHidden ? all : all.filter((e) => !e.hidden)
     const q = search.trim().toLowerCase()
     const filtered = q ? entries.filter((e) => e.name.toLowerCase().includes(q)) : entries
     return sortEntries(filtered, sortKey, sortAsc)
-  }, [listing, search, sortKey, sortAsc, showHidden])
+  }, [listing, search, sortKey, sortAsc, showHidden, deep])
 
   const selectClick = (e: React.MouseEvent, entry: FileEntry, index: number) => {
     if (e.shiftKey && anchorRef.current >= 0) {
@@ -720,6 +738,8 @@ export function ExplorerPane({
     sortKey,
     sortAsc,
     search,
+    previews,
+    deepSearching: !!deep,
     navigate,
     up: () => listing?.parentPath != null && navigate(listing.parentPath),
     back,
@@ -748,7 +768,17 @@ export function ExplorerPane({
     toggleHidden,
     backupOnSave,
     toggleBackupOnSave,
-    setSearch,
+    setSearch: (q: string) => {
+      setSearch(q)
+      // 검색어를 지우면 하위 폴더 검색 결과도 닫는다
+      if (!q.trim()) setDeep(null)
+    },
+    deepSearch,
+    togglePreviews: () => {
+      const next = !previews
+      setPreviews(next)
+      if (next) setView('icons')
+    },
     openTerminal: () => setTerminal(true),
     openResults: () => openResultSetup(agentId, machineName, selectedEntries().map((t) => ({ path: t.fullPath, name: t.name, isDir: t.isDirectory }))),
     openRemote: () => {
@@ -774,7 +804,7 @@ export function ExplorerPane({
   const notifyController = useEffectEvent(() => onControllerChange(controllerRef.current))
   useEffect(() => {
     if (active) notifyController()
-  }, [active, path, view, sortKey, sortAsc, search, selected, listing, clipboard, activeTab.idx, activeTab.stack.length, online])
+  }, [active, path, view, sortKey, sortAsc, search, selected, listing, clipboard, activeTab.idx, activeTab.stack.length, online, previews, deep])
 
   // 윈도우 스타일 단축키 (활성 창에만, 크롬에서 가로챌 수 있는 것만)
   const handleKey = useEffectEvent((e: KeyboardEvent) => {
@@ -910,11 +940,20 @@ export function ExplorerPane({
       items.push({ label: '다운로드 링크', onClick: () => void createDownloadLink(targets[0]) })
     }
     if (targets.length > 0) {
-      items.push({ label: `압축 (ZIP)${targets.length > 1 ? ` (${targets.length}개 합쳐서)` : ''}`, disabled: !path, onClick: () => compress(targets) })
-      if (targets.length > 1) {
-        items.push({ label: `각각 압축 (${targets.length}개)`, disabled: !path, onClick: () => compressEach(targets) })
-      }
-      items.push({ label: '분할 압축…', disabled: !path, onClick: () => setSplitTargets(targets) })
+      // 압축 ▸ 형식 (여러 개면 합쳐서) · 각각 압축 · 분할 압축
+      const many = targets.length > 1
+      items.push({
+        label: '압축',
+        disabled: !path,
+        children: [
+          ...ARCHIVE_FORMATS.map((f) => ({ label: `${f.label}${many ? ` · ${targets.length}개 합쳐서` : ''}`, onClick: () => compress(targets, f.value) })),
+          ...(many
+            ? [{ separator: true }, ...ARCHIVE_FORMATS.map((f) => ({ label: `각각 ${f.label} (${targets.length}개)`, onClick: () => compressEach(targets, f.value) }))]
+            : []),
+          { separator: true },
+          { label: '분할 압축…', onClick: () => setSplitTargets(targets) },
+        ],
+      })
     }
     if (targets.length === 1 && isVideoFile(targets[0].name)) {
       items.push({ label: '내려받지 않고 재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
@@ -1057,6 +1096,18 @@ export function ExplorerPane({
       </div>
 
       {error && <div className="output-error">{error}</div>}
+      {deep && (
+        <div className={`pane-notice pane-search-bar${deep.error ? ' error' : ''}`}>
+          <span className="ellipsis">
+            {deep.loading
+              ? `'${deep.query}' 하위 폴더까지 찾는 중…`
+              : deep.error
+                ? `하위 폴더 검색 실패: ${deep.error}`
+                : `'${deep.query}' 하위 폴더 검색 결과 ${deep.results.length.toLocaleString()}개${deep.truncated ? ' (많아서 앞쪽 일부만)' : ''}`}
+          </span>
+          <button type="button" className="icon-mini" title="검색 결과 닫기 (지금 폴더 목록으로)" onClick={() => setDeep(null)}>✕</button>
+        </div>
+      )}
       {notice && (
         <div className="pane-notice">
           <span className="ellipsis">{notice}</span>
@@ -1148,7 +1199,7 @@ export function ExplorerPane({
             <div className="pane-empty placeholder">오프라인 PC</div>
           ) : displayed.length === 0 ? (
             <div className="pane-empty placeholder">
-              {search ? '검색 결과가 없습니다' : loading ? '불러오는 중…' : '빈 폴더입니다 (우클릭으로 새 폴더·붙여넣기)'}
+              {deep ? (deep.loading ? '찾는 중…' : '검색 결과가 없습니다') : search ? '검색 결과가 없습니다 (Enter: 하위 폴더까지 검색)' : loading ? '불러오는 중…' : '빈 폴더입니다 (우클릭으로 새 폴더·붙여넣기)'}
             </div>
           ) : view === 'details' ? (
             <table
@@ -1231,6 +1282,7 @@ export function ExplorerPane({
                       <td className="ellipsis">
                         <ShellIcon name={entry.name} folder={entry.isDirectory} agentId={selfAgentId} className="file-icon" />
                         {entry.name}
+                        {deep && <span className="search-loc muted small" title={entry.fullPath}>{entry.fullPath.slice(0, lastSep(entry.fullPath))}</span>}
                       </td>
                       {columns.modified && <td className="col-date">{entry.modifiedAt ? formatFileDate(entry.modifiedAt) : ''}</td>}
                       {columns.type && <td className="ellipsis">{fileTypeLabel(entry)}</td>}
@@ -1241,7 +1293,7 @@ export function ExplorerPane({
               </tbody>
             </table>
           ) : (
-            <div className="icons-grid noselect">
+            <div className={`icons-grid noselect${previews ? ' previews' : ''}`}>
               {displayed.map((entry, index) => {
                 const isSel = selected.has(entry.fullPath)
                 return (
@@ -1273,7 +1325,11 @@ export function ExplorerPane({
                       }
                     } : undefined}
                   >
-                    <ShellIcon name={entry.name} folder={entry.isDirectory} size={44} agentId={selfAgentId} className="icon-tile-ico" />
+                    {previews && !entry.isDirectory && isImageFile(entry.name) ? (
+                      <ImageThumb src={api.mediaUrl(agentId, entry.fullPath)} name={entry.name} selfAgentId={selfAgentId} />
+                    ) : (
+                      <ShellIcon name={entry.name} folder={entry.isDirectory} size={previews ? 64 : 44} agentId={selfAgentId} className="icon-tile-ico" />
+                    )}
                     <span className="icon-tile-name ellipsis-2">{entry.name}</span>
                   </div>
                 )
@@ -1318,8 +1374,8 @@ export function ExplorerPane({
       {splitTargets && (
         <SplitCompressModal
           count={splitTargets.length}
-          onConfirm={(bytes) => {
-            compressSplit(splitTargets, bytes)
+          onConfirm={(bytes, format) => {
+            compressSplit(splitTargets, bytes, format)
             setSplitTargets(null)
           }}
           onClose={() => setSplitTargets(null)}
@@ -1327,4 +1383,11 @@ export function ExplorerPane({
       )}
     </section>
   )
+}
+
+/** 이미지 미리보기: 화면에 보일 때만 불러오고, 못 열면 아이콘으로 */
+function ImageThumb({ src, name, selfAgentId }: { src: string; name: string; selfAgentId: string | null }) {
+  const [failed, setFailed] = useState(false)
+  if (failed) return <ShellIcon name={name} size={64} agentId={selfAgentId} className="icon-tile-ico" />
+  return <img className="icon-tile-thumb" src={src} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed(true)} />
 }

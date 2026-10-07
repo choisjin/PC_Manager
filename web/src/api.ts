@@ -164,7 +164,17 @@ export interface DirectoryListing {
   error: string | null
   /** 압축 파일 안을 보고 있으면 그 압축 파일 경로 (읽기 전용) */
   archivePath?: string | null
+  /** 하위 폴더 검색에서 결과가 많거나 오래 걸려 일부만 */
+  truncated?: boolean
 }
+
+export type ArchiveFormat = 'zip' | '7z' | 'tar' | 'tar.gz'
+export const ARCHIVE_FORMATS: { value: ArchiveFormat; label: string }[] = [
+  { value: 'zip', label: 'ZIP (.zip)' },
+  { value: '7z', label: '7z (.7z)' },
+  { value: 'tar', label: 'TAR (.tar)' },
+  { value: 'tar.gz', label: 'TAR.GZ (.tar.gz)' },
+]
 
 /** 텍스트 보기/편집: 서버가 인코딩·줄바꿈을 판별해 준다 (저장할 때 그대로 되돌림) */
 export interface TextFile {
@@ -662,6 +672,11 @@ export const api = {
 
   listFiles: (agentId: string, path: string) =>
     request<DirectoryListing>(`/api/agents/${agentId}/files?${query({ path })}`),
+  /** path 아래(하위 폴더까지)에서 이름에 q가 든 파일·폴더 */
+  searchFiles: (agentId: string, path: string, q: string) =>
+    request<DirectoryListing>(`/api/agents/${agentId}/files/search?${query({ path, q })}`),
+  /** 진행 중인 전송(압축·풀기·가져오기·올리기·PC 간 복사) 취소 */
+  cancelTransfer: (transferId: string) => request<void>(`/api/transfers/${transferId}/cancel`, { method: 'POST' }),
   /** 원격 PC의 미디어 파일을 서버로 옮기지 않고 바로 스트리밍하는 URL (video 태그 src용) */
   mediaUrl: (agentId: string, path: string) =>
     `/api/agents/${agentId}/media?${query({ path })}`,
@@ -765,9 +780,9 @@ export const api = {
     }),
   setArchivePassword: (agentId: string, archivePath: string, password: string) =>
     request<void>(`/api/agents/${agentId}/archive-password`, { method: 'POST', body: JSON.stringify({ archivePath, password }) }),
-  compressFiles: (agentId: string, paths: string[], destinationFolder: string, archiveName?: string, splitBytes = 0) =>
+  compressFiles: (agentId: string, paths: string[], destinationFolder: string, archiveName?: string, splitBytes = 0, format: ArchiveFormat = 'zip') =>
     request<Transfer>(`/api/agents/${agentId}/files/compress`, {
       method: 'POST',
-      body: JSON.stringify({ paths, destinationFolder, archiveName: archiveName ?? null, splitBytes }),
+      body: JSON.stringify({ paths, destinationFolder, archiveName: archiveName ?? null, splitBytes, format }),
     }),
 }

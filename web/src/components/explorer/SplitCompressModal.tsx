@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { ARCHIVE_FORMATS, type ArchiveFormat } from '../../api'
 
 interface Props {
   /** 압축할 항목 수 (안내 문구용) */
   count: number
-  onConfirm: (splitBytes: number) => void
+  onConfirm: (splitBytes: number, format: ArchiveFormat) => void
   onClose: () => void
 }
 
@@ -15,6 +16,7 @@ export function SplitCompressModal({ count, onConfirm, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [value, setValue] = useState('100')
   const [unit, setUnit] = useState<'MB' | 'GB'>('MB')
+  const [format, setFormat] = useState<ArchiveFormat>('zip')
 
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -28,7 +30,7 @@ export function SplitCompressModal({ count, onConfirm, onClose }: Props) {
 
   const confirm = () => {
     if (!valid) return
-    onConfirm(bytes)
+    onConfirm(bytes, format)
   }
 
   return (
@@ -48,9 +50,15 @@ export function SplitCompressModal({ count, onConfirm, onClose }: Props) {
       </div>
       <div className="dialog-body">
         <p className="muted small">
-          선택한 {count}개 항목을 하나의 ZIP으로 압축한 뒤 아래 크기로 나눕니다. 볼륨은{' '}
-          <span className="mono">이름.zip.001</span>, <span className="mono">.002</span> … 로 만들어집니다.
+          선택한 {count}개 항목을 하나의 압축 파일로 만든 뒤 아래 크기로 나눕니다. 볼륨은{' '}
+          <span className="mono">이름.{format}.001</span>, <span className="mono">.002</span> … 로 만들어집니다.
         </p>
+        <label>
+          압축 형식
+          <select value={format} onChange={(e) => setFormat(e.target.value as ArchiveFormat)}>
+            {ARCHIVE_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+          </select>
+        </label>
         <label>
           볼륨 크기
           <span className="split-size-row">

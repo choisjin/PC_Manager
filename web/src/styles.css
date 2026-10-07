@@ -1384,6 +1384,41 @@ tr.cut td {
   color: var(--bad);
 }
 
+/* 하위 메뉴 (압축 ▸ 형식) */
+.context-sub {
+  position: relative;
+}
+
+.context-sub-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-sub-head > span:first-child {
+  flex: 1;
+}
+
+.context-sub-head.open {
+  background: var(--hover);
+}
+
+.context-sub-arrow {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.context-menu.context-submenu {
+  position: absolute;
+  top: -3px;
+  left: 100%;
+}
+
+.context-menu.context-submenu.left {
+  left: auto;
+  right: 100%;
+}
+
 .context-sep {
   height: 1px;
   margin: 2px 3px;
@@ -2094,6 +2129,40 @@ tr.video {
 
 .icon-tile-ico {
   display: block;
+}
+
+/* 이미지 미리보기: 칸을 키우고 이미지 파일은 그림으로 */
+.icons-grid.previews .icon-tile {
+  width: 132px;
+}
+
+.icon-tile-thumb {
+  display: block;
+  width: 120px;
+  height: 90px;
+  object-fit: contain;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.icons-grid.previews .icon-tile-ico {
+  height: 90px;
+  width: auto;
+  object-fit: contain;
+}
+
+/* 하위 폴더 검색 결과: 이름 옆에 위치 */
+.search-loc {
+  margin-left: 8px;
+}
+
+.pane-search-bar.error {
+  color: var(--bad);
+}
+
+.pip-cancel {
+  flex: none;
 }
 
 .transfer {

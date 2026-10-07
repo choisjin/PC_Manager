@@ -22,6 +22,9 @@ public class FileTransferService(
 
     // 완료 보고가 서버에 전달될 때까지 추적 (재등록 시 서버가 실패 처리하지 않게)
     private readonly ConcurrentDictionary<string, byte> _unreported = new();
+    // 진행 중인 전송의 취소 (대시보드 진행상황에서 취소)
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _running = new();
+    public const string CanceledMessage = "취소했습니다";
 
     public IReadOnlyList<string> UnreportedTransferIds => [.. _unreported.Keys];
 
@@ -128,6 +131,49 @@ public class FileTransferService(
             total += read;
         }
         return total == buffer.Length ? buffer : buffer[..total];
+    }
+
+    /// <summary>root 아래(하위 폴더까지)에서 이름에 query가 든 파일·폴더를 찾는다. 최대 max개·20초까지</summary>
+    public DirectoryListing SearchFiles(string root, string query, int max)
+    {
+        var q = query.Trim();
+        if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+            return new DirectoryListing(root, null, [], "폴더를 연 뒤 검색하세요 (드라이브 목록·압축 파일 안은 하위 검색을 할 수 없습니다).");
+        if (q.Length == 0)
+            return new DirectoryListing(root, null, [], "검색어가 없습니다.");
+        max = Math.Clamp(max, 1, 5000);
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            IgnoreInaccessible = true,
+            MatchCasing = MatchCasing.CaseInsensitive,
+            // 시스템 폴더·바로 가기 폴더(정션)는 건너뛴다 (같은 곳을 맴돌지 않게)
+            AttributesToSkip = FileAttributes.System | FileAttributes.ReparsePoint,
+        };
+        var pattern = q.Contains('*') || q.Contains('?') ? q : $"*{q}*";
+        var entries = new List<FileEntry>();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var truncated = false;
+        try
+        {
+            foreach (var info in new DirectoryInfo(root).EnumerateFileSystemInfos(pattern, options))
+            {
+                var hidden = (info.Attributes & FileAttributes.Hidden) != 0;
+                entries.Add(info is FileInfo file
+                    ? new FileEntry(file.Name, file.FullName, false, file.Length, file.LastWriteTimeUtc, hidden)
+                    : new FileEntry(info.Name, info.FullName, true, 0, info.LastWriteTimeUtc, hidden));
+                if (entries.Count >= max || clock.Elapsed > TimeSpan.FromSeconds(20))
+                {
+                    truncated = true;
+                    break;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return new DirectoryListing(root, null, entries, ex.Message, Truncated: entries.Count > 0);
+        }
+        return new DirectoryListing(root, null, entries, null, Truncated: truncated);
     }
 
     /// <summary>
@@ -425,22 +471,32 @@ public class FileTransferService(
     }
 
     public void StartCollect(CollectFilesRequest request) =>
-        StartTransfer(request.TransferId, progress => CollectAsync(request, progress));
+        StartTransfer(request.TransferId, (progress, ct) => CollectAsync(request, progress, ct));
 
     public void StartUpload(UploadFileRequest request) =>
-        StartTransfer(request.TransferId, progress => UploadSingleAsync(request, progress));
+        StartTransfer(request.TransferId, (progress, ct) => UploadSingleAsync(request, progress, ct));
 
     public void StartDownload(DownloadFileRequest request) =>
-        StartTransfer(request.TransferId, progress => DownloadAsync(request, progress));
+        StartTransfer(request.TransferId, (progress, ct) => DownloadAsync(request, progress, ct));
 
     public void StartCompress(CompressRequest request) =>
-        StartTransfer(request.TransferId, progress => CompressAsync(request, progress));
+        StartTransfer(request.TransferId, (progress, ct) => CompressAsync(request, progress, ct));
 
     public void StartExtract(ExtractRequest request) =>
-        StartTransfer(request.TransferId, progress => Task.Run(() => Extract(request, progress)));
+        StartTransfer(request.TransferId, (progress, ct) => Task.Run(() => Extract(request, progress, ct), ct));
+
+    /// <summary>진행 중인 전송 취소 (없으면 무시)</summary>
+    public void CancelTransfer(string transferId)
+    {
+        if (_running.TryGetValue(transferId, out var cts))
+        {
+            logger.LogInformation("전송 취소 {TransferId}", transferId);
+            cts.Cancel();
+        }
+    }
 
     /// <summary>압축 안 항목(없으면 전부)을 대상 폴더에 푼다. 진행 상황을 서버로 보고한다.</summary>
-    private void Extract(ExtractRequest request, TransferProgress progress)
+    private void Extract(ExtractRequest request, TransferProgress progress, CancellationToken ct)
     {
         var inner = new List<string>();
         foreach (var path in request.EntryPaths)
@@ -452,7 +508,11 @@ public class FileTransferService(
                 inner.Add(innerPath);
         }
         var (files, bytes) = ArchiveBrowser.Extract(request.ArchivePath, inner, request.DestinationFolder,
-            (count, done, percent) => outbound.Enqueue(new TransferProgressReport(request.TransferId, count, done, percent)));
+            (count, done, percent) =>
+            {
+                ct.ThrowIfCancellationRequested();
+                outbound.Enqueue(new TransferProgressReport(request.TransferId, count, done, percent));
+            });
         progress.Files = files;
         progress.Bytes = bytes;
         logger.LogInformation("압축 풀기 완료 {TransferId}: {Archive} → {Dest} ({Files}개)", request.TransferId, request.ArchivePath, request.DestinationFolder, files);
@@ -484,23 +544,35 @@ public class FileTransferService(
     /// <summary>TransferCompleted가 서버에 전달된 뒤 호출한다.</summary>
     public void MarkReported(string transferId) => _unreported.TryRemove(transferId, out _);
 
-    private void StartTransfer(string transferId, Func<TransferProgress, Task> work)
+    private void StartTransfer(string transferId, Func<TransferProgress, CancellationToken, Task> work)
     {
         if (!_unreported.TryAdd(transferId, 0))
             return; // 중복 요청
 
+        var cts = new CancellationTokenSource();
+        _running[transferId] = cts;
         _ = Task.Run(async () =>
         {
             var progress = new TransferProgress();
             string? error = null;
             try
             {
-                await work(progress);
+                await work(progress, cts.Token);
+            }
+            catch (Exception ex) when (cts.IsCancellationRequested)
+            {
+                error = CanceledMessage;
+                logger.LogInformation("파일 전송 취소됨 {TransferId} ({Type})", transferId, ex.GetType().Name);
             }
             catch (Exception ex)
             {
                 error = ex.Message;
                 logger.LogWarning(ex, "파일 전송 실패 {TransferId}", transferId);
+            }
+            finally
+            {
+                _running.TryRemove(transferId, out _);
+                cts.Dispose();
             }
 
             outbound.Enqueue(new TransferCompleted(
@@ -508,7 +580,7 @@ public class FileTransferService(
         });
     }
 
-    private async Task CollectAsync(CollectFilesRequest request, TransferProgress progress)
+    private async Task CollectAsync(CollectFilesRequest request, TransferProgress progress, CancellationToken ct)
     {
         var root = string.IsNullOrWhiteSpace(request.SourceDirectory)
             ? options.Value.GetResultDirectory(request.ResultKey)
@@ -522,31 +594,32 @@ public class FileTransferService(
         foreach (var fullPath in matcher.GetResultsInFullPath(root))
         {
             var relativePath = Path.GetRelativePath(root, fullPath).Replace('\\', '/');
-            progress.Bytes += await UploadAsync(request.TransferId, relativePath, fullPath);
+            progress.Bytes += await UploadAsync(request.TransferId, relativePath, fullPath, ct);
             progress.Files++;
         }
         logger.LogInformation("결과 수집 완료 {TransferId}: {Files}개, {Bytes} bytes", request.TransferId, progress.Files, progress.Bytes);
     }
 
-    private async Task UploadSingleAsync(UploadFileRequest request, TransferProgress progress)
+    private async Task UploadSingleAsync(UploadFileRequest request, TransferProgress progress, CancellationToken ct)
     {
         var file = new FileInfo(ReadablePath(request.SourcePath));
         if (!file.Exists)
             throw new FileNotFoundException($"파일이 없습니다: {request.SourcePath}");
 
         // 압축 안 파일은 임시 이름이 아니라 원래 이름으로 올린다
-        progress.Bytes = await UploadAsync(request.TransferId, Path.GetFileName(request.SourcePath.TrimEnd('\\', '/')), file.FullName);
+        progress.Bytes = await UploadAsync(request.TransferId, Path.GetFileName(request.SourcePath.TrimEnd('\\', '/')), file.FullName, ct);
         progress.Files = 1;
     }
 
-    /// <summary>선택 항목을 대상 폴더에 ZIP으로 압축한다. 진행 상황을 서버로 보고한다.</summary>
-    private async Task CompressAsync(CompressRequest request, TransferProgress progress)
+    /// <summary>선택 항목을 대상 폴더에 압축한다 (zip·7z·tar·tar.gz). 진행 상황을 서버로 보고한다.</summary>
+    private async Task CompressAsync(CompressRequest request, TransferProgress progress, CancellationToken ct)
     {
         if (request.Paths.Count == 0)
             throw new ArgumentException("압축할 항목이 없습니다.");
 
+        var format = ArchiveFormats.Normalize(request.Format);
         Directory.CreateDirectory(request.DestinationFolder);
-        var finalPath = UniqueChildPath(request.DestinationFolder, EnsureZipName(request.ArchiveName));
+        var finalPath = UniqueChildPath(request.DestinationFolder, ArchiveFormats.EnsureName(CleanName(request.ArchiveName), format));
         var tempPath = finalPath + ".pcm-zip";
 
         // 압축할 파일 목록과 zip 안에서의 경로를 모은다 (폴더는 하위까지)
@@ -586,9 +659,9 @@ public class FileTransferService(
                 await using (var source = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, useAsync: true))
                 {
                     int read;
-                    while ((read = await source.ReadAsync(buffer)) > 0)
+                    while ((read = await source.ReadAsync(buffer, ct)) > 0)
                     {
-                        await entryStream.WriteAsync(buffer.AsMemory(0, read));
+                        await entryStream.WriteAsync(buffer.AsMemory(0, read), ct);
                         doneBytes += read;
                         var percent = totalBytes > 0 ? (int)(doneBytes * 100 / totalBytes) : 100;
                         var now = DateTime.UtcNow;
@@ -606,6 +679,50 @@ public class FileTransferService(
 
         // 분할 압축: 최소 볼륨 크기 64KB로 제한
         var splitBytes = request.SplitBytes > 0 ? Math.Max(request.SplitBytes, 64 * 1024) : 0;
+
+        // zip 말고 다른 형식(7z·tar·tar.gz): 한 파일로 만든 뒤 분할이면 .001, .002…로 나눈다 (7-Zip과 같은 방식)
+        if (format != ArchiveFormats.Zip)
+        {
+            try
+            {
+                await using (var output = new FileStream(tempPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 81920))
+                {
+                    ArchiveFormats.Write(output, format, files, () => progress.Files++, read =>
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        doneBytes += read;
+                        var percent = totalBytes > 0 ? (int)(doneBytes * 100 / totalBytes) : 100;
+                        var now = DateTime.UtcNow;
+                        if (percent != lastPercent && (now - lastReport).TotalMilliseconds >= 250)
+                        {
+                            lastPercent = percent;
+                            lastReport = now;
+                            outbound.Enqueue(new TransferProgressReport(request.TransferId, progress.Files, doneBytes, percent));
+                        }
+                    });
+                }
+                if (splitBytes > 0 && new FileInfo(tempPath).Length > splitBytes)
+                {
+                    var volumes = await ArchiveFormats.SplitAsync(tempPath, finalPath, splitBytes, ct);
+                    File.Delete(tempPath);
+                    progress.Bytes = volumes.Sum(v => new FileInfo(v).Length);
+                }
+                else
+                {
+                    File.Move(tempPath, finalPath, overwrite: false);
+                    progress.Bytes = new FileInfo(finalPath).Length;
+                }
+                logger.LogInformation("압축 완료 ({Format}) {TransferId}: {File} ({Files}개, {Bytes} bytes)", format, request.TransferId, finalPath, progress.Files, progress.Bytes);
+            }
+            catch
+            {
+                ArchiveFormats.DeleteQuietly(tempPath);
+                for (var i = 1; i < 10000 && File.Exists($"{finalPath}.{i:000}"); i++)
+                    ArchiveFormats.DeleteQuietly($"{finalPath}.{i:000}");
+                throw;
+            }
+            return;
+        }
 
         if (splitBytes > 0)
         {
@@ -751,12 +868,6 @@ public class FileTransferService(
         public override void SetLength(long value) => throw new NotSupportedException();
     }
 
-    private static string EnsureZipName(string name)
-    {
-        var clean = CleanName(name);
-        return clean.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? clean : clean + ".zip";
-    }
-
     private static long SafeLength(string path)
     {
         try
@@ -769,7 +880,7 @@ public class FileTransferService(
         }
     }
 
-    private async Task DownloadAsync(DownloadFileRequest request, TransferProgress progress)
+    private async Task DownloadAsync(DownloadFileRequest request, TransferProgress progress, CancellationToken ct)
     {
         var destination = Path.GetFullPath(request.DestinationPath);
         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
@@ -778,13 +889,13 @@ public class FileTransferService(
         try
         {
             using var contentRequest = CreateRequest(HttpMethod.Get, AgentTransferPaths.Content(request.TransferId));
-            using var response = await Http.SendAsync(contentRequest, HttpCompletionOption.ResponseHeadersRead);
+            using var response = await Http.SendAsync(contentRequest, HttpCompletionOption.ResponseHeadersRead, ct);
             await EnsureSuccessAsync(response);
 
-            await using (var source = await response.Content.ReadAsStreamAsync())
+            await using (var source = await response.Content.ReadAsStreamAsync(ct))
             await using (var target = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             {
-                await source.CopyToAsync(target);
+                await source.CopyToAsync(target, ct);
             }
 
             // 다 받은 뒤에 교체해서 중간에 실패해도 기존 파일이 깨지지 않게 한다
@@ -799,7 +910,7 @@ public class FileTransferService(
         }
     }
 
-    private async Task<long> UploadAsync(string transferId, string relativePath, string fullPath)
+    private async Task<long> UploadAsync(string transferId, string relativePath, string fullPath, CancellationToken ct)
     {
         // 테스트가 아직 쓰고 있는 로그 파일도 읽을 수 있게 공유 모드로 연다
         await using var stream = new FileStream(
@@ -811,7 +922,7 @@ public class FileTransferService(
         using var uploadRequest = CreateRequest(
             HttpMethod.Post, $"{AgentTransferPaths.UploadFile(transferId)}?path={Uri.EscapeDataString(relativePath)}");
         uploadRequest.Content = content;
-        using var response = await Http.SendAsync(uploadRequest);
+        using var response = await Http.SendAsync(uploadRequest, ct);
         await EnsureSuccessAsync(response);
         return length;
     }

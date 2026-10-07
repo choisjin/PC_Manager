@@ -19,10 +19,14 @@ export function ExplorerToolbar({ controller }: Props) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
+  // 검색창은 직접 들고 있는다: 창 상태를 한 바퀴 돌아오면 한글 입력(조합 중)이 끊긴다
+  const [searchText, setSearchText] = useState(controller?.search ?? '')
 
   // 활성 창이 바뀌면 주소 편집 상태 초기화
   useEffect(() => {
     setEditing(false)
+    setSearchText(controller?.search ?? '')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controller?.paneId, controller?.path])
 
   const c = controller
@@ -56,6 +60,7 @@ export function ExplorerToolbar({ controller }: Props) {
     openMenuAt(e, [
       { label: `${c.view === 'icons' ? '● ' : ''}큰 아이콘`, onClick: () => c.setView('icons') },
       { label: `${c.view === 'details' ? '● ' : ''}자세히`, onClick: () => c.setView('details') },
+      { label: `${c.previews ? '☑' : '☐'} 이미지 미리보기 (큰 아이콘)`, onClick: () => c.togglePreviews() },
       { separator: true },
       { label: `${c.showHidden ? '☑' : '☐'} 숨김 항목 보기`, onClick: () => c.toggleHidden() },
       { label: `${c.backupOnSave ? '☑' : '☐'} 저장할 때 원본 .bak 남기기`, onClick: () => c.toggleBackupOnSave() },
@@ -139,9 +144,21 @@ export function ExplorerToolbar({ controller }: Props) {
           <input
             aria-label="현재 폴더 검색"
             placeholder={c ? `${crumbs[crumbs.length - 1]?.label ?? ''} 검색` : '검색'}
+            title="입력하면 지금 폴더에서 거르고, Enter를 누르면 하위 폴더까지 찾습니다"
             disabled={!c}
-            value={c?.search ?? ''}
-            onChange={(e) => c?.setSearch(e.target.value)}
+            value={searchText}
+            onChange={(e) => {
+              setSearchText(e.target.value)
+              c?.setSearch(e.target.value)
+            }}
+            onKeyDown={(e) => {
+              // 한글 조합 중 Enter는 글자 확정용이라 건너뛴다
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) c?.deepSearch(searchText)
+              else if (e.key === 'Escape') {
+                setSearchText('')
+                c?.setSearch('')
+              }
+            }}
           />
         </div>
       </div>

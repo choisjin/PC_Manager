@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +25,9 @@ public class TransferService(
 {
     // PC 간 직접 전송 시 한 번에 옮기는 조각 크기 (서버 디스크를 거치지 않고 원본→대상으로 중계)
     private const int CrossCopyChunkSize = 256 * 1024;
+    private const string CanceledMessage = "취소했습니다";
+    // 서버가 직접 중계하는 전송(PC 간 복사·이동)의 취소
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _serverRuns = new();
 
     /// <summary>
     /// PC 간 파일 붙여넣기: 원본 PC에서 읽은 조각을 서버 디스크에 저장하지 않고 곧바로 대상 PC로 흘려보낸다.
@@ -69,6 +73,9 @@ public class TransferService(
 
         string? finalPath = null;
         string? failure = null;
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _serverRuns[transfer.Id] = cancel;
+        ct = cancel.Token;
         try
         {
             await target.BeginAsync(destFolder, fileName, ct);
@@ -101,13 +108,18 @@ public class TransferService(
                 throw;
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            failure = CanceledMessage;
+        }
+        catch (Exception ex)
         {
             failure = ex.Message;
         }
         finally
         {
             source.Dispose();
+            _serverRuns.TryRemove(transfer.Id, out _);
         }
 
         // 전송 결과를 기록/브로드캐스트
@@ -362,6 +374,9 @@ public class TransferService(
         string? failure = null;
         long done = 0;
         var lastPercent = -1;
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _serverRuns[transfer.Id] = cancel;
+        ct = cancel.Token;
         try
         {
             // 빈 폴더도 남도록 하위 폴더를 먼저 만든다 (상위부터)
@@ -410,9 +425,17 @@ public class TransferService(
                 }
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException)
+        {
+            failure = CanceledMessage;
+        }
+        catch (Exception ex)
         {
             failure = ex is CopyException or IOException ? ex.Message : Api.TextEndpoints.OldAgentMessage(ex);
+        }
+        finally
+        {
+            _serverRuns.TryRemove(transfer.Id, out _);
         }
 
         await MarkCrossCopyResultAsync(transfer.Id, failure is null, done, failure);
@@ -606,11 +629,11 @@ public class TransferService(
     }
 
     /// <summary>파일 탐색기: PC 안에서 선택 항목을 ZIP으로 압축한다 (PC에서 직접 수행). splitBytes>0이면 분할 압축.</summary>
-    public async Task<TransferView> CompressAsync(string agentId, IReadOnlyList<string> paths, string destFolder, string archiveName, long splitBytes = 0)
+    public async Task<TransferView> CompressAsync(string agentId, IReadOnlyList<string> paths, string destFolder, string archiveName, long splitBytes = 0, string format = "zip")
     {
         var target = destFolder.TrimEnd('\\', '/') + "\\" + archiveName;
         var transfer = NewTransfer(agentId, TransferKind.Compress, target);
-        await DispatchAsync(transfer, client => client.Compress(new CompressRequest(transfer.Id, paths, destFolder, archiveName, splitBytes)));
+        await DispatchAsync(transfer, client => client.Compress(new CompressRequest(transfer.Id, paths, destFolder, archiveName, splitBytes, format)));
         return transfer.ToView();
     }
 
@@ -777,6 +800,56 @@ public class TransferService(
         if (transfer.Kind == TransferKind.Push)
             DeletePushContent(transfer.Id);
 
+        notifier.Complete(transfer.Id);
+        await dashboard.Clients.All.TransferUpdated(transfer.ToView());
+    }
+
+    /// <summary>
+    /// 진행 중인 전송 취소. 서버가 중계하는 PC 간 복사는 바로 멈추고, PC에서 하는 일(압축·풀기·가져오기·올리기)은 에이전트에게 알린다.
+    /// 옛 에이전트는 취소를 몰라 잠시 뒤에도 그대로면 목록에서만 취소로 끝낸다. 오류 문구, 성공이면 null
+    /// </summary>
+    public async Task<string?> CancelAsync(string transferId)
+    {
+        if (_serverRuns.TryGetValue(transferId, out var run))
+        {
+            run.Cancel();
+            return null;
+        }
+        var transfer = await FindAsync(transferId);
+        if (transfer is null)
+            return "전송을 찾을 수 없습니다.";
+        if (transfer.State != TransferState.Pending)
+            return null; // 이미 끝남
+        if (registry.TryGetConnection(transfer.AgentId, out var connectionId))
+        {
+            await agentHub.Clients.Client(connectionId).CancelTransfer(transferId);
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(8));
+                await ForceCancelAsync(transferId, CanceledMessage + " (PC의 에이전트가 옛 버전이면 작업이 끝까지 계속될 수 있습니다)");
+            });
+            return null;
+        }
+        await ForceCancelAsync(transferId, CanceledMessage);
+        return null;
+    }
+
+    /// <summary>아직 대기 중이면 취소(실패)로 끝낸다</summary>
+    private async Task ForceCancelAsync(string transferId, string message)
+    {
+        TransferEntity? transfer;
+        await using (var db = await dbFactory.CreateDbContextAsync())
+        {
+            transfer = await db.Transfers.FirstOrDefaultAsync(t => t.Id == transferId && t.State == TransferState.Pending);
+            if (transfer is null)
+                return;
+            transfer.State = TransferState.Failed;
+            transfer.Error = message;
+            transfer.FinishedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        if (transfer.Kind == TransferKind.Push)
+            DeletePushContent(transfer.Id);
         notifier.Complete(transfer.Id);
         await dashboard.Clients.All.TransferUpdated(transfer.ToView());
     }
