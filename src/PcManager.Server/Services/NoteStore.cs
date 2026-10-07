@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using PcManager.Server.Contracts;
 
 namespace PcManager.Server.Services;
@@ -7,8 +8,10 @@ namespace PcManager.Server.Services;
 /// 메모 저장소 (notes.json). 공유 메모는 누구나 보고 고치며, 개인 메모는 만든 사람만 본다.
 /// 내용은 대시보드가 정리한 HTML(글자·줄바꿈·목록·이미지)이며, 이미지는 note-images 폴더에 따로 둔다.
 /// 동시에 고치면 마지막 저장이 이기지 않도록 기준 수정 시각(baseUpdatedAt)이 다르면 거절한다.
+/// 이미지 정리: 메모를 지우면 그 메모에만 있던 이미지를 바로 지우고, 어느 메모에도 없는 이미지는
+/// 하루가 지나면 지운다 (올렸지만 아직 저장 전이거나 되돌리기로 살릴 수 있는 이미지를 지우지 않도록).
 /// </summary>
-public class NoteStore(AppPaths paths)
+public partial class NoteStore(AppPaths paths)
 {
     public const string Shared = "shared";
     public const string Personal = "personal";
@@ -82,6 +85,10 @@ public class NoteStore(AppPaths paths)
             var note = Find(id, userId);
             Notes().Remove(id);
             Save();
+            // 이 메모에만 있던 이미지 (다른 메모에 같은 이미지가 있으면 남긴다)
+            var used = ReferencedImages();
+            foreach (var name in ImagesIn(note.Content).Where(n => !used.Contains(n)))
+                TryDeleteImage(name);
             return note;
         }
     }
@@ -116,6 +123,50 @@ public class NoteStore(AppPaths paths)
     }
 
     public static string ImageUrl(string name) => $"/api/notes/images/{name}";
+
+    /// <summary>어느 메모에도 없고 minAge보다 오래된 이미지를 지운다</summary>
+    /// <returns>지운 개수</returns>
+    public int CleanupUnusedImages(TimeSpan minAge)
+    {
+        if (!Directory.Exists(ImageDirectory))
+            return 0;
+        lock (_lock)
+        {
+            var used = ReferencedImages();
+            var deleted = 0;
+            foreach (var file in Directory.EnumerateFiles(ImageDirectory))
+            {
+                var name = Path.GetFileName(file);
+                if (used.Contains(name) || DateTime.UtcNow - File.GetLastWriteTimeUtc(file) < minAge)
+                    continue;
+                if (TryDeleteImage(name))
+                    deleted++;
+            }
+            return deleted;
+        }
+    }
+
+    private HashSet<string> ReferencedImages() =>
+        Notes().Values.SelectMany(n => ImagesIn(n.Content)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static IEnumerable<string> ImagesIn(string content) =>
+        ImageRefRegex().Matches(content).Select(m => m.Groups[1].Value);
+
+    private bool TryDeleteImage(string name)
+    {
+        try
+        {
+            File.Delete(Path.Combine(ImageDirectory, name));
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    [GeneratedRegex(@"/api/notes/images/([A-Za-z0-9]+\.[A-Za-z0-9]+)")]
+    private static partial Regex ImageRefRegex();
 
     /// <summary>저장된 이미지 파일 (이름 검사 포함). 없으면 null</summary>
     public (string Path, string ContentType)? FindImage(string name)

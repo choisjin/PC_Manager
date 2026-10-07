@@ -83,6 +83,7 @@ builder.Services.AddSingleton<PcStatusStore>();
 builder.Services.AddSingleton<RemoteUsageRegistry>();
 builder.Services.AddSingleton<ChatRoomStore>();
 builder.Services.AddSingleton<NoteStore>();
+builder.Services.AddHostedService<NoteImageJanitor>();
 builder.Services.AddSingleton<ResultSetStore>();
 builder.Services.AddSingleton<ThumbnailService>();
 builder.Services.AddHttpContextAccessor();
