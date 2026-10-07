@@ -17,9 +17,11 @@ namespace PcManager.Agent.Remote;
 ///
 /// 보내는 메시지
 ///   바이너리: [0]=1(영상) [1]=플래그(1=키 프레임) [2..9]=타임스탬프(µs, LE) [10..]=H.264 Annex B
-///   텍스트(JSON): hello(모니터 목록), format(해상도), cursor(커서 위치), status(데스크톱 전환 등), error
+///   텍스트(JSON): hello(모니터 목록, clipDir), format(해상도), cursor(커서 위치), status(데스크톱 전환 등), error,
+///     clipboard(텍스트), clipfiles(이 PC에서 복사한 파일 경로들)
 /// 받는 메시지 (JSON, t 필드로 구분)
 ///   m(이동) md/mu(버튼) w(휠) kd/ku(키) combo(조합 키) text(문자열) monitor(모니터 전환) keyframe quality
+///   clip(텍스트를 클립보드에) clipfiles(이 PC에 받아 둔 파일들을 클립보드에 — 다른 PC에서 복사한 파일 붙여넣기)
 /// </summary>
 internal static class RemoteSessionApp
 {
@@ -30,6 +32,32 @@ internal static class RemoteSessionApp
     private static readonly TimeSpan NoFrameFallback = TimeSpan.FromSeconds(3);
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// 다른 PC에서 복사한 파일을 붙여넣을 때 서버가 파일을 받아 두는 곳 (사용자가 읽을 수 있는 공용 폴더).
+    /// 대시보드가 이 아래 새 폴더로 복사한 뒤 clipfiles로 클립보드에 넣는다
+    /// </summary>
+    private static string ClipboardFolder =>
+        Path.Combine(Environment.GetEnvironmentVariable("PUBLIC") is { Length: > 0 } p ? p : @"C:\Users\Public", "PcManagerClipboard");
+
+    /// <summary>하루 넘은 붙여넣기용 임시 폴더를 지운다</summary>
+    private static void CleanupClipboardFolder()
+    {
+        try
+        {
+            if (!Directory.Exists(ClipboardFolder))
+                return;
+            foreach (var dir in Directory.GetDirectories(ClipboardFolder))
+            {
+                if (DateTime.UtcNow - Directory.GetCreationTimeUtc(dir) > TimeSpan.FromDays(1))
+                    Directory.Delete(dir, recursive: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 쓰는 중인 파일 등은 다음에
+        }
+    }
 
     /// <param name="thumbnail">true면 썸네일 모드 (입력 없이 작은 화면만 주기적으로 보냄)</param>
     public static int Run(string url, bool thumbnail = false)
@@ -114,6 +142,10 @@ internal static class RemoteSessionApp
         private volatile bool _matchResolution = true;
         // 클립보드 동기화: 마지막으로 원격에 쓴/원격에서 읽은 텍스트 (서로 되돌려 보내지 않도록)
         private string? _lastClipboard;
+        // 파일 목록: clipfiles로 방금 넣은 목록(되돌려 보내지 않도록), 클립보드 변경 번호
+        private string? _lastClipFiles;
+        private uint _clipSequence;
+        private bool _clipPolled;
         private readonly Lock _clipLock = new();
         private Rectangle _monitorBounds;
         private readonly Lock _boundsLock = new();
@@ -127,7 +159,8 @@ internal static class RemoteSessionApp
         public async Task RunAsync()
         {
             var ct = _cts.Token;
-            await SendJsonAsync(new { type = "hello", monitors = DescribeMonitors(), desktop = DesktopSwitcher.CurrentName }, ct);
+            await SendJsonAsync(new { type = "hello", monitors = DescribeMonitors(), desktop = DesktopSwitcher.CurrentName, clipDir = ClipboardFolder }, ct);
+            _ = Task.Run(CleanupClipboardFolder);
 
             var capture = new Thread(CaptureLoop) { IsBackground = true, Name = "remote-capture" };
             var input = new Thread(InputLoop) { IsBackground = true, Name = "remote-input" };
@@ -246,6 +279,19 @@ internal static class RemoteSessionApp
                     });
                     break;
                 }
+                case "clipfiles":
+                {
+                    var paths = root.GetProperty("paths").EnumerateArray().Select(p => p.GetString() ?? "").Where(p => p.Length > 0).ToList();
+                    if (paths.Count == 0)
+                        break;
+                    EnqueueInput(() =>
+                    {
+                        lock (_clipLock)
+                            _lastClipFiles = string.Join('\n', paths);
+                        RemoteClipboard.SetFiles(paths);
+                    });
+                    break;
+                }
                 case "text":
                 {
                     var text = root.GetProperty("text").GetString() ?? "";
@@ -326,6 +372,33 @@ internal static class RemoteSessionApp
             try
             {
                 DesktopSwitcher.SyncThreadToInputDesktop();
+                var sequence = RemoteClipboard.SequenceNumber;
+                if (_clipPolled && sequence == _clipSequence)
+                    return;
+                var first = !_clipPolled;
+                _clipPolled = true;
+                _clipSequence = sequence;
+
+                // 복사한 파일: 경로만 알린다 (붙여넣을 때 대시보드가 서버를 거쳐 그 PC로 복사).
+                // 세션을 열 때 이미 있던 목록은 알리지 않는다 (예전에 붙여넣은 파일이 새 복사로 보이지 않게)
+                var files = RemoteClipboard.GetFiles();
+                if (files is { Count: > 0 })
+                {
+                    // 클립보드 변경 번호가 바뀔 때만 여기 온다. 방금 clipfiles로 넣은 목록만 건너뛴다 (같은 파일을 다시 복사하면 다시 알림)
+                    var key = string.Join('\n', files);
+                    lock (_clipLock)
+                    {
+                        if (key == _lastClipFiles)
+                        {
+                            _lastClipFiles = null;
+                            return;
+                        }
+                    }
+                    if (!first)
+                        _ = SendJsonAsync(new { type = "clipfiles", paths = files.Take(1000) }, ct);
+                    return;
+                }
+
                 var text = RemoteClipboard.GetText();
                 if (string.IsNullOrEmpty(text) || text.Length > 256 * 1024)
                     return;

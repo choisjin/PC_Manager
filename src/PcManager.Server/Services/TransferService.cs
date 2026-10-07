@@ -344,6 +344,10 @@ public class TransferService(
         if (!created.Success || created.ResultPath is null)
             return new FileOpResult(false, "대상 폴더를 만들지 못했습니다: " + created.Error, null);
         var destRoot = created.ResultPath;
+        // 상대 경로는 \로 모아 두었다. 대상이 Linux PC(/로 시작)면 /로 잇는다
+        var separator = destRoot.StartsWith('/') ? '/' : '\\';
+        string DestPath(string? parent) =>
+            string.IsNullOrEmpty(parent) ? destRoot : destRoot + separator + parent.Replace('\\', separator);
 
         var total = files.Sum(f => Math.Max(0, f.Size));
         var transfer = NewTransfer(destId, TransferKind.Push, destRoot);
@@ -365,7 +369,7 @@ public class TransferService(
             {
                 var parent = Path.GetDirectoryName(dir);
                 var result = await DestFileOpAsync(destId, new FileOpRequest(FileOpKind.CreateDirectory,
-                    string.IsNullOrEmpty(parent) ? destRoot : destRoot + "\\" + parent, Path.GetFileName(dir)), ct);
+                    DestPath(parent), Path.GetFileName(dir)), ct);
                 if (!result.Success)
                     throw new IOException($"폴더를 만들지 못했습니다: {dir} ({result.Error})");
             }
@@ -377,7 +381,7 @@ public class TransferService(
                     throw new IOException($"파일을 읽을 수 없습니다: {sourceFile}");
                 var target = OpenTarget(destId);
                 var parent = Path.GetDirectoryName(relative);
-                await target.BeginAsync(string.IsNullOrEmpty(parent) ? destRoot : destRoot + "\\" + parent, Path.GetFileName(relative), ct);
+                await target.BeginAsync(DestPath(parent), Path.GetFileName(relative), ct);
                 try
                 {
                     long offset = 0;

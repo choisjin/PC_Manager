@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import { api, PC_STATUS_LABEL } from '../../api'
+import { fileClipboard, type RemoteFileClip, useFileClipboard } from '../remote/fileClipboard'
 import { RemoteContext } from '../remote/RemoteContext'
 import { MseSink, type VideoSink, WebCodecsSink, webCodecsAvailable } from '../remote/sinks'
 import { Icon, type IconName } from './Icon'
@@ -149,6 +150,19 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
   // 클립보드 동기화: 마지막으로 주고받은 텍스트 (되돌려 보내지 않도록)
   const lastClipRef = useRef<string | null>(null)
   const syncClipRef = useRef<() => void>(() => {})
+  // 파일 붙여넣기: 원격 PC가 받아 둘 폴더(hello), 이 연결에서 텍스트 클립보드를 처음 받았는지, 가로챈 키
+  const clipDirRef = useRef<string | null>(null)
+  const clipTextSeenRef = useRef(false)
+  const swallowedRef = useRef(new Set<string>())
+  const pastingRef = useRef(false)
+  const agentIdRef = useRef(agentId)
+  const pcsRef = useRef(pcs)
+  useEffect(() => {
+    agentIdRef.current = agentId
+    pcsRef.current = pcs
+  }, [agentId, pcs])
+  const fileClip = useFileClipboard()
+  const [pasting, setPasting] = useState<string | null>(null)
   const pendingMoveRef = useRef<{ x: number; y: number } | null>(null)
   const moveFrameRef = useRef(0)
 
@@ -290,6 +304,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
         const msg = JSON.parse(e.data)
         switch (msg.type) {
           case 'hello': {
+            clipDirRef.current = typeof msg.clipDir === 'string' ? msg.clipDir : null
+            clipTextSeenRef.current = false
             setMonitors(msg.monitors)
             const primary = (msg.monitors as Monitor[]).find((m) => m.primary)
             setMonitor(primary?.index ?? 0)
@@ -327,7 +343,19 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
             // 원격 클립보드가 바뀌면 이 PC 클립보드에 반영 (보안 컨텍스트에서만, 창에 포커스가 있어야 함)
             if (typeof msg.text === 'string' && msg.text !== lastClipRef.current) {
               lastClipRef.current = msg.text
+              fileClipboard.noteLocalText(msg.text, false)
               navigator.clipboard?.writeText?.(msg.text).catch(() => {})
+              // 원격에서 새로 텍스트를 복사함 → 파일 클립보드는 비운다 (연결 직후 알려 오는 기존 내용은 제외)
+              if (clipTextSeenRef.current) fileClipboard.clear()
+            }
+            clipTextSeenRef.current = true
+            break
+          case 'clipfiles':
+            // 원격 PC에서 파일을 복사함 → 다른 PC 원격 화면에서 Ctrl+V로 붙여넣는다
+            if (Array.isArray(msg.paths) && msg.paths.length > 0) {
+              const name = pcsRef.current.find((p) => p.id === agentId)?.name ?? agentId.slice(0, 8)
+              fileClipboard.set(agentId, name, msg.paths as string[])
+              showHint(`파일 ${msg.paths.length}개 복사됨 — 다른 PC 원격 화면에서 Ctrl+V로 붙여넣을 수 있습니다.`)
             }
             break
           case 'error':
@@ -452,10 +480,55 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     if (viewOnlyRef.current || !e.code) return
     e.preventDefault()
     e.stopPropagation()
+    // 다른 PC에서 복사한 파일 붙여넣기: Ctrl+V를 가로채 파일을 이 PC로 받아 클립보드에 넣은 뒤 Ctrl+V를 보낸다
+    if (down && e.code === 'KeyV' && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      const clip = fileClipboard.get()
+      if (pastingRef.current || (clip && !clip.delivered.has(agentId))) {
+        swallowedRef.current.add(e.code)
+        if (clip && !pastingRef.current) void pasteFiles(clip)
+        return
+      }
+    }
+    if (!down && swallowedRef.current.delete(e.code)) return
     if (down) pressedRef.current.add(e.code)
     else pressedRef.current.delete(e.code)
     // 수식 키 상태를 함께 보내, 원격에서 Shift+숫자 등이 어긋나지 않게 한다
     send({ t: down ? 'kd' : 'ku', code: e.code, key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey })
+  }
+
+  /** 원본 PC → 이 PC(받아 둘 폴더)로 서버가 복사 → 이 PC 클립보드에 넣고 Ctrl+V */
+  const pasteFiles = async (clip: RemoteFileClip) => {
+    const target = agentId
+    const dir = clipDirRef.current
+    if (!dir) {
+      showHint(`${machineName}의 에이전트가 파일 붙여넣기를 지원하지 않습니다. 에이전트를 업데이트하세요.`)
+      return
+    }
+    pastingRef.current = true
+    setPasting(`${clip.machineName}에서 파일 ${clip.paths.length}개 가져오는 중…`)
+    const folder = dir + (dir.startsWith('/') ? '/' : '\\') + clip.id
+    const paths: string[] = []
+    const errors: string[] = []
+    try {
+      for (const path of clip.paths) {
+        try {
+          const result = await api.crossCopy({ sourceAgentId: clip.agentId, sourcePath: path, destAgentId: target, destFolder: folder, move: false })
+          if (result.resultPath) paths.push(result.resultPath)
+          if (result.error) errors.push(result.error)
+        } catch (err) {
+          errors.push(`${path.split(/[\\/]/).pop()}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+    } finally {
+      pastingRef.current = false
+      setPasting(null)
+    }
+    if (errors.length > 0) showHint(`파일 붙여넣기 실패 ${errors.length}개: ${errors[0]}`)
+    // 가져오는 동안 다른 PC로 바꿨으면 붙여넣지 않는다
+    if (paths.length === 0 || agentIdRef.current !== target) return
+    fileClipboard.markDelivered(target)
+    send({ t: 'clipfiles', paths })
+    send({ t: 'combo', codes: ['ControlLeft', 'KeyV'] })
   }
 
   // 포커스를 잃으면 눌린 채 남은 키를 뗀다 (Alt+Tab 등). reset으로 원격의 수식 키도 모두 해제
@@ -548,6 +621,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     navigator.clipboard
       ?.readText?.()
       .then((text) => {
+        if (typeof text === 'string' && text) fileClipboard.noteLocalText(text, true)
         if (typeof text === 'string' && text && text !== lastClipRef.current) {
           lastClipRef.current = text
           send({ t: 'clip', text })
@@ -652,6 +726,19 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
           <span className="muted small">{statusText}</span>
           {secureDesktop && <span className="remote-badge">보안 데스크톱</span>}
           {keyLock === 'locked' && <span className="remote-badge ok">키보드 잠금</span>}
+          {pasting ? (
+            <span className="remote-badge">{pasting}</span>
+          ) : (
+            fileClip && (
+              <span
+                className="remote-badge clip"
+                title={`${fileClip.machineName}에서 복사한 파일:\n${fileClip.paths.slice(0, 20).join('\n')}${fileClip.paths.length > 20 ? '\n…' : ''}\n\n다른 PC 원격 화면에서 Ctrl+V로 붙여넣습니다. 클릭하면 비웁니다.`}
+                onClick={() => fileClipboard.clear()}
+              >
+                📋 {fileClip.machineName} · 파일 {fileClip.paths.length}개
+              </span>
+            )
+          )}
         </span>
         <span className="remote-actions">
           <button type="button" className={`icon remote-key${listOpen ? ' active' : ''}`} title="PC 목록 (빠른 전환)" aria-pressed={listOpen} onClick={toggleList}>

@@ -15,8 +15,8 @@ namespace PcManager.Agent.Linux.Remote;
 /// 보내는 메시지
 ///   바이너리: [0]=1(영상) [1]=1(키 프레임) [2..9]=타임스탬프(µs, LE) [10..]=H.264 Annex B
 ///             [0]=2(썸네일) [1..4]=마지막 화면 변화 후 초(int32 LE) [5..]=JPEG
-///   텍스트: hello(모니터 목록), format(인코딩 크기), cursor, clipboard, status, error
-/// 받는 메시지 (JSON, t): m md mu w kd ku combo text reset clip monitor view keyframe quality
+///   텍스트: hello(모니터 목록, clipDir), format(인코딩 크기), cursor, clipboard, clipfiles(복사한 파일 경로), status, error
+/// 받는 메시지 (JSON, t): m md mu w kd ku combo text reset clip clipfiles monitor view keyframe quality
 /// </summary>
 internal static class RemoteSessionApp
 {
@@ -118,6 +118,15 @@ internal sealed class RemoteSession(SocketChannel channel, string display)
     private CancellationTokenSource? _capture;
     private CancellationTokenSource? _viewDebounce;
     private string? _lastClipboard;
+    // 파일 목록: 마지막으로 넣은/읽은 목록 (서로 되돌려 보내지 않도록)
+    private string? _lastClipFiles;
+
+    /// <summary>다른 PC에서 복사한 파일을 붙여넣을 때 서버가 받아 두는 곳 (대시보드가 이 아래 새 폴더로 복사)</summary>
+    private const string ClipboardFolder = "/tmp/pcmanager-clip";
+
+    // 파일 관리자가 복사한 파일을 클립보드에 두는 형식 (GNOME Files 등 / 일반)
+    private const string GnomeFilesTarget = "x-special/gnome-copied-files";
+    private const string UriListTarget = "text/uri-list";
 
     private Monitor Current =>
         _monitors.FirstOrDefault(m => m.Index == _monitorIndex) ?? _monitors.First(m => m.Primary);
@@ -137,7 +146,9 @@ internal sealed class RemoteSession(SocketChannel channel, string display)
             type = "hello",
             monitors = _monitors.Select(m => new { index = m.Index, name = m.Name, primary = m.Primary, x = m.X, y = m.Y, width = m.Width, height = m.Height }),
             desktop = (string?)null,
+            clipDir = ClipboardFolder,
         }, ct);
+        _ = Task.Run(CleanupClipboardFolder);
 
         var inputThread = new Thread(InputLoop) { IsBackground = true, Name = "input" };
         inputThread.Start();
@@ -327,6 +338,13 @@ internal sealed class RemoteSession(SocketChannel channel, string display)
             case "clip":
                 SetClipboard(root.GetProperty("text").GetString() ?? "");
                 break;
+            case "clipfiles":
+            {
+                var paths = root.GetProperty("paths").EnumerateArray().Select(p => p.GetString() ?? "").Where(p => p.Length > 0).ToList();
+                if (paths.Count > 0)
+                    SetClipboardFiles(paths);
+                break;
+            }
             case "monitor":
                 _monitorIndex = root.GetProperty("index").GetInt32();
                 RestartCapture();
@@ -426,9 +444,24 @@ internal sealed class RemoteSession(SocketChannel channel, string display)
     {
         try
         {
+            var first = true;
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(600, ct);
+                // 복사한 파일: 경로만 알린다. 세션을 열 때 이미 있던 목록은 알리지 않는다
+                if (ReadClipboardFiles() is { Count: > 0 } files)
+                {
+                    var key = string.Join('\n', files);
+                    if (key != _lastClipFiles)
+                    {
+                        _lastClipFiles = key;
+                        if (!first)
+                            await channel.SendJsonAsync(new { type = "clipfiles", paths = files.Take(1000) }, ct);
+                    }
+                    first = false;
+                    continue;
+                }
+                first = false;
                 var text = RunTool("xclip", ["-selection", "clipboard", "-o"], null, capture: true);
                 if (text is null)
                     return; // xclip 없음
@@ -440,6 +473,54 @@ internal sealed class RemoteSession(SocketChannel channel, string display)
             }
         }
         catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>클립보드의 파일 목록 (GNOME Files 형식 또는 text/uri-list). 파일이 아니면 null</summary>
+    private static List<string>? ReadClipboardFiles()
+    {
+        var targets = RunTool("xclip", ["-selection", "clipboard", "-t", "TARGETS", "-o"], null, capture: true);
+        if (string.IsNullOrEmpty(targets))
+            return null;
+        var list = targets.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var target = list.Contains(GnomeFilesTarget) ? GnomeFilesTarget : list.Contains(UriListTarget) ? UriListTarget : null;
+        if (target is null)
+            return null;
+        var content = RunTool("xclip", ["-selection", "clipboard", "-t", target, "-o"], null, capture: true) ?? "";
+        var files = new List<string>();
+        foreach (var line in content.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            // GNOME 형식은 첫 줄이 copy/cut, uri-list는 #으로 시작하는 줄이 주석
+            if (line.StartsWith('#') || !Uri.TryCreate(line, UriKind.Absolute, out var uri) || !uri.IsFile)
+                continue;
+            files.Add(uri.LocalPath);
+        }
+        return files;
+    }
+
+    /// <summary>받아 둔 파일들을 '복사'로 클립보드에 넣는다 (GNOME Files에서 Ctrl+V로 붙여넣기)</summary>
+    private void SetClipboardFiles(List<string> paths)
+    {
+        _lastClipFiles = string.Join('\n', paths);
+        var content = "copy\n" + string.Join('\n', paths.Select(p => new Uri(p).AbsoluteUri));
+        RunTool("xclip", ["-selection", "clipboard", "-t", GnomeFilesTarget, "-i"], content);
+    }
+
+    /// <summary>하루 넘은 붙여넣기용 임시 폴더를 지운다</summary>
+    private static void CleanupClipboardFolder()
+    {
+        try
+        {
+            if (!Directory.Exists(ClipboardFolder))
+                return;
+            foreach (var dir in Directory.GetDirectories(ClipboardFolder))
+            {
+                if (DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) > TimeSpan.FromDays(1))
+                    Directory.Delete(dir, recursive: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
     }

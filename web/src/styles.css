@@ -1545,6 +1545,11 @@ tr.cut td {
   border-radius: 4px;
 }
 
+.remote-badge.clip {
+  color: var(--accent);
+  cursor: pointer;
+}
+
 .remote-actions {
   display: flex;
   flex: none;
