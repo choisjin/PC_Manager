@@ -184,7 +184,7 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
     const body = m.text.length > 120 ? m.text.slice(0, 120) + '…' : m.text
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
-        const head = room?.kind === 'group' ? `[${title}] ${who}${mentioned ? '님이 나를 호출했습니다' : ''}` : `${who}${mentioned ? '님이 나를 호출했습니다' : ''}`
+        const head = room && room.kind !== 'direct' ? `[${title}] ${who}${mentioned ? '님이 나를 호출했습니다' : ''}` : `${who}${mentioned ? '님이 나를 호출했습니다' : ''}`
         const n = new Notification(head, { body, tag: `pcm-chat-${m.roomId}`, silent: true })
         n.onclick = () => {
           window.focus()

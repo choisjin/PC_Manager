@@ -325,8 +325,9 @@ export interface ChatMessage {
 /** 채팅방: direct(1:1) | group */
 export interface ChatRoom {
   id: string
-  kind: 'direct' | 'group'
-  /** 그룹 방 이름 (1:1은 null → 상대 이름으로 표시) */
+  /** all: 모든 사용자가 들어 있는 기본 전체 방 (나가기·초대 없음) */
+  kind: 'direct' | 'group' | 'all'
+  /** 그룹·전체 방 이름 (1:1은 null → 상대 이름으로 표시) */
   name: string | null
   /** 그룹 방장 (강퇴 가능) */
   ownerId: string | null

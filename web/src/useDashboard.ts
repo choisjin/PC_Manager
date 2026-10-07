@@ -190,8 +190,13 @@ export function useDashboard() {
     connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
     connection.on('RemoteUsageChanged', (v: RemoteUsage) => setRemoteUsage(v.inUseBy))
     // 채팅: 서버는 내가 속한 방의 것만 보낸다
+    // 전체 방은 맨 위에 고정, 나머지는 최근 대화 순
     const sortRooms = (list: ChatRoom[]) =>
-      [...list].sort((a, b) => (b.lastMessage?.at ?? b.createdAt).localeCompare(a.lastMessage?.at ?? a.createdAt))
+      [...list].sort(
+        (a, b) =>
+          Number(b.kind === 'all') - Number(a.kind === 'all') ||
+          (b.lastMessage?.at ?? b.createdAt).localeCompare(a.lastMessage?.at ?? a.createdAt),
+      )
     connection.on('ChatRoomChanged', (room: ChatRoom) =>
       setChatRooms((prev) => sortRooms([...prev.filter((r) => r.id !== room.id), room])),
     )

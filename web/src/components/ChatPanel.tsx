@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChatMessage, ChatRoom, Org, OrgUser } from '../api'
-import { roomTitle } from '../chatRoom'
+import { isMultiRoom, roomIcon, roomTitle } from '../chatRoom'
 
 export interface ChatActions {
   load: (roomId: string) => Promise<ChatMessage[]>
@@ -115,7 +115,7 @@ export function ChatPanel({ rooms, messages, actions, org, selfUserId, activeRoo
   const [pick, setPick] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const roomUsers = room ? users.filter((u) => room.members.some((m) => m.userId === u.id)) : []
-  const token = room?.kind === 'group' ? mentionToken(draft, caret) : null
+  const token = room && isMultiRoom(room) ? mentionToken(draft, caret) : null
   const candidates = token ? roomUsers.filter((u) => u.id !== selfUserId && u.name.toLowerCase().includes(token.query.toLowerCase())).slice(0, 8) : []
   const choose = (u: OrgUser) => {
     if (!token) return
@@ -163,13 +163,13 @@ export function ChatPanel({ rooms, messages, actions, org, selfUserId, activeRoo
             type="button"
             className={`chat-room-item${r.id === activeRoomId ? ' active' : ''}${r.unread > 0 ? ' unread' : ''}`}
             onClick={() => onActiveRoomChange(r.id)}
-            title={r.kind === 'group' ? `${roomTitle(r, selfUserId, nameOf)} · ${r.members.length}명` : roomTitle(r, selfUserId, nameOf)}
+            title={isMultiRoom(r) ? `${roomTitle(r, selfUserId, nameOf)} · ${r.members.length}명` : roomTitle(r, selfUserId, nameOf)}
           >
-            <span className="chat-room-icon" aria-hidden="true">{r.kind === 'group' ? '👥' : '👤'}</span>
+            <span className="chat-room-icon" aria-hidden="true">{roomIcon(r)}</span>
             <span className="chat-room-text">
               <span className="chat-room-name ellipsis">
                 {roomTitle(r, selfUserId, nameOf)}
-                {r.kind === 'group' && <span className="muted"> {r.members.length}</span>}
+                {isMultiRoom(r) && <span className="muted"> {r.members.length}</span>}
               </span>
               <span className="chat-room-last ellipsis muted">{r.lastMessage ? r.lastMessage.text : ' '}</span>
             </span>
@@ -185,9 +185,14 @@ export function ChatPanel({ rooms, messages, actions, org, selfUserId, activeRoo
           <>
             <div className="chat-main-head">
               <span className="chat-main-title ellipsis" title={roomTitle(room, selfUserId, nameOf)}>
-                {room.kind === 'group' ? '👥 ' : '👤 '}
+                {roomIcon(room)}{' '}
                 {roomTitle(room, selfUserId, nameOf)}
               </span>
+              {room.kind === 'all' && (
+                <button type="button" className="chat-head-btn" title="구성원 (모든 사용자)" onClick={() => setOverlay({ kind: 'members' })}>
+                  {room.members.length}명
+                </button>
+              )}
               {room.kind === 'group' && (
                 <>
                   <button type="button" className="chat-head-btn" title="구성원" onClick={() => setOverlay({ kind: 'members' })}>
@@ -265,7 +270,7 @@ export function ChatPanel({ rooms, messages, actions, org, selfUserId, activeRoo
               <input
                 ref={inputRef}
                 value={draft}
-                placeholder={room.kind === 'group' ? '메시지 입력 후 Enter · @이름으로 호출' : '메시지 입력 후 Enter'}
+                placeholder={isMultiRoom(room) ? '메시지 입력 후 Enter · @이름으로 호출' : '메시지 입력 후 Enter'}
                 onChange={(e) => {
                   setDraft(e.target.value)
                   setCaret(e.target.selectionStart ?? e.target.value.length)

@@ -9,9 +9,14 @@ namespace PcManager.Server.Services;
 /// - 메시지: chat-room-messages.jsonl (덧붙이기, 방마다 최근 MaxPerRoom개만 보관)
 /// 1:1 방 id는 두 사용자 id로 정해진다(dm:작은id:큰id) — 같은 두 사람은 항상 같은 방.
 /// 그룹 방: 초대는 구성원 누구나, 강퇴는 방장만. 방장이 나가면 가장 먼저 들어온 사람이 방장.
+/// 전체 방(id "all"): 늘 있는 기본 방. 구성원은 저장하지 않고 조직의 모든 사용자 — 새 사용자도 자동으로 들어온다.
+/// 나가기·초대·강퇴·이름 바꾸기는 없다.
 /// </summary>
-public class ChatRoomStore(AppPaths paths)
+public class ChatRoomStore(AppPaths paths, OrgStore org)
 {
+    public const string AllRoomId = "all";
+    private const string AllKind = "all";
+
     private const int MaxPerRoom = 500;
     private const int MaxLength = 2000;
     private const int MaxNameLength = 40;
@@ -46,10 +51,12 @@ public class ChatRoomStore(AppPaths paths)
     {
         lock (_lock)
         {
+            // 전체 방은 맨 위에 고정
             return Rooms().Values
                 .Where(r => IsMember(r, userId))
                 .Select(r => ToView(r, userId))
-                .OrderByDescending(v => v.LastMessage?.At ?? v.CreatedAt)
+                .OrderBy(v => v.Kind == AllKind ? 0 : 1)
+                .ThenByDescending(v => v.LastMessage?.At ?? v.CreatedAt)
                 .ToList();
         }
     }
@@ -67,7 +74,7 @@ public class ChatRoomStore(AppPaths paths)
     {
         lock (_lock)
         {
-            return Rooms().TryGetValue(roomId, out var r) ? r.Members.Select(m => m.UserId).ToList() : [];
+            return Rooms().TryGetValue(roomId, out var r) ? MembersOf(r).Select(m => m.UserId).ToList() : [];
         }
     }
 
@@ -248,12 +255,21 @@ public class ChatRoomStore(AppPaths paths)
 
     // ── 내부 ──
 
-    private static bool IsMember(Room room, string userId) => room.Members.Any(m => m.UserId == userId);
+    // 전체 방은 누구나 구성원 (사용자 목록에서 지운 사람의 이전 메시지도 남는다)
+    private static bool IsMember(Room room, string userId) => room.Kind == AllKind || room.Members.Any(m => m.UserId == userId);
+
+    /// <summary>구성원. 전체 방은 조직의 모든 사용자</summary>
+    private List<ChatMemberView> MembersOf(Room room) =>
+        room.Kind == AllKind
+            ? org.Load().Users.Select(u => new ChatMemberView(u.Id, room.CreatedAt)).ToList()
+            : room.Members.ToList();
 
     private Room GroupFor(string roomId, string userId)
     {
         if (!Rooms().TryGetValue(roomId, out var room) || !IsMember(room, userId))
             throw new KeyNotFoundException("채팅방을 찾을 수 없습니다.");
+        if (room.Kind == AllKind)
+            throw new InvalidOperationException("전체 방은 모든 사용자가 들어 있는 기본 방이라 나가거나 바꿀 수 없습니다.");
         if (room.Kind != "group")
             throw new InvalidOperationException("1:1 대화에서는 할 수 없습니다.");
         return room;
@@ -272,7 +288,7 @@ public class ChatRoomStore(AppPaths paths)
         var list = MessagesOf(room.Id);
         var read = room.Reads.TryGetValue(userId, out var r) ? r : 0;
         var unread = list.Count(m => m.Id > read && m.UserId is not null && m.UserId != userId);
-        return new ChatRoomView(room.Id, room.Kind, room.Name, room.OwnerId, room.Members.ToList(), room.CreatedAt,
+        return new ChatRoomView(room.Id, room.Kind, room.Name, room.OwnerId, MembersOf(room), room.CreatedAt,
             new Dictionary<string, long>(room.Reads), list.Count > 0 ? list[^1] : null, unread);
     }
 
@@ -314,6 +330,12 @@ public class ChatRoomStore(AppPaths paths)
         catch (JsonException)
         {
             // 깨졌으면 새로 시작
+        }
+        // 전체 방은 늘 있다 (읽음 위치를 저장하려고 방 자체는 파일에 둔다)
+        if (!_rooms.ContainsKey(AllRoomId))
+        {
+            _rooms[AllRoomId] = new Room { Id = AllRoomId, Kind = AllKind, Name = "전체", CreatedAt = DateTime.UtcNow };
+            SaveRooms();
         }
         return _rooms;
     }
