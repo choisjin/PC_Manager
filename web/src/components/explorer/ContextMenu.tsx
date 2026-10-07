@@ -40,18 +40,24 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
   useEffect(() => {
     const close = () => onClose()
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    // 메뉴 밖을 누르면 닫는다. 캡처 단계에서 받아 다른 요소가 클릭 전파를 막아도(표·트리·버튼 등) 닫히게
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose()
+    }
     // 다음 틱부터 바깥 클릭 감지 (이 메뉴를 연 클릭이 즉시 닫지 않도록)
     const id = setTimeout(() => {
-      window.addEventListener('click', close)
+      window.addEventListener('pointerdown', onDown, true)
       window.addEventListener('contextmenu', close)
       window.addEventListener('resize', close)
+      window.addEventListener('blur', close)
       window.addEventListener('keydown', onKey)
     }, 0)
     return () => {
       clearTimeout(id)
-      window.removeEventListener('click', close)
+      window.removeEventListener('pointerdown', onDown, true)
       window.removeEventListener('contextmenu', close)
       window.removeEventListener('resize', close)
+      window.removeEventListener('blur', close)
       window.removeEventListener('keydown', onKey)
     }
   }, [onClose])
