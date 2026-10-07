@@ -4142,7 +4142,9 @@ th.sortable:hover {
 }
 .rv-left { display: flex; flex-direction: column; min-height: 0; overflow: auto; border-right: 1px solid var(--border); }
 /* ATS: 영상이 남는 높이를 채우고 원본·결과 이미지는 아래에 고정 → 스크롤 없이 */
-.rv-left.fit { overflow: hidden; }
+.rv-left.fit { overflow: hidden; position: relative; }
+.rv-left.fit > .rv-notice { position: absolute; z-index: 3; top: 8px; left: 10px; right: 10px; margin: 0; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+.rv-left.fit > .rv-sync-line { flex-wrap: nowrap; white-space: nowrap; overflow: hidden; }
 .rv-left.fit > * { flex: none; }
 .rv-left.fit > .rv-video { flex: 1 1 auto; min-height: 160px; display: flex; flex-direction: column; }
 .rv-left.fit .rv-video-stage { flex: 1 1 auto; min-height: 0; }
@@ -4212,7 +4214,7 @@ body.rv-open .pip { display: none; }
 .rv-images-title { margin: 6px 0 4px; }
 .rv-thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
 /* ATS 원본·결과 두 장 */
-.rv-ats-images .rv-images-title { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+.rv-ats-images .rv-images-title { display: flex; align-items: baseline; gap: 4px; min-width: 0; height: 20px; white-space: nowrap; overflow: hidden; }
 .rv-ats-kind { font-weight: 600; padding: 0 6px; border-radius: 4px; background: var(--selected); white-space: nowrap; }
 .rv-ats-kind.kind-p { color: var(--warn); }
 .rv-ats-kind.kind-py { color: var(--accent); }
@@ -4273,13 +4275,17 @@ body.rv-open .pip { display: none; }
 .rv-colfilter .rv-setup-actions { margin-top: 2px; }
 /* ATS: 시간 · B · Status · Action · Remark · Result · Y (Video_editor.py와 같은 열) */
 .rv-table.ats .rv-row { grid-template-columns: 40px 92px 62px minmax(80px, 1fr) 58px minmax(120px, 1.8fr) 58px minmax(80px, 1.2fr) 60px; }
-/* 머리글은 두 줄까지 (ACTION / CHECK, STEP / RESULT) */
-.rv-table.ats .rv-row-head { height: 34px; }
-.rv-table.ats .rv-colhead { white-space: normal; line-height: 1.15; height: 100%; }
-.rv-table.ats .rv-colhead .ellipsis { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* 머리글은 두 줄까지 (ACTION / CHECK, STEP / RESULT), 열 사이 세로 줄 */
+.rv-table.ats .rv-row { gap: 0; padding: 0; }
+.rv-table.ats .rv-row > * { align-self: stretch; display: block; line-height: 25px; padding: 0 5px; border-right: 1px solid var(--border); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-table.ats .rv-row > *:last-child { border-right: 0; }
+.rv-table.ats .rv-row > .rv-center { text-align: center; }
+.rv-table.ats .rv-row-head { height: 36px; }
+.rv-table.ats .rv-row-head > * { display: flex; align-items: center; line-height: normal; padding: 0 2px; }
+.rv-table.ats .rv-colhead { width: 100%; height: 100%; border-radius: 0; border: 0; white-space: normal; line-height: 1.15; overflow: hidden; }
+.rv-colhead-label { flex: 1; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .rv-colhead.center { justify-content: center; text-align: center; }
-.rv-colhead.center .ellipsis { flex: none; }
-.rv-row > .rv-center { text-align: center; }
+.rv-colhead.center .rv-colhead-label { flex: 0 1 auto; }
 .rv-row:hover { background: var(--hover); }
 .rv-row-head { height: 26px; font-weight: 600; background: var(--panel); cursor: default; }
 .rv-row.selected { background: var(--selected); }

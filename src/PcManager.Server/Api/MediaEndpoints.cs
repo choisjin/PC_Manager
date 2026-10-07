@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.Primitives;
@@ -10,8 +12,8 @@ namespace PcManager.Server.Api;
 
 /// <summary>
 /// 원격 PC의 미디어 파일을 서버로 복사하지 않고 브라우저로 스트리밍한다.
-/// 브라우저의 Range 요청을 받아, 해당 구간만 에이전트에서 조각으로 받아 중계한다.
-/// 조각을 여러 개 미리 요청해 두어(파이프라인) 조각마다 왕복을 기다리지 않는다 — 먼 곳(지연 큰 망)에서도 빠르다
+/// 브라우저의 Range 요청 구간을 에이전트가 HTTP로 올려 보내면(StreamFileRange) 받는 대로 브라우저로 넘긴다 — 사내망 속도.
+/// 옛 에이전트이거나 HTTP로 붙지 못하면 SignalR 조각 중계로: 조각을 여러 개 미리 요청해 두어(파이프라인) 조각마다 왕복을 기다리지 않는다
 /// </summary>
 public static class MediaEndpoints
 {
@@ -20,6 +22,8 @@ public static class MediaEndpoints
     // (512KB × 8 시험에서 끊김 확인) → 1MB 정도로 제한
     private const int ChunkSize = 256 * 1024;
     private const int Pipeline = 4;
+    // 에이전트가 HTTP 스트림을 시작하기까지 기다리는 시간 (넘으면 조각 중계로)
+    private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(10);
 
     // 브라우저에서 <video>로 재생 가능한 형식. 그 외(mkv, avi 등)는 재생이 안 될 수 있다.
     private static readonly FileExtensionContentTypeProvider ContentTypes = new();
@@ -28,11 +32,26 @@ public static class MediaEndpoints
     {
         // 일부 플레이어가 크기 확인용 HEAD를 먼저 보낸다
         app.MapMethods("/api/agents/{agentId}/media", ["GET", "HEAD"], HandleAsync);
+
+        // 에이전트 전용 (Program.cs 미들웨어가 /api/agent 경로의 토큰을 검사): 영상 구간 본문을 브라우저로 넘긴다
+        app.MapPost(AgentTransferPaths.MediaStream("{streamId}"), async (string streamId, HttpContext context, MediaStreamBroker broker) =>
+        {
+            // 브라우저가 일시정지해 읽지 않는 동안 본문이 멈춰 있어도 끊지 않는다 (크기 제한도 없음)
+            if (context.Features.Get<IHttpMinRequestBodyDataRateFeature>() is { } rate)
+                rate.MinDataRate = null;
+            if (context.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } max)
+                max.MaxRequestBodySize = null;
+            var finished = await broker.AcceptAsync(streamId, context.Request.Body, context.RequestAborted);
+            if (finished is null)
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+            else if (finished == false)
+                context.Abort(); // 브라우저가 끊음 → 에이전트도 보내기를 멈추게
+        });
     }
 
     private static async Task HandleAsync(
         string agentId, string? path, HttpContext context, AgentRegistry registry, IHubContext<AgentHub> agentHub,
-        SharedFolderStore shares, LocalShareFiles localShare)
+        SharedFolderStore shares, LocalShareFiles localShare, MediaStreamBroker broker)
     {
         var response = context.Response;
         if (string.IsNullOrWhiteSpace(path))
@@ -112,6 +131,10 @@ public static class MediaEndpoints
         if (HttpMethods.IsHead(context.Request.Method) || size == 0)
             return;
 
+        // 빠른 길: 에이전트가 HTTP로 흘려보내는 구간을 그대로 넘긴다
+        if (await TryStreamAsync(agentId, path, start, end - start + 1, proxy, broker, response, ct))
+            return;
+
         // 조각을 Pipeline개까지 미리 요청해 두고, 순서대로 받아 브라우저로 보낸다
         var inflight = new Queue<Task<byte[]>>();
         var next = start;
@@ -151,6 +174,73 @@ public static class MediaEndpoints
                 break;
             }
             RequestMore();
+        }
+    }
+
+    /// <summary>
+    /// 에이전트에게 구간을 HTTP로 올려 달라고 하고, 받는 대로 브라우저로 보낸다.
+    /// false면 아직 아무것도 보내지 않았으니 조각 중계로 (옛 에이전트·HTTP로 못 붙음)
+    /// </summary>
+    private static async Task<bool> TryStreamAsync(
+        string agentId, string path, long start, long length, ISingleClientProxy proxy, MediaStreamBroker broker, HttpResponse response, CancellationToken ct)
+    {
+        if (broker.IsUnsupported(agentId))
+            return false;
+        var (id, pending) = broker.Create();
+        try
+        {
+            using (var wait = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                wait.CancelAfter(StartTimeout);
+                try
+                {
+                    if (!await proxy.InvokeAsync<bool>(AgentClientMethods.StreamFileRange, id, path, start, length, wait.Token))
+                        return false;
+                }
+                catch (OperationCanceledException)
+                {
+                    return ct.IsCancellationRequested; // 브라우저가 끊었으면 끝, 에이전트가 느리면 조각 중계로
+                }
+                catch (Exception)
+                {
+                    broker.MarkUnsupported(agentId); // StreamFileRange가 없는 옛 에이전트
+                    return false;
+                }
+            }
+
+            Stream body;
+            try
+            {
+                body = await pending.Body.Task.WaitAsync(StartTimeout, ct);
+            }
+            catch (TimeoutException)
+            {
+                return false; // 에이전트가 서버로 HTTP 연결을 못 함
+            }
+            catch (OperationCanceledException)
+            {
+                return true;
+            }
+
+            var complete = false;
+            try
+            {
+                await body.CopyToAsync(response.Body, ChunkSize, ct);
+                complete = true;
+            }
+            catch (Exception ex) when (ex is OperationCanceledException or IOException or Microsoft.AspNetCore.Connections.ConnectionResetException)
+            {
+                // 브라우저가 다른 위치로 넘어가 끊음
+            }
+            finally
+            {
+                pending.Done.TrySetResult(complete);
+            }
+            return true;
+        }
+        finally
+        {
+            broker.Forget(id);
         }
     }
 

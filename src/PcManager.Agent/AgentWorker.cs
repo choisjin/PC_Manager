@@ -154,6 +154,8 @@ public class AgentWorker(
             (path, start, end) => trimmer.TrimAsync(path, start, end));
         connection.On<string, bool, VideoPrepareResult>(AgentClientMethods.PrepareVideo,
             (path, convert) => trimmer.PrepareAsync(path, convert));
+        connection.On<string, string, long, long, bool>(AgentClientMethods.StreamFileRange,
+            (streamId, path, offset, length) => Task.Run(() => files.StartMediaStream(streamId, path, offset, length)));
         connection.On<string, long, int, byte[]>(AgentClientMethods.ReadFileChunk,
             (path, offset, length) => Task.Run(() => files.ReadFileChunk(path, offset, length)));
         connection.On<FileOpRequest, FileOpResult>(AgentClientMethods.FileOp,

@@ -752,34 +752,36 @@ function AtsImagePanel({ row, byName, url, onPreview }: {
   onPreview: (url: string) => void
 }) {
   const [view, setView] = useState<'capture' | 'diff' | 'full'>('capture')
-  const ats = row?.ats
-  if (!row) return <div className="rv-images-title small muted">스텝을 고르거나 영상을 재생하면 원본·결과 이미지가 나옵니다</div>
-  if (!ats) return <div className="rv-images-title small muted">#{row.index + 1} {row.name} · 이 스텝에는 이미지가 없습니다</div>
-
-  const v = variantsOf(ats.result, byName)
-  const diff = v.diff ?? ats.diff
-  const result = view === 'full' && v.full ? v.full : view === 'diff' && diff ? diff : ats.result
+  const ats = row?.ats ?? null
+  const v = variantsOf(ats?.result ?? null, byName)
+  const diff = v.diff ?? ats?.diff ?? null
+  const result = view === 'full' && v.full ? v.full : view === 'diff' && diff ? diff : ats?.result ?? null
   // 원본: 비교(Y)가 있으면 비교 기준 이미지, 찾기(P)만 있으면 찾을 이미지
-  const original = ats.ref ?? ats.target
-  const tone = statusTone(row.status)
+  const original = ats ? ats.ref ?? ats.target : null
+  const tone = row ? statusTone(row.status) : ''
+  const emptyText = !row ? '스텝을 고르거나 영상을 재생하세요' : !ats ? '이 스텝에는 이미지가 없습니다' : null
 
+  // 이미지가 없어도 같은 칸을 그대로 그려 영상 크기가 바뀌지 않게 한다 (제목 한 줄 + 두 칸)
   return (
     <div className="rv-ats-images">
       <div className="rv-images-title small">
-        <span className={`rv-ats-kind kind-${ats.kind}`}>{ATS_KIND_LABEL[ats.kind]}</span>
-        <span className="muted"> #{row.index + 1} {row.name}</span>
-        {row.status && <span className={`rv-ats-status tone-${tone || 'none'}`}> {row.status}</span>}
-        {ats.note && <span className="muted ellipsis rv-ats-note" title={ats.note}> · {ats.note}</span>}
+        {ats && <span className={`rv-ats-kind kind-${ats.kind}`}>{ATS_KIND_LABEL[ats.kind]}</span>}
+        {row ? <span className="muted"> #{row.index + 1} {row.name}</span> : <span className="muted">원본 · 결과 이미지</span>}
+        {row?.status && <span className={`rv-ats-status tone-${tone || 'none'}`}> {row.status}</span>}
+        {ats?.kind === 'py' && ats.target && (
+          <span className="muted"> · 찾을 이미지 <button type="button" className="link" title={ats.target} onClick={() => onPreview(url(ats.target!))}>{baseName(ats.target)}</button></span>
+        )}
+        {ats?.note && <span className="muted ellipsis rv-ats-note" title={ats.note}> · {ats.note}</span>}
       </div>
       <div className="rv-ats-pair">
-        <AtsImageCard title={ats.ref ? '원본 (REF)' : '원본 (찾을 이미지)'} path={original} url={url} onPreview={onPreview} />
+        <AtsImageCard title={ats?.ref ? '원본 (REF)' : ats?.target ? '원본 (찾을 이미지)' : '원본'} path={original} url={url} onPreview={onPreview} empty={emptyText ?? '원본 이미지 없음'} />
         <AtsImageCard
           title="결과"
           path={result}
           url={url}
           onPreview={onPreview}
-          empty={ats.kind === 'p' ? '결과 이미지 없음 — 화면에서 찾지 못함' : '결과 이미지 없음'}
-          tools={ats.result && (diff || v.full) ? (
+          empty={emptyText ?? (ats?.kind === 'p' ? '결과 이미지 없음 — 화면에서 찾지 못함' : '결과 이미지 없음')}
+          tools={ats?.result && (diff || v.full) ? (
             <span className="rv-ats-views">
               <button type="button" className={view === 'capture' ? 'active' : ''} onClick={() => setView('capture')}>캡처</button>
               {diff && <button type="button" className={view === 'diff' ? 'active' : ''} onClick={() => setView('diff')}>차이</button>}
@@ -788,12 +790,6 @@ function AtsImagePanel({ row, byName, url, onPreview }: {
           ) : null}
         />
       </div>
-      {ats.kind === 'py' && ats.target && (
-        <div className="small muted rv-ats-target">
-          찾을 이미지 (STATUS):{' '}
-          <button type="button" className="link" title={ats.target} onClick={() => onPreview(url(ats.target!))}>{baseName(ats.target)}</button>
-        </div>
-      )}
     </div>
   )
 }
@@ -879,7 +875,8 @@ function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, 
                 title={`${h} — 눌러서 거르기·정렬`}
                 onClick={(e) => onHeader(i, e.currentTarget.getBoundingClientRect())}
               >
-                <span className="ellipsis">{h}</span>
+                {/* 짧은 열은 낱말마다 줄을 바꿔 좁게 (ACTION / CHECK) */}
+                <span className="rv-colhead-label">{ATS_CENTER.has(i) ? h.replace(/\s+/g, '\n') : h}</span>
                 <span className="rv-colhead-ico">{sort?.col === i ? (sort.asc ? '↑' : '↓') : ''}{filtered[i] ? '⧩' : '▾'}</span>
               </button>
             ))}<span>영상</span></>

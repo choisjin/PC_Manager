@@ -71,6 +71,7 @@ builder.Services.AddDbContextFactory<AppDbContext>(o =>
 // 미디어 스트리밍 조각(256KB, base64)이 여유 있게 들어가도록 넉넉히 잡는다
 builder.Services.AddSignalR(o => o.MaximumReceiveMessageSize = 2 * 1024 * 1024);
 builder.Services.AddSingleton<AgentRegistry>();
+builder.Services.AddSingleton<MediaStreamBroker>();
 builder.Services.AddSingleton<RunLogStore>();
 builder.Services.AddSingleton<PcGroupStore>();
 builder.Services.AddSingleton<PcFavoriteStore>();

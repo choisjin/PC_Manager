@@ -110,6 +110,9 @@ public static class AgentTransferPaths
 
     /// <summary>POST: 내 PC 프로그램으로 편집한 파일을 원래 PC로 저장. 쿼리 source, path, baseHash, backup(1이면 .bak) / 본문 = 파일 내용</summary>
     public const string EditSave = "/api/agent/edit/save";
+
+    /// <summary>POST: 에이전트 → 서버 영상 구간 스트림 (StreamFileRange). 본문을 받는 대로 브라우저로 넘긴다</summary>
+    public static string MediaStream(string streamId) => $"/api/agent/media/{streamId}";
 }
 
 /// <summary>
@@ -291,6 +294,11 @@ public static class AgentClientMethods
     public const string TrimVideo = "TrimVideo";
     /// <summary>(string path, bool convert) → VideoPrepareResult. 영상 길이·fps를 읽고, convert면 탐색 가능한 재생용 사본을 만든다 (캐시)</summary>
     public const string PrepareVideo = "PrepareVideo";
+    /// <summary>
+    /// (string streamId, string path, long offset, long length) → bool. 파일 구간을 HTTP POST(AgentTransferPaths.MediaStream)로 서버에 흘려보낸다.
+    /// 브라우저 영상 재생용: SignalR 조각 중계보다 훨씬 빠르다. 시작하면 바로 true (보내기는 뒤에서), 못 열면 false. 옛 에이전트는 없음 → 조각 중계로
+    /// </summary>
+    public const string StreamFileRange = "StreamFileRange";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<FileOpKind>))]

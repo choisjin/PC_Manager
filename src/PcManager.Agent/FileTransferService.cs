@@ -17,6 +17,8 @@ public class FileTransferService(
     private const int MaxListEntries = 5000;
 
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(30) };
+    // 영상 스트림: 브라우저가 일시정지하면 몇 분씩 멈춰 있을 수 있어 시간 제한 없이 (끊기면 서버가 연결을 닫는다)
+    private static readonly HttpClient MediaHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
 
     // 완료 보고가 서버에 전달될 때까지 추적 (재등록 시 서버가 실패 처리하지 않게)
     private readonly ConcurrentDictionary<string, byte> _unreported = new();
@@ -126,6 +128,73 @@ public class FileTransferService(
             total += read;
         }
         return total == buffer.Length ? buffer : buffer[..total];
+    }
+
+    /// <summary>
+    /// 브라우저 영상 재생용: 파일 [offset, offset+length) 구간을 HTTP로 서버에 흘려보낸다 (SignalR 조각보다 훨씬 빠름).
+    /// 파일을 열 수 있으면 바로 true를 돌려주고 보내기는 뒤에서 한다
+    /// </summary>
+    public bool StartMediaStream(string streamId, string path, long offset, long length)
+    {
+        if (offset < 0 || length <= 0)
+            return false;
+        FileStream file;
+        try
+        {
+            // 녹화 중인 파일도 읽을 수 있게 공유 모드로
+            file = new FileStream(ReadablePath(path), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 256 * 1024, useAsync: true);
+            file.Seek(offset, SeekOrigin.Begin);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+        _ = Task.Run(() => SendMediaStreamAsync(streamId, file, length));
+        return true;
+    }
+
+    private async Task SendMediaStreamAsync(string streamId, FileStream file, long length)
+    {
+        try
+        {
+            await using (file)
+            {
+                using var content = new StreamContent(new LimitedReadStream(file, length), 256 * 1024);
+                content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                using var request = CreateRequest(HttpMethod.Post, AgentTransferPaths.MediaStream(streamId));
+                request.Content = content;
+                using var response = await MediaHttp.SendAsync(request);
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or ObjectDisposedException)
+        {
+            // 브라우저가 다른 위치로 넘어가 서버가 연결을 끊은 경우가 대부분 — 무시
+        }
+    }
+
+    /// <summary>앞에서부터 정해진 바이트만 읽는 스트림 (파일 구간 보내기)</summary>
+    private sealed class LimitedReadStream(Stream inner, long remaining) : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => ReadAsync(buffer, offset, count).GetAwaiter().GetResult();
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (remaining <= 0)
+                return 0;
+            var read = await inner.ReadAsync(buffer[..(int)Math.Min(buffer.Length, remaining)], cancellationToken);
+            remaining -= read;
+            return read;
+        }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     /// <summary>같은 PC 안의 파일 조작 (복사/이동/삭제/폴더 생성/이름 변경)</summary>
