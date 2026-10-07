@@ -34,6 +34,45 @@ internal static class SessionProcess
         return result;
     }
 
+    /// <summary>사용자가 로그인한 채 연결이 끊긴 세션 ID (원격 데스크톱 창을 닫은 경우 등)</summary>
+    public static List<int> GetDisconnectedUserSessionIds()
+    {
+        var result = new List<int>();
+        if (!WTSEnumerateSessions(IntPtr.Zero, 0, 1, out var buffer, out var count))
+            throw new Win32Exception();
+
+        try
+        {
+            var size = Marshal.SizeOf<WTS_SESSION_INFO>();
+            for (var i = 0; i < count; i++)
+            {
+                var info = Marshal.PtrToStructure<WTS_SESSION_INFO>(buffer + i * size);
+                if (info.State == WTS_CONNECTSTATE_CLASS.WTSDisconnected && info.SessionId != 0 && GetUserName(info.SessionId).Length > 0)
+                    result.Add(info.SessionId);
+            }
+        }
+        finally
+        {
+            WTSFreeMemory(buffer);
+        }
+        return result;
+    }
+
+    /// <summary>세션에 로그인한 사용자 이름. 로그인 화면(로그인 전)이면 빈 문자열</summary>
+    public static string GetUserName(int sessionId)
+    {
+        if (!WTSQuerySessionInformation(IntPtr.Zero, sessionId, WTSUserName, out var buffer, out _))
+            return "";
+        try
+        {
+            return Marshal.PtrToStringUni(buffer) ?? "";
+        }
+        finally
+        {
+            WTSFreeMemory(buffer);
+        }
+    }
+
     /// <summary>이 세션이 원격 데스크톱(RDP)으로 연결돼 있는지. 물리 콘솔·직접 로그인은 false</summary>
     public static bool IsRemoteSession(int sessionId)
     {
@@ -261,6 +300,7 @@ internal static class SessionProcess
     private static extern bool WTSQueryUserToken(int sessionId, out IntPtr phToken);
 
     private const int WTSClientProtocolType = 16;
+    private const int WTSUserName = 5;
 
     [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool WTSQuerySessionInformation(IntPtr hServer, int sessionId, int infoClass, out IntPtr ppBuffer, out int pBytesReturned);

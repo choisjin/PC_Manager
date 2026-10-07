@@ -38,6 +38,7 @@ public static class AgentHost
         builder.Services.AddHostedService<AgentWorker>();
         builder.Services.AddHostedService<LocalControlServer>();
         builder.Services.AddHostedService<LauncherSupervisor>();
+        builder.Services.AddHostedService<ConsoleSessionKeeper>();
 
         builder.Build().Run();
         return 0;
