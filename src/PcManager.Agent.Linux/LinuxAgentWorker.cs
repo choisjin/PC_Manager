@@ -161,6 +161,9 @@ public class LinuxAgentWorker(
             sessionId => Task.Run(() => remote.Start(sessionId, thumbnail: true)));
         connection.On<string?>(AgentClientMethods.SendSecureAttention, () => NotSupported);
         connection.On<string?>(AgentClientMethods.SwitchToX11, () => X11Session.SwitchAndReboot(logger));
+        // 원격 PC에서 복사한 파일을 이 PC(대시보드를 연 PC) 클립보드로
+        connection.On(AgentClientMethods.PrepareClipboard, () => Task.Run(LinuxClipboardHandoff.Prepare));
+        connection.On<string[], string?>(AgentClientMethods.SetClipboardFiles, paths => Task.Run(() => LinuxClipboardHandoff.SetFiles(paths)));
 
         connection.On<string?>(nameof(IAgentClient.UpdateAgent), _ => updater.Start());
 

@@ -139,6 +139,9 @@ public class AgentWorker(
         connection.On(AgentClientMethods.OpenEditFolder, () => Task.Run(edits.OpenFolder));
         connection.On(AgentClientMethods.CleanEditFolder, () => Task.Run(edits.CleanNow));
         connection.On<string, int, byte[]?>(AgentClientMethods.GetFileIcon, shellIcons.GetPngAsync);
+        // 원격 PC에서 복사한 파일을 내 PC 클립보드로 (대시보드를 연 PC)
+        connection.On(AgentClientMethods.PrepareClipboard, () => Task.Run(ClipboardHandoff.Prepare));
+        connection.On<string[], string?>(AgentClientMethods.SetClipboardFiles, paths => Task.Run(() => ClipboardHandoff.SetFiles(paths)));
         connection.On<CommitReplaceRequest, string?>(AgentClientMethods.CommitReplace, files.CommitReplaceAsync);
         connection.On<string, string, bool>(AgentClientMethods.SetArchivePassword,
             (archivePath, password) => { ArchiveBrowser.SetPassword(archivePath, password); return true; });

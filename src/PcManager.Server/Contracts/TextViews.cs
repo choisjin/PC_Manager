@@ -26,4 +26,6 @@ public record ArchivePasswordRequest(string? ArchivePath, string? Password);
 /// <param name="Label">편집 폴더 이름에 쓸 원래 PC 표시 이름</param>
 /// <param name="ReadOnly">압축 안 파일 등: 열기만 하고 되돌려 저장하지 않음</param>
 /// <param name="Backup">저장할 때 원본을 .bak으로 남긴다 (선택)</param>
+public record ClipboardFilesRequest(IReadOnlyList<string>? Paths);
+
 public record OpenLocalRequest(string? Path, string? EditorAgentId, string? Label, bool ReadOnly, bool Backup = false);

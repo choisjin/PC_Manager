@@ -16,6 +16,8 @@ export interface RemotePc {
 export interface RemoteContextValue {
   pcs: RemotePc[]
   userName: (userId: string) => string
+  /** 대시보드를 연 PC(내 PC)의 에이전트 (온라인일 때만). 원격에서 복사한 파일을 내 PC 클립보드로 받을 때 */
+  selfAgentId: string | null
 }
 
-export const RemoteContext = createContext<RemoteContextValue>({ pcs: [], userName: () => '다른 사용자' })
+export const RemoteContext = createContext<RemoteContextValue>({ pcs: [], userName: () => '다른 사용자', selfAgentId: null })

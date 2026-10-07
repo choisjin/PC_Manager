@@ -269,6 +269,12 @@ public static class AgentClientMethods
     /// <summary>(string extension, int size) → byte[]? PNG. 그 PC 윈도우의 확장자별 셸 아이콘 (탐색기와 같은 아이콘)</summary>
     public const string GetFileIcon = "GetFileIcon";
 
+    /// <summary>() → string. 내 PC(대시보드를 연 PC): 원격 PC에서 복사한 파일을 받아 둘 새 폴더</summary>
+    public const string PrepareClipboard = "PrepareClipboard";
+
+    /// <summary>string[] paths → string? 오류. 내 PC: 받은 파일들을 사용자 클립보드에 '복사'로 넣는다 (Ctrl+V로 붙여넣기)</summary>
+    public const string SetClipboardFiles = "SetClipboardFiles";
+
     /// <summary>string sessionId → string? 오류. 사용자 세션에 원격조작 프로세스를 띄워 AgentRemotePaths.Session으로 접속시킨다</summary>
     public const string StartRemote = "StartRemote";
 

@@ -168,8 +168,9 @@ public static class FileEndpoints
         });
 
         // 브라우저는 파일 내용을 요청 본문 그대로 보낸다 (path = PC에 저장할 전체 경로)
+        // wait=true면 PC가 다 받을 때까지 기다린다 (원격조작 파일 붙여넣기: 받은 뒤 클립보드에 넣어야 함)
         api.MapPost("/agents/{agentId}/files/push", async (
-            string agentId, string path, HttpRequest request, TransferService transfers,
+            string agentId, string path, bool? wait, HttpRequest request, TransferService transfers,
             SharedFolderStore shares, LocalShareFiles localShare, CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(path))
@@ -186,6 +187,11 @@ public static class FileEndpoints
                 {
                     return Results.BadRequest("올리기 실패: " + ex.Message);
                 }
+            }
+            if (wait == true)
+            {
+                var done = await transfers.PushAndWaitAsync(agentId, path, request.Body, ct);
+                return done.State == TransferState.Succeeded ? Results.Ok(done) : Results.BadRequest(done.Error ?? "PC에 저장하지 못했습니다.");
             }
             return Results.Ok(await transfers.PushAsync(agentId, path, request.Body, ct));
         }).WithMetadata(new DisableRequestSizeLimitAttribute());

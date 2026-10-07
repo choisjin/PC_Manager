@@ -99,6 +99,56 @@ const parentKeyboardLock = (action: 'lock' | 'unlock') =>
     window.parent.postMessage({ pcmKeyboardLock: action, id }, '*')
   })
 
+/** 붙여넣기에서 읽은 이 PC 클립보드 */
+interface LocalPaste {
+  items: LocalItem[]
+  text: string
+}
+
+/** 이 PC에서 복사한 파일 또는 폴더 하나 */
+interface LocalItem {
+  name: string
+  file?: File
+  entry?: FileSystemDirectoryEntry
+}
+
+const collectLocalItems = (data: DataTransfer): LocalItem[] => {
+  const items: LocalItem[] = []
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== 'file') continue
+    const entry = item.webkitGetAsEntry?.() ?? null
+    if (entry?.isDirectory) {
+      items.push({ name: entry.name, entry: entry as FileSystemDirectoryEntry })
+      continue
+    }
+    const file = item.getAsFile()
+    if (file) items.push({ name: file.name, file })
+  }
+  return items
+}
+
+// 이 PC 클립보드가 바뀌었는지 보려고 쓰는 서명 (이름·크기·수정 시각)
+const localSignature = (items: LocalItem[]) =>
+  items.map((i) => (i.file ? `${i.name}:${i.file.size}:${i.file.lastModified}` : `${i.name}/`)).join('|')
+
+const readDirectory = (dir: FileSystemDirectoryEntry) =>
+  new Promise<FileSystemEntry[]>((resolve, reject) => {
+    const reader = dir.createReader()
+    const all: FileSystemEntry[] = []
+    // readEntries는 한 번에 일부만 준다 → 빈 배열이 올 때까지
+    const next = () =>
+      reader.readEntries((batch) => {
+        if (batch.length === 0) resolve(all)
+        else {
+          all.push(...batch)
+          next()
+        }
+      }, reject)
+    next()
+  })
+
+const entryFile = (entry: FileSystemFileEntry) => new Promise<File>((resolve, reject) => entry.file(resolve, reject))
+
 const keyboardLockAvailable = () => typeof window !== 'undefined' && window.isSecureContext && typeof keyboardApi()?.lock === 'function'
 
 type KeyLock = 'off' | 'locked' | 'unavailable'
@@ -107,7 +157,7 @@ type KeyLock = 'off' | 'locked' | 'unavailable'
 export function RemoteModal({ agentId: initialAgentId, machineName: initialName, userId, onClose }: Props) {
   // PC 목록에서 다른 PC로 바꾸면 그 PC로 다시 연결한다
   const [agentId, setAgentId] = useState(initialAgentId)
-  const { pcs, userName } = useContext(RemoteContext)
+  const { pcs, userName, selfAgentId } = useContext(RemoteContext)
   const machineName = pcs.find((p) => p.id === agentId)?.name ?? (agentId === initialAgentId ? initialName : agentId.slice(0, 8))
   const [listOpen, setListOpen] = useState(() => {
     try {
@@ -155,6 +205,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
   const clipTextSeenRef = useRef(false)
   const swallowedRef = useRef(new Set<string>())
   const pastingRef = useRef(false)
+  const pasteTimerRef = useRef(0)
+  const resolvePasteRef = useRef<(data: LocalPaste | null) => void>(() => {})
   const agentIdRef = useRef(agentId)
   const pcsRef = useRef(pcs)
   useEffect(() => {
@@ -209,6 +261,32 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     const id = setTimeout(() => setHint(null), 6000)
     return () => clearTimeout(id)
   }, [hint])
+
+  // Ctrl+V 뒤 브라우저가 보내는 붙여넣기: 이 PC 클립보드(파일·텍스트)를 읽는다 (DataTransfer는 이벤트 안에서만 읽힌다)
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (document.activeElement !== stageRef.current || !pasteTimerRef.current) return
+      e.preventDefault()
+      clearTimeout(pasteTimerRef.current)
+      pasteTimerRef.current = 0
+      const data = e.clipboardData
+      resolvePasteRef.current(data ? { items: collectLocalItems(data), text: data.getData('text/plain') } : null)
+    }
+    document.addEventListener('paste', onPaste, true)
+    return () => document.removeEventListener('paste', onPaste, true)
+  }, [])
+
+  // 원격에서 파일을 복사한 뒤 브라우저 창을 벗어나면(내 PC로 돌아가면) 내 PC로 받아 내 PC 클립보드에 넣는다
+  useEffect(() => {
+    if (!selfAgentId) return
+    const onBlur = () => {
+      const clip = fileClipboard.get()
+      if (!clip || clip.agentId === selfAgentId || clip.delivered.has(selfAgentId)) return
+      void fileClipboard.deliverToSelf(selfAgentId).then((message) => message && setHint(message))
+    }
+    window.addEventListener('blur', onBlur)
+    return () => window.removeEventListener('blur', onBlur)
+  }, [selfAgentId])
 
   // 전체 화면을 벗어나면(Esc 길게 누름 등) 키보드 잠금도 풀린다. 모달을 닫을 때도 정리
   useEffect(() => {
@@ -346,7 +424,10 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
               fileClipboard.noteLocalText(msg.text, false)
               navigator.clipboard?.writeText?.(msg.text).catch(() => {})
               // 원격에서 새로 텍스트를 복사함 → 파일 클립보드는 비운다 (연결 직후 알려 오는 기존 내용은 제외)
-              if (clipTextSeenRef.current) fileClipboard.clear()
+              if (clipTextSeenRef.current) {
+                fileClipboard.clear()
+                fileClipboard.remoteClipboardChanged(agentId)
+              }
             }
             clipTextSeenRef.current = true
             break
@@ -355,7 +436,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
             if (Array.isArray(msg.paths) && msg.paths.length > 0) {
               const name = pcsRef.current.find((p) => p.id === agentId)?.name ?? agentId.slice(0, 8)
               fileClipboard.set(agentId, name, msg.paths as string[])
-              showHint(`파일 ${msg.paths.length}개 복사됨 — 다른 PC 원격 화면에서 Ctrl+V로 붙여넣을 수 있습니다.`)
+              fileClipboard.remoteClipboardChanged(agentId)
+              showHint(`파일 ${msg.paths.length}개 복사됨 — 다른 PC 원격 화면에서 Ctrl+V, 또는 이 창을 벗어나 내 PC에서 Ctrl+V로 붙여넣습니다.`)
             }
             break
           case 'error':
@@ -478,22 +560,70 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
 
   const onKey = (e: React.KeyboardEvent, down: boolean) => {
     if (viewOnlyRef.current || !e.code) return
+    // Ctrl+V: 바로 보내지 않고 브라우저 붙여넣기(paste)를 받아 무엇을 붙여넣을지 고른다
+    // (이 PC에서 복사한 파일은 paste 이벤트로만 보인다) → preventDefault 하지 않아야 paste가 온다
+    if (down && e.code === 'KeyV' && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      e.stopPropagation()
+      swallowedRef.current.add(e.code)
+      if (!pastingRef.current && !pasteTimerRef.current) {
+        // paste가 안 오면(브라우저가 막는 등) 잠시 뒤 클립보드 없이 처리
+        pasteTimerRef.current = window.setTimeout(() => {
+          pasteTimerRef.current = 0
+          resolvePasteRef.current(null)
+        }, 300)
+      }
+      return
+    }
     e.preventDefault()
     e.stopPropagation()
-    // 다른 PC에서 복사한 파일 붙여넣기: Ctrl+V를 가로채 파일을 이 PC로 받아 클립보드에 넣은 뒤 Ctrl+V를 보낸다
-    if (down && e.code === 'KeyV' && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-      const clip = fileClipboard.get()
-      if (pastingRef.current || (clip && !clip.delivered.has(agentId))) {
-        swallowedRef.current.add(e.code)
-        if (clip && !pastingRef.current) void pasteFiles(clip)
-        return
-      }
-    }
     if (!down && swallowedRef.current.delete(e.code)) return
     if (down) pressedRef.current.add(e.code)
     else pressedRef.current.delete(e.code)
     // 수식 키 상태를 함께 보내, 원격에서 Shift+숫자 등이 어긋나지 않게 한다
     send({ t: down ? 'kd' : 'ku', code: e.code, key: e.key, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey })
+  }
+
+  /** 이 PC에서 복사한 파일·폴더를 원격 PC(받아 둘 폴더)에 올리고 → 원격 클립보드에 넣고 Ctrl+V */
+  const uploadLocal = async (items: LocalItem[], signature: string) => {
+    const target = agentId
+    const dir = clipDirRef.current
+    if (!dir) {
+      showHint(`${machineName}의 에이전트가 파일 붙여넣기를 지원하지 않습니다. 에이전트를 업데이트하세요.`)
+      return
+    }
+    const sep = dir.startsWith('/') ? '/' : '\\'
+    const folder = dir + sep + fileClipboard.newId()
+    pastingRef.current = true
+    setPasting(`내 PC 파일 ${items.length}개 올리는 중…`)
+    const paths: string[] = []
+    const errors: string[] = []
+    const uploadDir = async (entry: FileSystemDirectoryEntry, dest: string) => {
+      for (const child of await readDirectory(entry)) {
+        const childDest = dest + sep + child.name
+        if (child.isDirectory) await uploadDir(child as FileSystemDirectoryEntry, childDest)
+        else await api.pushFileAndWait(target, childDest, await entryFile(child as FileSystemFileEntry))
+      }
+    }
+    try {
+      for (const item of items) {
+        const dest = folder + sep + item.name
+        try {
+          if (item.file) await api.pushFileAndWait(target, dest, item.file)
+          else if (item.entry) await uploadDir(item.entry, dest)
+          paths.push(dest)
+        } catch (err) {
+          errors.push(`${item.name}: ${err instanceof Error ? err.message : String(err)}`)
+        }
+      }
+    } finally {
+      pastingRef.current = false
+      setPasting(null)
+    }
+    if (errors.length > 0) showHint(`파일 올리기 실패 ${errors.length}개: ${errors[0]}`)
+    if (paths.length === 0 || agentIdRef.current !== target) return
+    fileClipboard.markLocalDelivered(target, signature)
+    send({ t: 'clipfiles', paths })
+    send({ t: 'combo', codes: ['ControlLeft', 'KeyV'] })
   }
 
   /** 원본 PC → 이 PC(받아 둘 폴더)로 서버가 복사 → 이 PC 클립보드에 넣고 Ctrl+V */
@@ -530,6 +660,40 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     send({ t: 'clipfiles', paths })
     send({ t: 'combo', codes: ['ControlLeft', 'KeyV'] })
   }
+
+  /**
+   * Ctrl+V에서 붙여넣을 것 고르기: 이 PC에서 새로 복사한 텍스트/파일 → 다른 원격 PC에서 복사한 파일 → 원격 클립보드 그대로
+   * @param data paste 이벤트의 이 PC 클립보드 (없으면 null)
+   */
+  const resolvePaste = (data: LocalPaste | null) => {
+    if (pastingRef.current) return
+    // 이 PC에서 새로 텍스트를 복사했으면 원격 파일 클립보드는 비워진다
+    if (data?.text) fileClipboard.noteLocalText(data.text, true)
+    const items = data?.items ?? []
+    if (items.length > 0) {
+      const signature = localSignature(items)
+      const isNew = fileClipboard.noteLocalFiles(signature)
+      const clip = fileClipboard.get()
+      if (isNew || !clip || clip.delivered.has(agentId)) {
+        if (fileClipboard.localDeliveredTo(agentId, signature)) send({ t: 'combo', codes: ['ControlLeft', 'KeyV'] })
+        else void uploadLocal(items, signature)
+        return
+      }
+    }
+    const clip = fileClipboard.get()
+    if (clip && !clip.delivered.has(agentId)) {
+      void pasteFiles(clip)
+      return
+    }
+    if (data?.text && data.text !== lastClipRef.current) {
+      lastClipRef.current = data.text
+      send({ t: 'clip', text: data.text })
+    }
+    send({ t: 'combo', codes: ['ControlLeft', 'KeyV'] })
+  }
+  useEffect(() => {
+    resolvePasteRef.current = resolvePaste
+  })
 
   // 포커스를 잃으면 눌린 채 남은 키를 뗀다 (Alt+Tab 등). reset으로 원격의 수식 키도 모두 해제
   const releaseKeys = () => {

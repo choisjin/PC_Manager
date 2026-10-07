@@ -89,6 +89,26 @@ public static class TextEndpoints
         api.MapPost("/agents/{agentId}/edit-folder/clean", (string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
             CallAgentAsync<EditCleanResult>(agentId, AgentClientMethods.CleanEditFolder, registry, agentHub, ct));
 
+        // 원격조작 파일 복사·붙여넣기: 내 PC(대시보드를 연 PC)에 받을 폴더 만들기 / 받은 파일을 사용자 클립보드에 넣기
+        api.MapPost("/agents/{agentId}/clipboard/prepare", (string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            CallAgentAsync<string>(agentId, AgentClientMethods.PrepareClipboard, registry, agentHub, ct));
+        api.MapPost("/agents/{agentId}/clipboard/files", async (string agentId, ClipboardFilesRequest request, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+        {
+            if (request.Paths is not { Count: > 0 })
+                return Results.BadRequest("파일이 없습니다.");
+            if (!registry.TryGetConnection(agentId, out var conn))
+                return Results.Conflict("내 PC의 에이전트가 오프라인입니다.");
+            try
+            {
+                var error = await agentHub.Clients.Client(conn).InvokeAsync<string?>(AgentClientMethods.SetClipboardFiles, request.Paths.ToArray(), ct);
+                return error is null ? Results.NoContent() : Results.BadRequest(error);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                return Results.Problem(OldAgentMessage(ex), statusCode: StatusCodes.Status502BadGateway);
+            }
+        });
+
         // 편집 PC 에이전트 → 저장한 내용을 원래 PC로 (토큰 검사는 /api/agent 미들웨어)
         app.MapPost(AgentTransferPaths.EditSave, async (string source, string path, string? baseHash, int? backup, HttpRequest http, TransferService transfers, CancellationToken ct) =>
         {

@@ -697,6 +697,17 @@ public class TransferService(
     }
 
     /// <summary>파일 탐색기: 받은 파일을 서버에 저장한 뒤 PC가 내려받게 한다.</summary>
+    /// <summary>PushAsync 후 PC가 다 받을(또는 실패할) 때까지 기다린다</summary>
+    public async Task<TransferView> PushAndWaitAsync(string agentId, string destinationPath, Stream content, CancellationToken ct)
+    {
+        var transfer = NewTransfer(agentId, TransferKind.Push, destinationPath);
+        transfer.TotalBytes = await store.SaveAsync(store.GetPushContentPath(transfer.Id), content, ct);
+        var completion = notifier.WaitAsync(transfer.Id, ct);
+        await DispatchAsync(transfer, client => client.DownloadFile(new DownloadFileRequest(transfer.Id, destinationPath)));
+        await completion;
+        return (await FindAsync(transfer.Id) ?? transfer).ToView();
+    }
+
     public async Task<TransferView> PushAsync(string agentId, string destinationPath, Stream content, CancellationToken ct)
     {
         var transfer = NewTransfer(agentId, TransferKind.Push, destinationPath);

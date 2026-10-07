@@ -24,6 +24,11 @@ internal static class Program
         if (remoteIndex >= 0 && remoteIndex + 1 < args.Length)
             return Remote.RemoteSessionApp.Run(args[remoteIndex + 1], thumbnail: args.Contains(Remote.RemoteControlService.ThumbnailArgument));
 
+        // 서비스가 사용자 세션에 띄우는 클립보드 도우미: --set-clipboard-files <경로 목록 파일>
+        var clipIndex = Array.IndexOf(args, ClipboardHandoff.HelperArgument);
+        if (clipIndex >= 0 && clipIndex + 1 < args.Length)
+            return ClipboardHandoff.RunHelper(args[clipIndex + 1]);
+
         // 서비스가 사용자 세션에 띄우는 아이콘 도우미: --shell-icons <결과 파일> <확장자:크기,...>
         var iconIndex = Array.IndexOf(args, UserShellIcons.HelperArgument);
         if (iconIndex >= 0 && iconIndex + 2 < args.Length)

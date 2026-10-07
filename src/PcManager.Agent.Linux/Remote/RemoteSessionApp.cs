@@ -122,10 +122,10 @@ internal sealed class RemoteSession(SocketChannel channel, string display)
     private string? _lastClipFiles;
 
     /// <summary>다른 PC에서 복사한 파일을 붙여넣을 때 서버가 받아 두는 곳 (대시보드가 이 아래 새 폴더로 복사)</summary>
-    private const string ClipboardFolder = "/tmp/pcmanager-clip";
+    internal const string ClipboardFolder = "/tmp/pcmanager-clip";
 
     // 파일 관리자가 복사한 파일을 클립보드에 두는 형식 (GNOME Files 등 / 일반)
-    private const string GnomeFilesTarget = "x-special/gnome-copied-files";
+    internal const string GnomeFilesTarget = "x-special/gnome-copied-files";
     private const string UriListTarget = "text/uri-list";
 
     private Monitor Current =>

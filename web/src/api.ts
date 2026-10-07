@@ -631,6 +631,18 @@ export const api = {
 
   fetchFile: (agentId: string, path: string) =>
     request<Transfer>(`/api/agents/${agentId}/files/fetch`, { method: 'POST', body: JSON.stringify({ path }) }),
+  /** pushFile과 같지만 PC가 다 받을 때까지 기다린다 (원격조작 파일 붙여넣기) */
+  pushFileAndWait: (agentId: string, destinationPath: string, file: Blob) =>
+    request<Transfer>(`/api/agents/${agentId}/files/push?${query({ path: destinationPath, wait: 'true' })}`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': 'application/octet-stream' },
+    }),
+  /** 내 PC: 원격 PC에서 복사한 파일을 받아 둘 새 폴더 */
+  prepareClipboard: (agentId: string) => request<string>(`/api/agents/${agentId}/clipboard/prepare`, { method: 'POST' }),
+  /** 내 PC: 받은 파일을 사용자 클립보드에 넣는다 (Ctrl+V로 붙여넣기) */
+  setClipboardFiles: (agentId: string, paths: string[]) =>
+    request<void>(`/api/agents/${agentId}/clipboard/files`, { method: 'POST', body: JSON.stringify({ paths }) }),
   pushFile: (agentId: string, destinationPath: string, file: Blob) =>
     request<Transfer>(`/api/agents/${agentId}/files/push?${query({ path: destinationPath })}`, {
       method: 'POST',

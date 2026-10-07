@@ -178,8 +178,9 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
           .sort((x, y) => x.name.localeCompare(y.name, 'ko', { numeric: true, sensitivity: 'base' })),
       ),
       userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
+      selfAgentId: selfOnline ? selfAgentId : null,
     }),
-    [allSections, pcGroups, pcStatuses, remoteUsage, org.users],
+    [allSections, pcGroups, pcStatuses, remoteUsage, org.users, selfOnline, selfAgentId],
   )
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)

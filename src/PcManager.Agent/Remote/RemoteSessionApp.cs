@@ -37,7 +37,7 @@ internal static class RemoteSessionApp
     /// 다른 PC에서 복사한 파일을 붙여넣을 때 서버가 파일을 받아 두는 곳 (사용자가 읽을 수 있는 공용 폴더).
     /// 대시보드가 이 아래 새 폴더로 복사한 뒤 clipfiles로 클립보드에 넣는다
     /// </summary>
-    private static string ClipboardFolder =>
+    internal static string ClipboardFolder =>
         Path.Combine(Environment.GetEnvironmentVariable("PUBLIC") is { Length: > 0 } p ? p : @"C:\Users\Public", "PcManagerClipboard");
 
     /// <summary>하루 넘은 붙여넣기용 임시 폴더를 지운다</summary>
