@@ -4141,6 +4141,14 @@ th.sortable:hover {
   grid-template-columns: minmax(420px, 1.1fr) minmax(380px, 1fr);
 }
 .rv-left { display: flex; flex-direction: column; min-height: 0; overflow: auto; border-right: 1px solid var(--border); }
+/* ATS: 영상이 남는 높이를 채우고 원본·결과 이미지는 아래에 고정 → 스크롤 없이 */
+.rv-left.fit { overflow: hidden; }
+.rv-left.fit > * { flex: none; }
+.rv-left.fit > .rv-video { flex: 1 1 auto; min-height: 160px; display: flex; flex-direction: column; }
+.rv-left.fit .rv-video-stage { flex: 1 1 auto; min-height: 0; }
+.rv-left.fit .rv-video > :not(.rv-video-stage) { flex: none; }
+.rv-left.fit .rv-video-stage video { position: absolute; inset: 0; width: 100%; height: 100%; max-height: none; }
+.rv-left.fit .rv-ats-card img, .rv-left.fit .rv-ats-empty { height: clamp(110px, 24vh, 220px); }
 .rv-right { display: flex; flex-direction: column; min-height: 0; }
 .rv-video { background: #000; }
 .rv-video-stage { position: relative; display: flex; justify-content: center; }
@@ -4243,7 +4251,14 @@ body.rv-open .pip { display: none; }
 .rv-colfilter-list label .ellipsis { flex: 1; min-width: 0; }
 .rv-colfilter .rv-setup-actions { margin-top: 2px; }
 /* ATS: 시간 · B · Status · Action · Remark · Result · Y (Video_editor.py와 같은 열) */
-.rv-table.ats .rv-row { grid-template-columns: 46px 96px minmax(60px, 0.7fr) 72px minmax(110px, 1.3fr) minmax(100px, 1.5fr) 64px minmax(60px, 0.8fr) 64px; }
+.rv-table.ats .rv-row { grid-template-columns: 40px 92px 62px minmax(80px, 1fr) 58px minmax(120px, 1.8fr) 58px minmax(80px, 1.2fr) 60px; }
+/* 머리글은 두 줄까지 (ACTION / CHECK, STEP / RESULT) */
+.rv-table.ats .rv-row-head { height: 34px; }
+.rv-table.ats .rv-colhead { white-space: normal; line-height: 1.15; height: 100%; }
+.rv-table.ats .rv-colhead .ellipsis { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.rv-colhead.center { justify-content: center; text-align: center; }
+.rv-colhead.center .ellipsis { flex: none; }
+.rv-row > .rv-center { text-align: center; }
 .rv-row:hover { background: var(--hover); }
 .rv-row-head { height: 26px; font-weight: 600; background: var(--panel); cursor: default; }
 .rv-row.selected { background: var(--selected); }

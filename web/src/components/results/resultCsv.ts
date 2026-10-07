@@ -357,7 +357,8 @@ export function parseAts(text: string): ParsedResult {
   const preamble = all.slice(0, 6).map((r) => r.join(',').trim()).filter(Boolean)
   // 머리말 마지막 줄이 열 이름 줄이면 그 이름을 쓴다
   const named = all[5] && all[5].length > 24 ? all[5].map(unq) : []
-  const headers = ATS_COLUMNS.map((c, i) => named[c] || ATS_FALLBACK[i])
+  // 'ITERATION IN JOB'은 칸이 넓어지지 않게 'ITERATION'으로
+  const headers = ATS_COLUMNS.map((c, i) => named[c] || ATS_FALLBACK[i]).map((h) => h.replace(/^ITERATION IN JOB$/i, 'ITERATION'))
   const rows: ResultRow[] = []
   for (const r of all.slice(6)) {
     if (r.length === 0 || !r[0].includes('[') || !r[0].includes(']')) break

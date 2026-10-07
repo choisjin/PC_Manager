@@ -76,6 +76,8 @@ interface Props {
 
 const RESULT_EXT = /\.(csv|tsv|txt|log|json)$/i
 const ROW_HEIGHT = 26
+/** ATS 표에서 값을 가운데 맞추는 짧은 열: ITERATION · ACTION CHECK · STEP RESULT */
+const ATS_CENTER = new Set([1, ATS_ACTION_CELL, ATS_RESULT_CELL])
 const ROLE_LABEL: Record<ColumnRole, string> = {
   time: '시간', cycle: '회차', status: '결과', name: '스텝 이름', duration: '걸린 시간', message: '메시지',
 }
@@ -590,7 +592,7 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
     <>
       <ViewerHead source={source} set={set} onBack={onBack} onClose={onClose} setDialog={setDialog} />
       <div className="rv-main">
-        <section className="rv-left">
+        <section className={`rv-left${ats ? ' fit' : ''}`}>
           <VideoTransport
             src={currentRaw?.prep === 'ready' && currentRaw.playPath ? fileUrl(currentRaw.playPath) : null}
             waiting={
@@ -662,7 +664,7 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
               {focusRow && focusRow.images.length === 0 && <span className="muted small">이 스텝에 적힌 이미지가 없습니다</span>}
             </div>
             </>}
-            {timedImages.length > 0 && (
+            {!ats && timedImages.length > 0 && (
               <>
                 <div className="rv-images-title small muted">이미지 폴더 ({timedImages.length}) · 누르면 그 시각으로 이동</div>
                 <div className="rv-strip">
@@ -1014,7 +1016,7 @@ function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, 
               <button
                 key={i}
                 type="button"
-                className={`rv-colhead${filtered[i] ? ' filtered' : ''}`}
+                className={`rv-colhead${filtered[i] ? ' filtered' : ''}${ATS_CENTER.has(i) ? ' center' : ''}`}
                 title={`${h} — 눌러서 거르기·정렬`}
                 onClick={(e) => onHeader(i, e.currentTarget.getBoundingClientRect())}
               >
@@ -1043,7 +1045,7 @@ function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, 
               {headers ? row.cells.map((c, i) => (
                 <span
                   key={i}
-                  className={i === 0 ? 'mono' : i === ATS_RESULT_CELL || (i === ATS_ACTION_CELL && c === row.status) ? 'rv-status' : 'ellipsis'}
+                  className={`${i === 0 ? 'mono' : i === ATS_RESULT_CELL || (i === ATS_ACTION_CELL && c === row.status) ? 'rv-status' : 'ellipsis'}${ATS_CENTER.has(i) ? ' rv-center' : ''}`}
                   title={c}
                 >
                   {i === 0 ? formatWall(row.time) || c : c}
