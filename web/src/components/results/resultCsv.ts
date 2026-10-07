@@ -328,10 +328,13 @@ export const RESULT_MODE_LABEL: Record<ResultMode, string> = { ats: 'ATS', rfw: 
 
 /** ATS: 원본 열 A·B·P·U·V·X·Y만 보여 준다 */
 const ATS_COLUMNS = [0, 1, 15, 20, 21, 23, 24]
-const ATS_FALLBACK = ['시간', 'B', 'Status', 'Action', 'Remark', 'Result', 'Y']
-/** ATS 화면 열 중 목록으로 거르는 열 (Status·Action·Remark·Result) */
+const ATS_FALLBACK = ['Time Stamp', 'ITERATION IN JOB', 'STATUS', 'ACTION CHECK', 'STEP REMARK', 'STEP RESULT', 'STEP RESULT(DETAIL)']
+/** ATS 화면 열 중 목록으로 거르는 열 (STATUS·ACTION CHECK·STEP REMARK·STEP RESULT) */
 export const ATS_FILTER_COLUMNS = [2, 3, 4, 5]
-const ATS_MAPPING: ResultMapping = { time: 0, cycle: -1, status: 5, name: 3, duration: -1, message: 4, durationUnit: 's', timeMode: 'absolute' }
+/** ATS 화면 열: ACTION CHECK(OK/ERROR) · STEP RESULT(PASS/FAIL, 판정 스텝만) */
+export const ATS_ACTION_CELL = 3
+export const ATS_RESULT_CELL = 5
+const ATS_MAPPING: ResultMapping = { time: 0, cycle: 1, status: 5, name: 4, duration: -1, message: 6, durationUnit: 's', timeMode: 'absolute' }
 
 /** ATS Result: 앞 6줄은 머리말, 그 뒤 첫 열이 [시각]인 줄까지만 데이터 */
 export function parseAts(text: string): ParsedResult {
@@ -339,7 +342,7 @@ export function parseAts(text: string): ParsedResult {
   const preamble = all.slice(0, 6).map((r) => r.join(',').trim()).filter(Boolean)
   // 머리말 마지막 줄이 열 이름 줄이면 그 이름을 쓴다
   const named = all[5] && all[5].length > 24 ? all[5].map(unq) : []
-  const headers = ATS_COLUMNS.map((c, i) => (i > 0 && named[c]) || ATS_FALLBACK[i])
+  const headers = ATS_COLUMNS.map((c, i) => named[c] || ATS_FALLBACK[i])
   const rows: ResultRow[] = []
   for (const r of all.slice(6)) {
     if (r.length === 0 || !r[0].includes('[') || !r[0].includes(']')) break
@@ -349,8 +352,9 @@ export function parseAts(text: string): ParsedResult {
       index: rows.length,
       cells,
       time: v?.kind === 'absolute' ? v.ms : null,
-      cycle: '',
-      status: cells[ATS_MAPPING.status],
+      cycle: cells[ATS_MAPPING.cycle],
+      // 판정 스텝은 STEP RESULT, 아니면 동작 실패(ACTION CHECK=ERROR)만 결과로
+      status: cells[ATS_RESULT_CELL] || (statusTone(cells[ATS_ACTION_CELL]) === 'bad' ? cells[ATS_ACTION_CELL] : ''),
       name: cells[ATS_MAPPING.name],
       durationMs: null,
       message: cells[ATS_MAPPING.message],

@@ -5,7 +5,7 @@ import { isImageFile, isVideoFile } from '../../fileTypes'
 import { formatBytes } from '../../format'
 import { type ClipItem, FILES_MIME, type FilesDragPayload } from '../explorer/pcGroups'
 import {
-  ATS_FILTER_COLUMNS, type ColumnRole, decodeText, formatSeconds, formatWall, type ParsedResult, parseAts, parseResult,
+  ATS_ACTION_CELL, ATS_FILTER_COLUMNS, ATS_RESULT_CELL, type ColumnRole, decodeText, formatSeconds, formatWall, type ParsedResult, parseAts, parseResult,
   RESULT_MODE_LABEL, type ResultMapping, type ResultMode, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
@@ -70,8 +70,6 @@ interface Props {
 
 const RESULT_EXT = /\.(csv|tsv|txt|log|json)$/i
 const ROW_HEIGHT = 26
-/** ATS 화면 열 중 결과(색 구분) 열 */
-const ATS_STATUS_CELL = 5
 const ROLE_LABEL: Record<ColumnRole, string> = {
   time: '시간', cycle: '회차', status: '결과', name: '스텝 이름', duration: '걸린 시간', message: '메시지',
 }
@@ -846,7 +844,11 @@ function RowTable({ headers, rows, selected, playing, follow, anchors, videoTime
             >
               <span className="muted">{anchorRows.has(row.index) ? '📍' : row.index + 1}</span>
               {headers ? row.cells.map((c, i) => (
-                <span key={i} className={i === 0 ? 'mono' : i === ATS_STATUS_CELL ? 'rv-status' : 'ellipsis'} title={c}>
+                <span
+                  key={i}
+                  className={i === 0 ? 'mono' : i === ATS_RESULT_CELL || (i === ATS_ACTION_CELL && c === row.status) ? 'rv-status' : 'ellipsis'}
+                  title={c}
+                >
                   {i === 0 ? formatWall(row.time) || c : c}
                 </span>
               )) : (
