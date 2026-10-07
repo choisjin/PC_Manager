@@ -32,6 +32,23 @@ export interface ResultRow {
   message: string
   /** 행에 적힌 이미지 경로들 (HYPERLINK 수식·IMAGE:(…) 안 포함) */
   images: string[]
+  /** ATS: 원본·결과 이미지 (P열 찾을 이미지 · Y열 비교 이미지) */
+  ats?: AtsImages
+}
+
+export interface AtsImages {
+  /** p: P열만(화면에서 이미지 찾기) · y: Y열만(이미지 비교) · py: 둘 다 */
+  kind: 'p' | 'y' | 'py'
+  /** P열: 화면에서 찾을(터치할) 이미지 */
+  target: string | null
+  /** Y열(REF IMAGE): 비교 기준 원본 이미지 */
+  ref: string | null
+  /** Y열(DEVICE IMAGE): 그때 화면에서 잘라 낸 결과 이미지 */
+  result: string | null
+  /** Y열(DIFF IMAGE): 차이 표시 이미지 */
+  diff: string | null
+  /** Y열 첫 줄 (예: IMAGE(FAIL), FIND_IMAGE_ONSCREEN_TOUCH:('Can not find…')) */
+  note: string
 }
 
 export interface ParsedResult {
@@ -329,8 +346,6 @@ export const RESULT_MODE_LABEL: Record<ResultMode, string> = { ats: 'ATS', rfw: 
 /** ATS: 원본 열 A·B·P·U·V·X·Y만 보여 준다 */
 const ATS_COLUMNS = [0, 1, 15, 20, 21, 23, 24]
 const ATS_FALLBACK = ['Time Stamp', 'ITERATION IN JOB', 'STATUS', 'ACTION CHECK', 'STEP REMARK', 'STEP RESULT', 'STEP RESULT(DETAIL)']
-/** ATS 화면 열 중 목록으로 거르는 열 (STATUS·ACTION CHECK·STEP REMARK·STEP RESULT) */
-export const ATS_FILTER_COLUMNS = [2, 3, 4, 5]
 /** ATS 화면 열: ACTION CHECK(OK/ERROR) · STEP RESULT(PASS/FAIL, 판정 스텝만) */
 export const ATS_ACTION_CELL = 3
 export const ATS_RESULT_CELL = 5
@@ -359,7 +374,37 @@ export function parseAts(text: string): ParsedResult {
       durationMs: null,
       message: cells[ATS_MAPPING.message],
       images: [...new Set(r.join(' ').match(IMAGE_PATH) ?? [])].map((p) => p.replace(/\\\\/g, '\\')),
+      ats: atsImages(r),
     })
   }
   return { startTime: startFromPreamble(preamble), preamble, headers, mapping: ATS_MAPPING, timeKind: 'absolute', rows }
 }
+
+const IMAGE_FILE = /\.(?:bmp|png|jpe?g|gif|webp)$/i
+/** =HYPERLINK("경로") → 경로 */
+const hyperlink = (cell: string | undefined) => /HYPERLINK\(\s*"([^"]*)"/i.exec(cell ?? '')?.[1].trim() || null
+const unescapePath = (p: string) => p.replace(/\\\\/g, '\\')
+
+/** ATS 행의 이미지: P열(찾을 이미지) · Y열/AA~AC열(REF·DEVICE·DIFF IMAGE) */
+function atsImages(r: string[]): AtsImages | undefined {
+  const p = unq(r[15] ?? '')
+  const target = IMAGE_FILE.test(p) ? unescapePath(p) : null
+  const y = r[24] ?? ''
+  // Y: IMAGE:(점수?, '원본', '결과', '차이') — 빈 칸('')도 자리를 지킨다
+  const tuple = /IMAGE:\(([^)]*)\)/i.exec(y)?.[1] ?? ''
+  const quoted = [...tuple.matchAll(/'([^']*)'/g)].map((m) => unescapePath(m[1].trim()))
+  const ref = hyperlink(r[26]) ?? (quoted[0] || null)
+  const result = hyperlink(r[27]) ?? (quoted[1] || null)
+  const diff = hyperlink(r[28]) ?? (quoted[2] || null)
+  const yHas = !!(ref || result)
+  if (!target && !yHas) return undefined
+  return {
+    kind: target && yHas ? 'py' : target ? 'p' : 'y',
+    target, ref, result, diff,
+    note: (y.split(/[\r\n]+/).map((s) => s.trim()).find(Boolean) ?? '').replace(/''$/, ''),
+  }
+}
+
+const collator = new Intl.Collator('ko', { numeric: true, sensitivity: 'base' })
+/** 칸 값 비교 (숫자는 숫자 크기로) */
+export const compareCells = (a: string, b: string) => collator.compare(a, b)

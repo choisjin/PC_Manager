@@ -4182,6 +4182,25 @@ body.rv-open .pip { display: none; }
 .rv-images { padding: 6px 10px; }
 .rv-images-title { margin: 6px 0 4px; }
 .rv-thumbs { display: flex; flex-wrap: wrap; gap: 8px; }
+/* ATS 원본·결과 두 장 */
+.rv-ats-images .rv-images-title { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
+.rv-ats-kind { font-weight: 600; padding: 0 6px; border-radius: 4px; background: var(--selected); white-space: nowrap; }
+.rv-ats-kind.kind-p { color: var(--warn); }
+.rv-ats-kind.kind-py { color: var(--accent); }
+.rv-ats-status { font-weight: 600; }
+.rv-ats-status.tone-ok { color: var(--ok); }
+.rv-ats-status.tone-bad { color: var(--bad); }
+.rv-ats-note { flex: 1; min-width: 0; }
+.rv-ats-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rv-ats-card { margin: 0; display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 4px; background: var(--panel); }
+.rv-ats-card figcaption { display: flex; align-items: center; gap: 4px; min-width: 0; margin-bottom: 4px; white-space: nowrap; }
+.rv-ats-card figcaption .ellipsis { min-width: 0; }
+.rv-ats-card img { width: 100%; height: 220px; object-fit: contain; display: block; cursor: zoom-in; background: #000; border-radius: 4px; }
+.rv-ats-empty { height: 220px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 8px; border: 1px dashed var(--border-strong); border-radius: 4px; }
+.rv-ats-views { display: inline-flex; gap: 2px; flex: none; }
+.rv-ats-views button { font-size: 11px; padding: 0 6px; line-height: 18px; }
+.rv-ats-views button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.rv-ats-target { margin-top: 4px; }
 .rv-thumbs figure, .rv-strip figure { margin: 0; cursor: zoom-in; border: 1px solid var(--border); border-radius: 4px; padding: 2px; background: var(--panel); }
 .rv-thumbs figure { width: 180px; }
 .rv-thumbs img { width: 100%; max-height: 120px; object-fit: contain; display: block; }
@@ -4207,6 +4226,22 @@ body.rv-open .pip { display: none; }
   white-space: nowrap;
 }
 .rv-row > span { overflow: hidden; text-overflow: ellipsis; }
+/* ATS 머리글: 눌러서 엑셀처럼 거르기·정렬 */
+.rv-colhead { display: flex; align-items: center; gap: 2px; min-width: 0; padding: 0 2px; font: inherit; font-weight: 600; color: inherit; background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; text-align: left; }
+.rv-colhead:hover { background: var(--hover); border-color: var(--border); }
+.rv-colhead .ellipsis { flex: 1; min-width: 0; }
+.rv-colhead-ico { flex: none; color: var(--muted); font-size: 11px; }
+.rv-colhead.filtered { color: var(--accent); }
+.rv-colhead.filtered .rv-colhead-ico { color: var(--accent); }
+.rv-colfilter { position: fixed; z-index: 50; width: 280px; padding: 6px; display: flex; flex-direction: column; gap: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); }
+.rv-colfilter-title { padding: 0 2px; }
+.rv-colfilter-item { text-align: left; background: none; border: 0; padding: 3px 6px; border-radius: 4px; }
+.rv-colfilter-item:hover:not(:disabled) { background: var(--hover); }
+.rv-colfilter-item.active { color: var(--accent); font-weight: 600; }
+.rv-colfilter-list { list-style: none; margin: 0; padding: 4px; max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
+.rv-colfilter-list label { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; padding: 1px 0; cursor: pointer; }
+.rv-colfilter-list label .ellipsis { flex: 1; min-width: 0; }
+.rv-colfilter .rv-setup-actions { margin-top: 2px; }
 /* ATS: 시간 · B · Status · Action · Remark · Result · Y (Video_editor.py와 같은 열) */
 .rv-table.ats .rv-row { grid-template-columns: 46px 96px minmax(60px, 0.7fr) 72px minmax(110px, 1.3fr) minmax(100px, 1.5fr) 64px minmax(60px, 0.8fr) 64px; }
 .rv-row:hover { background: var(--hover); }

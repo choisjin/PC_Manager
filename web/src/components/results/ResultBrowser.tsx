@@ -16,8 +16,13 @@ interface Props {
   favorites: string[]
   /** Result로 쓸 수 있는 파일 */
   isResult: (name: string) => boolean
-  onPut: (slot: 'result' | 'video' | 'image', item: ClipItem) => void
+  /** 폴더를 넣을 칸 (RFW: 이미지 · ATS: 원본·결과 이미지) */
+  folderSlots: { slot: FolderSlot; label: string }[]
+  onPut: (slot: PutSlot, item: ClipItem) => void
 }
+
+export type FolderSlot = 'image' | 'ref'
+export type PutSlot = 'result' | 'video' | FolderSlot
 
 const samePath = (a: string, b: string) => a.replace(/[\\/]+$/, '').toLowerCase() === b.replace(/[\\/]+$/, '').toLowerCase()
 const favName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p
@@ -29,7 +34,7 @@ const formatFileDate = (iso: string) => {
 const toMessage = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 /** 결과 확인용 탐색기: 탐색기와 같은 주소 표시줄·즐겨찾기·드라이브 트리 + 자세히 목록 (고른 항목을 Result·영상·이미지 칸으로) */
-export function ResultBrowser({ agentId, selfAgentId, startPath, favorites, isResult, onPut }: Props) {
+export function ResultBrowser({ agentId, selfAgentId, startPath, favorites, isResult, folderSlots, onPut }: Props) {
   const [history, setHistory] = useState<{ stack: string[]; idx: number }>({ stack: [startPath], idx: 0 })
   const path = history.stack[history.idx] ?? ''
   const [entries, setEntries] = useState<FileEntry[]>([])
@@ -180,7 +185,11 @@ export function ResultBrowser({ agentId, selfAgentId, startPath, favorites, isRe
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <button type="button" disabled={!path} onClick={() => onPut('image', { path, name: favName(path), isDir: true })} title="지금 폴더를 이미지 폴더로">이 폴더 = 이미지</button>
+        {folderSlots.map(({ slot, label }) => (
+          <button key={slot} type="button" disabled={!path} onClick={() => onPut(slot, { path, name: favName(path), isDir: true })} title={`지금 폴더를 ${label} 폴더로`}>
+            이 폴더 = {label}
+          </button>
+        ))}
       </div>
 
       <div className="pane-body rv-browser-body">
@@ -250,7 +259,9 @@ export function ResultBrowser({ agentId, selfAgentId, startPath, favorites, isRe
                       <td className="rv-browser-acts">
                         {!entry.isDirectory && isResult(entry.name) && <button type="button" onClick={() => onPut('result', item)}>Result</button>}
                         {!entry.isDirectory && isVideoFile(entry.name) && <button type="button" onClick={() => onPut('video', item)}>영상</button>}
-                        {entry.isDirectory && <button type="button" onClick={() => onPut('image', item)}>이미지</button>}
+                        {entry.isDirectory && folderSlots.map(({ slot, label }) => (
+                          <button key={slot} type="button" onClick={() => onPut(slot, item)}>{label}</button>
+                        ))}
                       </td>
                     </tr>
                   )

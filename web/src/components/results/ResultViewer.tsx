@@ -5,20 +5,23 @@ import { isImageFile, isVideoFile } from '../../fileTypes'
 import { formatBytes } from '../../format'
 import { type ClipItem, FILES_MIME, type FilesDragPayload } from '../explorer/pcGroups'
 import {
-  ATS_ACTION_CELL, ATS_FILTER_COLUMNS, ATS_RESULT_CELL, type ColumnRole, decodeText, formatSeconds, formatWall, type ParsedResult, parseAts, parseResult,
+  ATS_ACTION_CELL, ATS_RESULT_CELL, type AtsImages, type ColumnRole, compareCells, decodeText, formatSeconds, formatWall, type ParsedResult, parseAts, parseResult,
   RESULT_MODE_LABEL, type ResultMapping, type ResultMode, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
   type Anchor, baseSeconds, emptySync, resolveStart, rowAtTime, solveAnchors, START_SOURCE_LABEL, type SyncState,
   toRowTime, toVideoTime, type VideoInfo, videoForRow, wallFromIso,
 } from './sync'
-import { ResultBrowser } from './ResultBrowser'
+import { type ColFilters, ColumnFilterMenu, type ColSort } from './ColumnFilter'
+import { type PutSlot, ResultBrowser } from './ResultBrowser'
 import { VideoTransport } from './VideoTransport'
 
 /** 셋에 저장하는 화면 설정 */
 interface ViewConfig {
   /** 결과 형식 (없으면 예전 셋 = RFW 자동 판별) */
   mode?: ResultMode
+  /** ATS 원본 이미지 폴더 (결과 이미지 폴더는 셋의 imageDir) */
+  refDir?: string | null
   mapping: Partial<ResultMapping>
   sync: SyncState
   /** 원본 영상 → 재생용 사본 (탐색 색인을 넣거나 변환한 것). 셋에 사본을 백업해 PC가 꺼져 있어도 탐색되게 */
@@ -31,7 +34,10 @@ interface Source {
   machineName: string | null
   resultPath: string
   videoPaths: string[]
+  /** 이미지 폴더 (ATS: 결과 이미지 폴더) */
   imageDir: string | null
+  /** ATS 원본 이미지 폴더 (captured_image 등) */
+  refDir: string | null
 }
 
 interface RawVideo {
@@ -111,7 +117,7 @@ export function ResultViewer({ agentId, machineName, selfAgentId, startPath, fav
     setSource({
       mode: (full.config as ViewConfig | null)?.mode ?? 'rfw',
       agentId: full.agentId, machineName: full.machineName, resultPath: full.resultPath,
-      videoPaths: full.videoPaths, imageDir: full.imageDir,
+      videoPaths: full.videoPaths, imageDir: full.imageDir, refDir: (full.config as ViewConfig | null)?.refDir ?? null,
     })
     setDialog(null)
     setViewKey((k) => k + 1)
@@ -170,6 +176,7 @@ function autoAssign(agentId: string, machineName: string, items: ClipItem[]): So
     resultPath: result?.path ?? '',
     videoPaths: items.filter((i) => !i.isDir && isVideoFile(i.name)).map((i) => i.path),
     imageDir: items.find((i) => i.isDir)?.path ?? null,
+    refDir: null,
   }
 }
 
@@ -185,20 +192,22 @@ function Setup({ source, setSource, selfAgentId, startPath, favorites, onOpen, o
   onSets: () => void
   onClose: () => void
 }) {
-  const put = (slot: 'result' | 'video' | 'image', item: ClipItem) =>
+  const put = (slot: PutSlot, item: ClipItem) =>
     setSource((s) =>
       slot === 'result' ? { ...s, resultPath: item.path }
         : slot === 'video' ? { ...s, videoPaths: s.videoPaths.includes(item.path) ? s.videoPaths : [...s.videoPaths, item.path] }
-          : { ...s, imageDir: item.isDir ? item.path : dirName(item.path) },
+          : slot === 'ref' ? { ...s, refDir: item.isDir ? item.path : dirName(item.path) }
+            : { ...s, imageDir: item.isDir ? item.path : dirName(item.path) },
     )
+  const ats = source.mode === 'ats'
 
-  const dropInto = (slot: 'result' | 'video' | 'image') => (e: React.DragEvent) => {
+  const dropInto = (slot: PutSlot) => (e: React.DragEvent) => {
     e.preventDefault()
     const json = e.dataTransfer.getData(FILES_MIME)
     const items: ClipItem[] = json
       ? (JSON.parse(json) as FilesDragPayload).items
       : e.dataTransfer.getData('text/plain')
-        ? [{ path: e.dataTransfer.getData('text/plain'), name: baseName(e.dataTransfer.getData('text/plain')), isDir: slot === 'image' }]
+        ? [{ path: e.dataTransfer.getData('text/plain'), name: baseName(e.dataTransfer.getData('text/plain')), isDir: slot === 'image' || slot === 'ref' }]
         : []
     for (const item of slot === 'video' ? items : items.slice(0, 1)) put(slot, item)
   }
@@ -229,6 +238,7 @@ function Setup({ source, setSource, selfAgentId, startPath, favorites, onOpen, o
           startPath={startPath}
           favorites={favorites}
           isResult={(name) => RESULT_EXT.test(name)}
+          folderSlots={ats ? [{ slot: 'ref', label: '원본' }, { slot: 'image', label: '결과' }] : [{ slot: 'image', label: '이미지' }]}
           onPut={put}
         />
         <section className="rv-slots">
@@ -236,9 +246,20 @@ function Setup({ source, setSource, selfAgentId, startPath, favorites, onOpen, o
             items={source.resultPath ? [source.resultPath] : []} onRemove={() => setSource((s) => ({ ...s, resultPath: '' }))} />
           <Slot title="영상 (여러 개 가능)" hint="영상 파일을 끌어다 놓으세요 (회차별 녹화 등)" onDrop={dropInto('video')} onDragOver={allowDrop}
             items={source.videoPaths} onRemove={(p) => setSource((s) => ({ ...s, videoPaths: s.videoPaths.filter((v) => v !== p) }))} />
-          <Slot title="이미지 폴더" hint="폴더를 끌어다 놓거나 '이 폴더 = 이미지'" onDrop={dropInto('image')} onDragOver={allowDrop}
+          {ats && (
+            <Slot title="원본 이미지 폴더" hint="비교 기준 이미지 폴더 (예: D:\excelrunner_report\captured_image) — 끌어다 놓거나 '이 폴더 = 원본'" onDrop={dropInto('ref')} onDragOver={allowDrop}
+              items={source.refDir ? [source.refDir] : []} onRemove={() => setSource((s) => ({ ...s, refDir: null }))} />
+          )}
+          <Slot
+            title={ats ? '결과 이미지 폴더' : '이미지 폴더'}
+            hint={ats ? "실행 때 캡처한 이미지 폴더 (예: D:\\excelrunner_report\\2026-10-06-1403\\RVC_001) — 끌어다 놓거나 '이 폴더 = 결과'" : "폴더를 끌어다 놓거나 '이 폴더 = 이미지'"}
+            onDrop={dropInto('image')} onDragOver={allowDrop}
             items={source.imageDir ? [source.imageDir] : []} onRemove={() => setSource((s) => ({ ...s, imageDir: null }))} />
-          <p className="hint">Result에 적힌 이미지 경로는 자동으로 찾습니다. 이미지 폴더를 주면 폴더 안 같은 이름의 파일로도 찾고, 파일 이름의 시각으로 영상 위치에 맞춥니다.</p>
+          <p className="hint">
+            {ats
+              ? 'Result에 적힌 이미지를 두 폴더에서 파일 이름으로 찾습니다 (폴더를 안 주면 Result에 적힌 경로 그대로). 영상 아래에 원본·결과 이미지를 나란히 보여 줍니다.'
+              : 'Result에 적힌 이미지 경로는 자동으로 찾습니다. 이미지 폴더를 주면 폴더 안 같은 이름의 파일로도 찾고, 파일 이름의 시각으로 영상 위치에 맞춥니다.'}
+          </p>
           <div className="rv-setup-actions">
             <button type="button" className="primary" disabled={!source.resultPath} onClick={onOpen}>열기</button>
           </div>
@@ -309,7 +330,6 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
     setRawVideos((list) => source.videoPaths.map((p) =>
       list.find((v) => v.path === p) ?? newRawVideo(p)))
   }, [source.videoPaths])
-  const [images, setImages] = useState<FileEntry[]>([])
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [videoError, setVideoError] = useState<string | null>(null)
@@ -319,8 +339,10 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
   const [query, setQuery] = useState('')
   const [onlyFail, setOnlyFail] = useState(false)
   const [cycle, setCycle] = useState('')
-  // ATS: 열별 값 거르기 (Status·Action·Remark·Result, 없으면 전체)
-  const [colFilters, setColFilters] = useState<Record<number, string>>({})
+  // ATS: 엑셀처럼 머리글마다 거르기·정렬
+  const [colFilters, setColFilters] = useState<ColFilters>({})
+  const [colSort, setColSort] = useState<ColSort | null>(null)
+  const [filterMenu, setFilterMenu] = useState<{ col: number; x: number; y: number } | null>(null)
   const [follow, setFollow] = useState(true)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const pendingSeek = useRef<number | null>(null)
@@ -432,31 +454,20 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
   )
   const currentVideo = videos.find((v) => v.path === current) ?? null
 
-  // 이미지 폴더
-  useEffect(() => {
-    if (!source.imageDir) return
-    let alive = true
-    api.listFiles(source.agentId, source.imageDir).then(
-      (l) => alive && setImages(l.entries.filter((e) => !e.isDirectory && isImageFile(e.name))),
-      () => {
-        // 테스트 PC가 꺼져 있으면 셋에 백업된 이미지 목록으로
-        if (alive && set) {
-          const dir = source.imageDir!.toLowerCase()
-          setImages(Object.keys(set.files).filter((p) => p.toLowerCase().startsWith(dir) && isImageFile(p))
-            .map((p) => ({ name: baseName(p), fullPath: p, isDirectory: false, size: 0, modifiedAt: null })))
-        }
-      },
-    )
-    return () => {
-      alive = false
-    }
-  }, [source.agentId, source.imageDir, set])
+  // 이미지 폴더 (ATS: 결과 이미지 폴더) · ATS 원본 이미지 폴더
+  const images = useFolderImages(source.agentId, source.imageDir, set)
+  const refImages = useFolderImages(source.agentId, ats ? source.refDir : null, set)
 
-  const imagesByName = useMemo(() => new Map(images.map((i) => [i.name.toLowerCase(), i.fullPath])), [images])
+  // 파일 이름으로 찾기: 결과 폴더 → 원본 폴더 → Result에 적힌 경로 그대로
+  const imagesByName = useMemo(
+    () => new Map([...refImages, ...images].map((i) => [i.name.toLowerCase(), i.fullPath])),
+    [images, refImages],
+  )
   const resolveImage = useCallback((p: string) => imagesByName.get(baseName(p).toLowerCase()) ?? p, [imagesByName])
   const timedImages = useMemo(
-    () => images.map((i) => ({ entry: i, time: timeFromName(i.name) })).filter((x) => x.time !== null).sort((a, b) => a.time! - b.time!),
-    [images],
+    () => images.filter((i) => !ats || !ATS_VARIANT.test(i.name))
+      .map((i) => ({ entry: i, time: timeFromName(i.name) })).filter((x) => x.time !== null).sort((a, b) => a.time! - b.time!),
+    [images, ats],
   )
 
   // 기준점이 바뀌면 보정·배율 다시 계산
@@ -522,18 +533,30 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
 
   // 목록 필터
   const cycles = useMemo(() => [...new Set(rows.map((r) => r.cycle).filter(Boolean))], [rows])
-  const filterValues = useMemo(
-    () => (ats ? ATS_FILTER_COLUMNS.map((c) => [...new Set(rows.map((r) => r.cells[c]))].sort()) : []),
-    [ats, rows],
+  const filterSets = useMemo(
+    () => Object.entries(colFilters).map(([c, f]) => [Number(c), new Set(f.values ?? [])] as const),
+    [colFilters],
   )
-  const visible = useMemo(() => {
+  // 머리글 거르기를 뺀 나머지 조건 (검색·실패만·회차)
+  const baseRows = useMemo(() => {
     const q = query.trim().toLowerCase()
     return rows.filter((r) =>
       (!onlyFail || statusTone(r.status) === 'bad')
       && (!cycle || r.cycle === cycle)
-      && ATS_FILTER_COLUMNS.every((c) => colFilters[c] === undefined || r.cells[c] === colFilters[c])
       && (!q || r.cells.some((c) => c.toLowerCase().includes(q))))
-  }, [rows, query, onlyFail, cycle, colFilters])
+  }, [rows, query, onlyFail, cycle])
+  const visible = useMemo(() => {
+    const list = baseRows.filter((r) => filterSets.every(([c, set]) => set.has(r.cells[c] ?? '')))
+    if (!colSort) return list
+    const dir = colSort.asc ? 1 : -1
+    return [...list].sort((a, b) => compareCells(a.cells[colSort.col] ?? '', b.cells[colSort.col] ?? '') * dir || a.index - b.index)
+  }, [baseRows, filterSets, colSort])
+  // 거르기 메뉴의 값 목록: 다른 열 거르기만 적용한 행들 (엑셀처럼)
+  const menuValues = useMemo(() => {
+    if (!filterMenu) return []
+    return baseRows.filter((r) => filterSets.every(([c, set]) => c === filterMenu.col || set.has(r.cells[c] ?? '')))
+      .map((r) => r.cells[filterMenu.col] ?? '')
+  }, [filterMenu, baseRows, filterSets])
 
   const focusRow = rows.find((r) => r.index === (playing ?? selected)) ?? null
   const detailRow = rows.find((r) => r.index === (selected ?? playing)) ?? null
@@ -620,6 +643,14 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
           </div>
           {notice && <div className="rv-notice small">{notice}</div>}
           <div className="rv-images">
+            {ats ? (
+              <AtsImagePanel
+                row={focusRow}
+                byName={imagesByName}
+                url={(p) => fileUrl(resolveImage(p))}
+                onPreview={setPreview}
+              />
+            ) : <>
             <div className="rv-images-title small muted">스텝 이미지 {focusRow ? `· #${focusRow.index + 1} ${focusRow.name}` : ''}</div>
             <div className="rv-thumbs">
               {(focusRow?.images ?? []).map((p) => (
@@ -630,6 +661,7 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
               ))}
               {focusRow && focusRow.images.length === 0 && <span className="muted small">이 스텝에 적힌 이미지가 없습니다</span>}
             </div>
+            </>}
             {timedImages.length > 0 && (
               <>
                 <div className="rv-images-title small muted">이미지 폴더 ({timedImages.length}) · 누르면 그 시각으로 이동</div>
@@ -654,22 +686,14 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
         <section className="rv-right">
           <div className="rv-filters">
             <input placeholder="검색 (모든 열)" value={query} onChange={(e) => setQuery(e.target.value)} />
-            {ats && parsed ? ATS_FILTER_COLUMNS.map((c, i) => (
-              <select
-                key={c}
-                value={colFilters[c] === undefined ? '' : `=${colFilters[c]}`}
-                title={parsed.headers[c]}
-                onChange={(e) => setColFilters((f) => {
-                  const next = { ...f }
-                  if (e.target.value) next[c] = e.target.value.slice(1)
-                  else delete next[c]
-                  return next
-                })}
-              >
-                <option value="">{parsed.headers[c]}: 전체</option>
-                {filterValues[i].map((v) => <option key={v} value={`=${v}`}>{v || '(빈 값)'}</option>)}
-              </select>
-            )) : (
+            {ats ? (Object.keys(colFilters).length > 0 || colSort) && (
+              <button type="button" className="link small" onClick={() => {
+                setColFilters({})
+                setColSort(null)
+              }}>
+                머리글 필터·정렬 지우기 ({Object.keys(colFilters).length})
+              </button>
+            ) : (
               <select value={cycle} onChange={(e) => setCycle(e.target.value)} title="회차">
                 <option value="">전체 회차</option>
                 {cycles.map((c) => <option key={c} value={c}>회차 {c}</option>)}
@@ -682,6 +706,9 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
           {!parsed ? <p className="muted rv-loading">Result 읽는 중…</p> : (
             <RowTable
               headers={ats ? parsed.headers : null}
+              filtered={colFilters}
+              sort={colSort}
+              onHeader={(col, rect) => setFilterMenu({ col, x: rect.left, y: rect.bottom + 2 })}
               rows={visible}
               selected={selected}
               playing={playing}
@@ -707,6 +734,26 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
         </section>
       </div>
 
+      {filterMenu && parsed && (
+        <ColumnFilterMenu
+          key={filterMenu.col}
+          x={filterMenu.x}
+          y={filterMenu.y}
+          title={parsed.headers[filterMenu.col]}
+          values={menuValues}
+          label={filterMenu.col === 0 ? (v) => v.replace(/^\[|\]$/g, '') : (v) => v.replace(/\s+/g, ' ')}
+          filter={colFilters[filterMenu.col]}
+          sort={colSort?.col === filterMenu.col ? (colSort.asc ? 'asc' : 'desc') : null}
+          onApply={(f) => setColFilters((all) => {
+            const next = { ...all }
+            if (f) next[filterMenu.col] = f
+            else delete next[filterMenu.col]
+            return next
+          })}
+          onSort={(asc) => setColSort({ col: filterMenu.col, asc })}
+          onClose={() => setFilterMenu(null)}
+        />
+      )}
       {dialog === 'sync' && parsed && (
         <SyncDialog
           ats={ats}
@@ -738,13 +785,17 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
           set={set}
           config={{
             mode: source.mode,
+            refDir: source.refDir,
             mapping,
             sync,
             playPaths: Object.fromEntries(rawVideos.filter((v) => v.playPath && v.playPath !== v.path)
               .map((v) => [v.path, { playPath: v.playPath!, duration: v.duration, fps: v.fps }])),
           }}
           videos={rawVideos}
-          backupFiles={[...new Set([...images.map((i) => i.fullPath), ...rows.flatMap((r) => r.images.map(resolveImage))])]}
+          backupFiles={[...new Set([
+            ...images.filter((i) => !ats || !/_full\.\w+$/i.test(i.name)).map((i) => i.fullPath),
+            ...rows.flatMap((r) => [...r.images, ...atsVariants(r.ats, imagesByName)].map(resolveImage)),
+          ])]}
           onSaved={setSet}
           onClose={() => setDialog(null)}
         />
@@ -779,11 +830,146 @@ function ViewerHead({ source, set, onBack, onClose, setDialog }: {
   )
 }
 
+// ─────────────────────────────── ATS 원본·결과 이미지
+
+/** 결과 폴더의 같은 캡처 변형: _result(차이 표시) · _full(전체 화면) */
+const ATS_VARIANT = /_(full|result)\.\w+$/i
+
+/** 결과 이미지 파일 이름 → 같은 캡처의 변형 경로 (결과 폴더에 있을 때만) */
+function variantsOf(result: string | null, byName: Map<string, string>) {
+  if (!result) return { full: null, diff: null }
+  const name = baseName(result)
+  const dot = name.lastIndexOf('.')
+  const stem = dot > 0 ? name.slice(0, dot) : name
+  const ext = dot > 0 ? name.slice(dot) : ''
+  return {
+    full: byName.get(`${stem}_full${ext}`.toLowerCase()) ?? null,
+    diff: byName.get(`${stem}_result${ext}`.toLowerCase()) ?? null,
+  }
+}
+
+function atsVariants(ats: AtsImages | undefined, byName: Map<string, string>): string[] {
+  if (!ats) return []
+  const v = variantsOf(ats.result, byName)
+  return [ats.target, ats.ref, ats.result, ats.diff, v.diff].filter((p): p is string => !!p)
+}
+
+const ATS_KIND_LABEL: Record<AtsImages['kind'], string> = {
+  p: '이미지 찾기 (STATUS)',
+  y: '이미지 비교 (STEP RESULT)',
+  py: '이미지 찾기 + 비교 (STATUS · STEP RESULT)',
+}
+
+/** 영상 아래: 원본 · 결과 두 장. P열(찾을 이미지)과 Y열(비교 이미지)을 구분해 보여 준다 */
+function AtsImagePanel({ row, byName, url, onPreview }: {
+  row: ResultRow | null
+  byName: Map<string, string>
+  url: (path: string) => string
+  onPreview: (url: string) => void
+}) {
+  const [view, setView] = useState<'capture' | 'diff' | 'full'>('capture')
+  const ats = row?.ats
+  if (!row) return <div className="rv-images-title small muted">스텝을 고르거나 영상을 재생하면 원본·결과 이미지가 나옵니다</div>
+  if (!ats) return <div className="rv-images-title small muted">#{row.index + 1} {row.name} · 이 스텝에는 이미지가 없습니다</div>
+
+  const v = variantsOf(ats.result, byName)
+  const diff = v.diff ?? ats.diff
+  const result = view === 'full' && v.full ? v.full : view === 'diff' && diff ? diff : ats.result
+  // 원본: 비교(Y)가 있으면 비교 기준 이미지, 찾기(P)만 있으면 찾을 이미지
+  const original = ats.ref ?? ats.target
+  const tone = statusTone(row.status)
+
+  return (
+    <div className="rv-ats-images">
+      <div className="rv-images-title small">
+        <span className={`rv-ats-kind kind-${ats.kind}`}>{ATS_KIND_LABEL[ats.kind]}</span>
+        <span className="muted"> #{row.index + 1} {row.name}</span>
+        {row.status && <span className={`rv-ats-status tone-${tone || 'none'}`}> {row.status}</span>}
+        {ats.note && <span className="muted ellipsis rv-ats-note" title={ats.note}> · {ats.note}</span>}
+      </div>
+      <div className="rv-ats-pair">
+        <AtsImageCard title={ats.ref ? '원본 (REF)' : '원본 (찾을 이미지)'} path={original} url={url} onPreview={onPreview} />
+        <AtsImageCard
+          title="결과"
+          path={result}
+          url={url}
+          onPreview={onPreview}
+          empty={ats.kind === 'p' ? '결과 이미지 없음 — 화면에서 찾지 못함' : '결과 이미지 없음'}
+          tools={ats.result && (diff || v.full) ? (
+            <span className="rv-ats-views">
+              <button type="button" className={view === 'capture' ? 'active' : ''} onClick={() => setView('capture')}>캡처</button>
+              {diff && <button type="button" className={view === 'diff' ? 'active' : ''} onClick={() => setView('diff')}>차이</button>}
+              {v.full && <button type="button" className={view === 'full' ? 'active' : ''} onClick={() => setView('full')}>전체 화면</button>}
+            </span>
+          ) : null}
+        />
+      </div>
+      {ats.kind === 'py' && ats.target && (
+        <div className="small muted rv-ats-target">
+          찾을 이미지 (STATUS):{' '}
+          <button type="button" className="link" title={ats.target} onClick={() => onPreview(url(ats.target!))}>{baseName(ats.target)}</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AtsImageCard({ title, path, url, onPreview, empty, tools }: {
+  title: string
+  path: string | null
+  url: (path: string) => string
+  onPreview: (url: string) => void
+  empty?: string
+  tools?: React.ReactNode
+}) {
+  const [failed, setFailed] = useState<string | null>(null)
+  return (
+    <figure className="rv-ats-card">
+      <figcaption className="small">
+        <strong>{title}</strong>
+        {path && <span className="muted ellipsis" title={path}> {baseName(path)}</span>}
+        <span className="rv-spacer" />
+        {tools}
+      </figcaption>
+      {!path ? <div className="rv-ats-empty muted small">{empty ?? '이미지 없음'}</div>
+        : failed === path ? <div className="rv-ats-empty error small" title={path}>이미지를 열지 못했습니다 — 원본·결과 이미지 폴더를 지정해 보세요</div>
+          : <img src={url(path)} alt="" onClick={() => onPreview(url(path))} onError={() => setFailed(path)} title="누르면 크게" />}
+    </figure>
+  )
+}
+
+/** 폴더의 이미지 목록 (테스트 PC가 꺼져 있으면 셋에 백업된 목록) */
+function useFolderImages(agentId: string, dir: string | null, set: ResultSet | null): FileEntry[] {
+  const [images, setImages] = useState<FileEntry[]>([])
+  useEffect(() => {
+    if (!dir) return
+    let alive = true
+    api.listFiles(agentId, dir).then(
+      (l) => alive && setImages(l.entries.filter((e) => !e.isDirectory && isImageFile(e.name))),
+      () => {
+        if (alive && set) {
+          const lower = dir.toLowerCase()
+          setImages(Object.keys(set.files).filter((p) => p.toLowerCase().startsWith(lower) && isImageFile(p))
+            .map((p) => ({ name: baseName(p), fullPath: p, isDirectory: false, size: 0, modifiedAt: null })))
+        }
+      },
+    )
+    return () => {
+      alive = false
+    }
+  }, [agentId, dir, set])
+  return dir ? images : []
+}
+
 // ─────────────────────────────── 스텝 표 (행이 많아 보이는 부분만 그린다)
 
-function RowTable({ headers, rows, selected, playing, follow, anchors, videoTime, onPick }: {
+function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, follow, anchors, videoTime, onPick }: {
   /** ATS: 이 열 이름으로 행의 칸을 그대로 보여 준다 (null이면 RFW 공통 열) */
   headers: string[] | null
+  filtered: ColFilters
+  sort: ColSort | null
+  /** ATS 머리글 누름 → 거르기 메뉴 */
+  onHeader: (col: number, rect: DOMRect) => void
   rows: ResultRow[]
   selected: number | null
   playing: number | null
@@ -824,7 +1010,18 @@ function RowTable({ headers, rows, selected, playing, follow, anchors, videoTime
     <div className={`rv-table${headers ? ' ats' : ''}`}>
       <div className="rv-row rv-row-head small">
         {headers
-          ? <><span>#</span>{headers.map((h, i) => <span key={i} className="ellipsis" title={h}>{h}</span>)}<span>영상</span></>
+          ? <><span>#</span>{headers.map((h, i) => (
+              <button
+                key={i}
+                type="button"
+                className={`rv-colhead${filtered[i] ? ' filtered' : ''}`}
+                title={`${h} — 눌러서 거르기·정렬`}
+                onClick={(e) => onHeader(i, e.currentTarget.getBoundingClientRect())}
+              >
+                <span className="ellipsis">{h}</span>
+                <span className="rv-colhead-ico">{sort?.col === i ? (sort.asc ? '↑' : '↓') : ''}{filtered[i] ? '⧩' : '▾'}</span>
+              </button>
+            ))}<span>영상</span></>
           : <><span>#</span><span>시간</span><span>회차</span><span>스텝</span><span>결과</span><span>걸린 시간</span><span>메시지</span><span>영상</span></>}
       </div>
       <div
