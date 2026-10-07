@@ -5,17 +5,20 @@ import { isImageFile, isVideoFile } from '../../fileTypes'
 import { formatBytes } from '../../format'
 import { type ClipItem, FILES_MIME, type FilesDragPayload } from '../explorer/pcGroups'
 import {
-  type ColumnRole, decodeText, formatSeconds, formatWall, type ParsedResult, parseResult, type ResultMapping,
-  type ResultRow, statusTone, timeFromName,
+  ATS_FILTER_COLUMNS, type ColumnRole, decodeText, formatSeconds, formatWall, type ParsedResult, parseAts, parseResult,
+  RESULT_MODE_LABEL, type ResultMapping, type ResultMode, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
   type Anchor, baseSeconds, emptySync, resolveStart, rowAtTime, solveAnchors, START_SOURCE_LABEL, type SyncState,
   toRowTime, toVideoTime, type VideoInfo, videoForRow, wallFromIso,
 } from './sync'
+import { ResultBrowser } from './ResultBrowser'
 import { VideoTransport } from './VideoTransport'
 
 /** 셋에 저장하는 화면 설정 */
 interface ViewConfig {
+  /** 결과 형식 (없으면 예전 셋 = RFW 자동 판별) */
+  mode?: ResultMode
   mapping: Partial<ResultMapping>
   sync: SyncState
   /** 원본 영상 → 재생용 사본 (탐색 색인을 넣거나 변환한 것). 셋에 사본을 백업해 PC가 꺼져 있어도 탐색되게 */
@@ -23,6 +26,7 @@ interface ViewConfig {
 }
 
 interface Source {
+  mode: ResultMode
   agentId: string
   machineName: string | null
   resultPath: string
@@ -53,8 +57,12 @@ const newRawVideo = (p: string): RawVideo => ({
 interface Props {
   agentId: string
   machineName: string
+  /** 내 PC 에이전트 (탐색기와 같은 파일 아이콘) */
+  selfAgentId: string | null
   /** 미니 탐색기 시작 폴더 (지금 탐색기 경로) */
   startPath: string
+  /** 이 PC의 즐겨찾기 */
+  favorites: string[]
   /** 탐색기에서 고른 항목 (확장자로 Result·영상·이미지 폴더에 자동 배치) */
   initialItems: ClipItem[]
   onClose: () => void
@@ -62,6 +70,8 @@ interface Props {
 
 const RESULT_EXT = /\.(csv|tsv|txt|log|json)$/i
 const ROW_HEIGHT = 26
+/** ATS 화면 열 중 결과(색 구분) 열 */
+const ATS_STATUS_CELL = 5
 const ROLE_LABEL: Record<ColumnRole, string> = {
   time: '시간', cycle: '회차', status: '결과', name: '스텝 이름', duration: '걸린 시간', message: '메시지',
 }
@@ -70,7 +80,7 @@ const dirName = (p: string) => p.replace(/[\\/][^\\/]*$/, '')
 const toMessage = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 /** 결과 확인: Result(CSV)·영상·이미지를 시각으로 맞춰 보는 전체 화면 (ReplayKit 시나리오 상세결과 방식) */
-export function ResultViewer({ agentId, machineName, startPath, initialItems, onClose }: Props) {
+export function ResultViewer({ agentId, machineName, selfAgentId, startPath, favorites, initialItems, onClose }: Props) {
   const [stage, setStage] = useState<'setup' | 'view'>('setup')
   const [source, setSource] = useState<Source>(() => autoAssign(agentId, machineName, initialItems))
   const [set, setSet] = useState<ResultSet | null>(null)
@@ -101,6 +111,7 @@ export function ResultViewer({ agentId, machineName, startPath, initialItems, on
     const full = await api.resultSet(summary.id)
     setSet(full)
     setSource({
+      mode: (full.config as ViewConfig | null)?.mode ?? 'rfw',
       agentId: full.agentId, machineName: full.machineName, resultPath: full.resultPath,
       videoPaths: full.videoPaths, imageDir: full.imageDir,
     })
@@ -115,7 +126,9 @@ export function ResultViewer({ agentId, machineName, startPath, initialItems, on
         <Setup
           source={source}
           setSource={setSource}
+          selfAgentId={selfAgentId}
           startPath={startPath}
+          favorites={favorites}
           onOpen={() => {
             setSet(null)
             setViewKey((k) => k + 1)
@@ -153,6 +166,7 @@ export function ResultViewer({ agentId, machineName, startPath, initialItems, on
 function autoAssign(agentId: string, machineName: string, items: ClipItem[]): Source {
   const result = items.find((i) => !i.isDir && RESULT_EXT.test(i.name))
   return {
+    mode: 'ats',
     agentId,
     machineName,
     resultPath: result?.path ?? '',
@@ -163,38 +177,16 @@ function autoAssign(agentId: string, machineName: string, items: ClipItem[]): So
 
 // ─────────────────────────────── 설정: 미니 탐색기 + 세 칸
 
-function Setup({ source, setSource, startPath, onOpen, onSets, onClose }: {
+function Setup({ source, setSource, selfAgentId, startPath, favorites, onOpen, onSets, onClose }: {
   source: Source
   setSource: React.Dispatch<React.SetStateAction<Source>>
+  selfAgentId: string | null
   startPath: string
+  favorites: string[]
   onOpen: () => void
   onSets: () => void
   onClose: () => void
 }) {
-  const [path, setPath] = useState(startPath)
-  const [pathInput, setPathInput] = useState(startPath)
-  const [listing, setListing] = useState<FileEntry[]>([])
-  const [parent, setParent] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let alive = true
-    setError(null)
-    api.listFiles(source.agentId, path).then(
-      (l) => {
-        if (!alive) return
-        setListing(l.entries)
-        setParent(l.parentPath)
-        setPathInput(l.path)
-        if (l.error) setError(l.error)
-      },
-      (err) => alive && setError(toMessage(err)),
-    )
-    return () => {
-      alive = false
-    }
-  }, [source.agentId, path])
-
   const put = (slot: 'result' | 'video' | 'image', item: ClipItem) =>
     setSource((s) =>
       slot === 'result' ? { ...s, resultPath: item.path }
@@ -220,51 +212,29 @@ function Setup({ source, setSource, startPath, onOpen, onSets, onClose }: {
     <>
       <header className="rv-head">
         <strong>결과 확인</strong>
+        <span className="rv-mode" role="group" aria-label="결과 형식">
+          {(['ats', 'rfw'] as const).map((m) => (
+            <button key={m} type="button" className={source.mode === m ? 'active' : ''} onClick={() => setSource((s) => ({ ...s, mode: m }))}>
+              {RESULT_MODE_LABEL[m]}
+            </button>
+          ))}
+        </span>
         <span className="muted">{source.machineName} · Result·영상·이미지 폴더를 고르세요</span>
         <span className="rv-spacer" />
         <button type="button" onClick={onSets}>저장된 셋 열기</button>
         <button type="button" className="icon" aria-label="닫기" onClick={onClose}>✕</button>
       </header>
       <div className="rv-setup">
-        <section className="rv-browser panel">
-          <div className="rv-browser-bar">
-            <button type="button" disabled={parent === null} onClick={() => parent !== null && setPath(parent)} title="위로">↑</button>
-            <input
-              className="mono"
-              value={pathInput}
-              onChange={(e) => setPathInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && setPath(pathInput.trim())}
-            />
-            <button type="button" onClick={() => setSource((s) => ({ ...s, imageDir: path }))} title="지금 폴더를 이미지 폴더로">이 폴더 = 이미지</button>
-          </div>
-          {error && <p className="error small">{error}</p>}
-          <ul className="rv-browser-list">
-            {listing.map((entry) => {
-              const item: ClipItem = { path: entry.fullPath, name: entry.name, isDir: entry.isDirectory }
-              return (
-                <li
-                  key={entry.fullPath}
-                  draggable
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData(FILES_MIME, JSON.stringify({ agentId: source.agentId, items: [item] } satisfies FilesDragPayload))
-                    e.dataTransfer.setData('text/plain', entry.fullPath)
-                  }}
-                  onDoubleClick={() => entry.isDirectory && setPath(entry.fullPath)}
-                  title={entry.isDirectory ? '더블클릭으로 열기 · 오른쪽 칸으로 끌어다 놓기' : '오른쪽 칸으로 끌어다 놓기'}
-                >
-                  <span className="rv-browser-name">{entry.isDirectory ? '📁' : isVideoFile(entry.name) ? '🎬' : isImageFile(entry.name) ? '🖼' : '📄'} {entry.name}</span>
-                  <span className="rv-browser-acts">
-                    {!entry.isDirectory && RESULT_EXT.test(entry.name) && <button type="button" onClick={() => put('result', item)}>Result</button>}
-                    {!entry.isDirectory && isVideoFile(entry.name) && <button type="button" onClick={() => put('video', item)}>영상</button>}
-                    {entry.isDirectory && <button type="button" onClick={() => put('image', item)}>이미지</button>}
-                  </span>
-                </li>
-              )
-            })}
-          </ul>
-        </section>
+        <ResultBrowser
+          agentId={source.agentId}
+          selfAgentId={selfAgentId}
+          startPath={startPath}
+          favorites={favorites}
+          isResult={(name) => RESULT_EXT.test(name)}
+          onPut={put}
+        />
         <section className="rv-slots">
-          <Slot title="Result 파일 (CSV)" hint="CSV 파일을 끌어다 놓으세요" onDrop={dropInto('result')} onDragOver={allowDrop}
+          <Slot title={`Result 파일 (${RESULT_MODE_LABEL[source.mode]} CSV)`} hint="CSV 파일을 끌어다 놓으세요" onDrop={dropInto('result')} onDragOver={allowDrop}
             items={source.resultPath ? [source.resultPath] : []} onRemove={() => setSource((s) => ({ ...s, resultPath: '' }))} />
           <Slot title="영상 (여러 개 가능)" hint="영상 파일을 끌어다 놓으세요 (회차별 녹화 등)" onDrop={dropInto('video')} onDragOver={allowDrop}
             items={source.videoPaths} onRemove={(p) => setSource((s) => ({ ...s, videoPaths: s.videoPaths.filter((v) => v !== p) }))} />
@@ -351,6 +321,8 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
   const [query, setQuery] = useState('')
   const [onlyFail, setOnlyFail] = useState(false)
   const [cycle, setCycle] = useState('')
+  // ATS: 열별 값 거르기 (Status·Action·Remark·Result, 없으면 전체)
+  const [colFilters, setColFilters] = useState<Record<number, string>>({})
   const [follow, setFollow] = useState(true)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const pendingSeek = useRef<number | null>(null)
@@ -375,7 +347,11 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
     }
   }, [fileUrl, source.resultPath])
 
-  const parsed: ParsedResult | null = useMemo(() => (rawText === null ? null : parseResult(rawText, mapping)), [rawText, mapping])
+  const ats = source.mode === 'ats'
+  const parsed: ParsedResult | null = useMemo(
+    () => (rawText === null ? null : ats ? parseAts(rawText) : parseResult(rawText, mapping)),
+    [rawText, mapping, ats],
+  )
   const absolute = parsed?.timeKind === 'absolute'
   const rows = useMemo(() => parsed?.rows ?? [], [parsed])
   const sortedRows = useMemo(() => rows.filter((r) => r.time !== null).sort((a, b) => a.time! - b.time! || a.index - b.index), [rows])
@@ -548,13 +524,18 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
 
   // 목록 필터
   const cycles = useMemo(() => [...new Set(rows.map((r) => r.cycle).filter(Boolean))], [rows])
+  const filterValues = useMemo(
+    () => (ats ? ATS_FILTER_COLUMNS.map((c) => [...new Set(rows.map((r) => r.cells[c]))].sort()) : []),
+    [ats, rows],
+  )
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase()
     return rows.filter((r) =>
       (!onlyFail || statusTone(r.status) === 'bad')
       && (!cycle || r.cycle === cycle)
+      && ATS_FILTER_COLUMNS.every((c) => colFilters[c] === undefined || r.cells[c] === colFilters[c])
       && (!q || r.cells.some((c) => c.toLowerCase().includes(q))))
-  }, [rows, query, onlyFail, cycle])
+  }, [rows, query, onlyFail, cycle, colFilters])
 
   const focusRow = rows.find((r) => r.index === (playing ?? selected)) ?? null
   const detailRow = rows.find((r) => r.index === (selected ?? playing)) ?? null
@@ -675,16 +656,34 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
         <section className="rv-right">
           <div className="rv-filters">
             <input placeholder="검색 (모든 열)" value={query} onChange={(e) => setQuery(e.target.value)} />
-            <select value={cycle} onChange={(e) => setCycle(e.target.value)} title="회차">
-              <option value="">전체 회차</option>
-              {cycles.map((c) => <option key={c} value={c}>회차 {c}</option>)}
-            </select>
+            {ats && parsed ? ATS_FILTER_COLUMNS.map((c, i) => (
+              <select
+                key={c}
+                value={colFilters[c] === undefined ? '' : `=${colFilters[c]}`}
+                title={parsed.headers[c]}
+                onChange={(e) => setColFilters((f) => {
+                  const next = { ...f }
+                  if (e.target.value) next[c] = e.target.value.slice(1)
+                  else delete next[c]
+                  return next
+                })}
+              >
+                <option value="">{parsed.headers[c]}: 전체</option>
+                {filterValues[i].map((v) => <option key={v} value={`=${v}`}>{v || '(빈 값)'}</option>)}
+              </select>
+            )) : (
+              <select value={cycle} onChange={(e) => setCycle(e.target.value)} title="회차">
+                <option value="">전체 회차</option>
+                {cycles.map((c) => <option key={c} value={c}>회차 {c}</option>)}
+              </select>
+            )}
             <label className="small"><input type="checkbox" checked={onlyFail} onChange={(e) => setOnlyFail(e.target.checked)} /> 실패만</label>
             <label className="small" title="재생 중인 스텝으로 표를 따라 움직임"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> 따라가기</label>
             <span className="muted small">{visible.length.toLocaleString()} / {rows.length.toLocaleString()}행</span>
           </div>
           {!parsed ? <p className="muted rv-loading">Result 읽는 중…</p> : (
             <RowTable
+              headers={ats ? parsed.headers : null}
               rows={visible}
               selected={selected}
               playing={playing}
@@ -712,6 +711,7 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
 
       {dialog === 'sync' && parsed && (
         <SyncDialog
+          ats={ats}
           parsed={parsed}
           mapping={mapping}
           setMapping={setMapping}
@@ -739,6 +739,7 @@ function Viewer({ source, set, setSet, dialog, setDialog, setPreview, onBack, on
           source={source}
           set={set}
           config={{
+            mode: source.mode,
             mapping,
             sync,
             playPaths: Object.fromEntries(rawVideos.filter((v) => v.playPath && v.playPath !== v.path)
@@ -764,7 +765,7 @@ function ViewerHead({ source, set, onBack, onClose, setDialog }: {
   return (
     <header className="rv-head">
       <button type="button" onClick={onBack} title="Result·영상·이미지 다시 고르기">← 경로</button>
-      <strong>결과 확인{set ? ` · ${set.name}` : ''}</strong>
+      <strong>결과 확인 · {RESULT_MODE_LABEL[source.mode]}{set ? ` · ${set.name}` : ''}</strong>
       <span className="muted ellipsis" title={source.resultPath}>{source.machineName} · {baseName(source.resultPath)}</span>
       {set && set.backup.state !== 'done' && (
         <span className={`small ${set.backup.state === 'failed' ? 'error' : 'muted'}`}>
@@ -782,7 +783,9 @@ function ViewerHead({ source, set, onBack, onClose, setDialog }: {
 
 // ─────────────────────────────── 스텝 표 (행이 많아 보이는 부분만 그린다)
 
-function RowTable({ rows, selected, playing, follow, anchors, videoTime, onPick }: {
+function RowTable({ headers, rows, selected, playing, follow, anchors, videoTime, onPick }: {
+  /** ATS: 이 열 이름으로 행의 칸을 그대로 보여 준다 (null이면 RFW 공통 열) */
+  headers: string[] | null
   rows: ResultRow[]
   selected: number | null
   playing: number | null
@@ -820,9 +823,11 @@ function RowTable({ rows, selected, playing, follow, anchors, videoTime, onPick 
   const anchorRows = new Set(anchors.map((a) => a.row))
 
   return (
-    <div className="rv-table">
+    <div className={`rv-table${headers ? ' ats' : ''}`}>
       <div className="rv-row rv-row-head small">
-        <span>#</span><span>시간</span><span>회차</span><span>스텝</span><span>결과</span><span>걸린 시간</span><span>메시지</span><span>영상</span>
+        {headers
+          ? <><span>#</span>{headers.map((h, i) => <span key={i} className="ellipsis" title={h}>{h}</span>)}<span>영상</span></>
+          : <><span>#</span><span>시간</span><span>회차</span><span>스텝</span><span>결과</span><span>걸린 시간</span><span>메시지</span><span>영상</span></>}
       </div>
       <div
         className="rv-table-body"
@@ -840,12 +845,20 @@ function RowTable({ rows, selected, playing, follow, anchors, videoTime, onPick 
               title="누르면 영상의 이 시점으로"
             >
               <span className="muted">{anchorRows.has(row.index) ? '📍' : row.index + 1}</span>
-              <span className="mono">{formatWall(row.time)}</span>
-              <span>{row.cycle}</span>
-              <span className="ellipsis" title={row.name}>{row.name}</span>
-              <span className="rv-status">{row.status}</span>
-              <span className="mono">{row.durationMs === null ? '' : `${(row.durationMs / 1000).toFixed(2)}s`}</span>
-              <span className="ellipsis" title={row.message}>{row.message}</span>
+              {headers ? row.cells.map((c, i) => (
+                <span key={i} className={i === 0 ? 'mono' : i === ATS_STATUS_CELL ? 'rv-status' : 'ellipsis'} title={c}>
+                  {i === 0 ? formatWall(row.time) || c : c}
+                </span>
+              )) : (
+                <>
+                  <span className="mono">{formatWall(row.time)}</span>
+                  <span>{row.cycle}</span>
+                  <span className="ellipsis" title={row.name}>{row.name}</span>
+                  <span className="rv-status">{row.status}</span>
+                  <span className="mono">{row.durationMs === null ? '' : `${(row.durationMs / 1000).toFixed(2)}s`}</span>
+                  <span className="ellipsis" title={row.message}>{row.message}</span>
+                </>
+              )}
               <span className="mono muted">{videoTime(row)}</span>
             </div>
           ))}
@@ -857,7 +870,9 @@ function RowTable({ rows, selected, playing, follow, anchors, videoTime, onPick 
 
 // ─────────────────────────────── 동기화·열 설정
 
-function SyncDialog({ parsed, mapping, setMapping, videos, sync, setSync, rows, baseOfAnchor, onClose }: {
+function SyncDialog({ ats, parsed, mapping, setMapping, videos, sync, setSync, rows, baseOfAnchor, onClose }: {
+  /** ATS는 열이 정해져 있어 열 설정을 숨긴다 */
+  ats: boolean
   parsed: ParsedResult
   mapping: Partial<ResultMapping>
   setMapping: React.Dispatch<React.SetStateAction<Partial<ResultMapping>>>
@@ -876,37 +891,41 @@ function SyncDialog({ parsed, mapping, setMapping, videos, sync, setSync, rows, 
         <strong>동기화 · 열 설정</strong>
         <button type="button" className="icon" aria-label="닫기" onClick={onClose}>✕</button>
       </div>
-      <h4>Result 열</h4>
-      <p className="hint">자동으로 고른 열입니다. 틀리면 바꾸세요. 시간 형식은 {parsed.timeKind === 'absolute' ? '날짜·시각' : parsed.timeKind === 'elapsed' ? '경과 시간' : '알 수 없음'}으로 읽었습니다.</p>
-      <div className="rv-form">
-        {roles.map((role) => (
-          <label key={role}>
-            {ROLE_LABEL[role]}
-            <select
-              value={parsed.mapping[role]}
-              onChange={(e) => setMapping((m) => ({ ...m, [role]: Number(e.target.value) }))}
-            >
-              <option value={-1}>(없음)</option>
-              {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `열 ${i + 1}`}</option>)}
+      {!ats && (
+        <>
+        <h4>Result 열</h4>
+        <p className="hint">자동으로 고른 열입니다. 틀리면 바꾸세요. 시간 형식은 {parsed.timeKind === 'absolute' ? '날짜·시각' : parsed.timeKind === 'elapsed' ? '경과 시간' : '알 수 없음'}으로 읽었습니다.</p>
+        <div className="rv-form">
+          {roles.map((role) => (
+            <label key={role}>
+              {ROLE_LABEL[role]}
+              <select
+                value={parsed.mapping[role]}
+                onChange={(e) => setMapping((m) => ({ ...m, [role]: Number(e.target.value) }))}
+              >
+                <option value={-1}>(없음)</option>
+                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `열 ${i + 1}`}</option>)}
+              </select>
+            </label>
+          ))}
+          <label>
+            시간 해석
+            <select value={mapping.timeMode ?? 'auto'} onChange={(e) => setMapping((m) => ({ ...m, timeMode: e.target.value as ResultMapping['timeMode'] }))}>
+              <option value="auto">자동</option>
+              <option value="absolute">날짜·시각 (영상 시작 시각 기준)</option>
+              <option value="elapsed">경과 시간 (영상 0초 = 시작)</option>
             </select>
           </label>
-        ))}
-        <label>
-          시간 해석
-          <select value={mapping.timeMode ?? 'auto'} onChange={(e) => setMapping((m) => ({ ...m, timeMode: e.target.value as ResultMapping['timeMode'] }))}>
-            <option value="auto">자동</option>
-            <option value="absolute">날짜·시각 (영상 시작 시각 기준)</option>
-            <option value="elapsed">경과 시간 (영상 0초 = 시작)</option>
-          </select>
-        </label>
-        <label>
-          걸린 시간 단위
-          <select value={parsed.mapping.durationUnit} onChange={(e) => setMapping((m) => ({ ...m, durationUnit: e.target.value as 's' | 'ms' }))}>
-            <option value="s">초</option>
-            <option value="ms">밀리초</option>
-          </select>
-        </label>
-      </div>
+          <label>
+            걸린 시간 단위
+            <select value={parsed.mapping.durationUnit} onChange={(e) => setMapping((m) => ({ ...m, durationUnit: e.target.value as 's' | 'ms' }))}>
+              <option value="s">초</option>
+              <option value="ms">밀리초</option>
+            </select>
+          </label>
+        </div>
+        </>
+      )}
 
       <h4>영상 시작 시각</h4>
       <p className="hint">메타 파일 → 파일 이름의 시각 → 파일 수정 시각−길이 → Result 첫 행 순서로 자동으로 찾습니다. 직접 입력하면 그 값을 씁니다.</p>

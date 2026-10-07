@@ -1316,7 +1316,7 @@ export function ExplorerPane({
 
       {remote && <RemoteModal agentId={agentId} machineName={machineName} userId={selfUserId} onClose={() => setRemote(false)} />}
       {results && (
-        <ResultViewer agentId={agentId} machineName={machineName} startPath={path} initialItems={results} onClose={() => setResults(null)} />
+        <ResultViewer agentId={agentId} machineName={machineName} selfAgentId={selfAgentId} startPath={path} favorites={favorites} initialItems={results} onClose={() => setResults(null)} />
       )}
 
       {splitTargets && (

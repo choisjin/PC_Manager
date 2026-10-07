@@ -4102,30 +4102,29 @@ th.sortable:hover {
 }
 .rv-head .ellipsis { max-width: 40vw; }
 .rv-spacer { flex: 1; }
+.rv-mode { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 6px; overflow: hidden; }
+.rv-mode button { border: 0; border-radius: 0; padding: 2px 12px; background: none; font-weight: 600; }
+.rv-mode button + button { border-left: 1px solid var(--border-strong); }
+.rv-mode button.active { background: var(--accent); color: #fff; }
 .rv-error, .rv-loading { padding: 16px; }
 .rv-setup {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(480px, 3fr) minmax(320px, 2fr);
   gap: 12px;
   padding: 12px;
 }
-.rv-browser { display: flex; flex-direction: column; min-height: 0; padding: 8px; }
-.rv-browser-bar { display: flex; gap: 6px; margin-bottom: 6px; }
-.rv-browser-bar input { flex: 1; min-width: 0; }
-.rv-browser-list { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; }
-.rv-browser-list li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  cursor: grab;
-}
-.rv-browser-list li:hover { background: var(--hover); }
-.rv-browser-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rv-browser-acts button { font-size: 11px; padding: 1px 6px; }
+.rv-browser { display: flex; flex-direction: column; min-height: 0; padding: 6px; overflow: hidden; }
+.rv-browser-bar { margin-bottom: 4px; }
+.rv-browser-bar > button:last-child { flex: none; white-space: nowrap; }
+.rv-browser-search { width: 170px; }
+.rv-browser-body { border-top: 1px solid var(--border); }
+.rv-browser-side { width: 180px; }
+.rv-browser-msg { padding: 8px; }
+.rv-browser-table tbody tr { cursor: grab; }
+.rv-browser-acts { text-align: right; }
+.rv-browser-acts button { font-size: 11px; padding: 0 6px; line-height: 16px; }
 .rv-slots { display: flex; flex-direction: column; gap: 10px; overflow: auto; }
 .rv-slot { border: 2px dashed var(--border-strong); border-radius: 8px; padding: 10px 12px; min-height: 64px; }
 .rv-slot.over { border-color: var(--accent); background: var(--selected); }
@@ -4208,6 +4207,8 @@ body.rv-open .pip { display: none; }
   white-space: nowrap;
 }
 .rv-row > span { overflow: hidden; text-overflow: ellipsis; }
+/* ATS: 시간 · B · Status · Action · Remark · Result · Y (Video_editor.py와 같은 열) */
+.rv-table.ats .rv-row { grid-template-columns: 46px 96px minmax(60px, 0.7fr) 72px minmax(110px, 1.3fr) minmax(100px, 1.5fr) 64px minmax(60px, 0.8fr) 64px; }
 .rv-row:hover { background: var(--hover); }
 .rv-row-head { height: 26px; font-weight: 600; background: var(--panel); cursor: default; }
 .rv-row.selected { background: var(--selected); }

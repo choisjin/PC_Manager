@@ -321,3 +321,41 @@ export function statusTone(status: string): 'ok' | 'bad' | 'warn' | 'idle' | '' 
   if (/not ?run|skip/.test(s)) return 'idle'
   return ''
 }
+
+// ── 결과 형식: ATS(Video_editor.py와 같은 규칙) · RFW(자동 판별)
+export type ResultMode = 'ats' | 'rfw'
+export const RESULT_MODE_LABEL: Record<ResultMode, string> = { ats: 'ATS', rfw: 'RFW' }
+
+/** ATS: 원본 열 A·B·P·U·V·X·Y만 보여 준다 */
+const ATS_COLUMNS = [0, 1, 15, 20, 21, 23, 24]
+const ATS_FALLBACK = ['시간', 'B', 'Status', 'Action', 'Remark', 'Result', 'Y']
+/** ATS 화면 열 중 목록으로 거르는 열 (Status·Action·Remark·Result) */
+export const ATS_FILTER_COLUMNS = [2, 3, 4, 5]
+const ATS_MAPPING: ResultMapping = { time: 0, cycle: -1, status: 5, name: 3, duration: -1, message: 4, durationUnit: 's', timeMode: 'absolute' }
+
+/** ATS Result: 앞 6줄은 머리말, 그 뒤 첫 열이 [시각]인 줄까지만 데이터 */
+export function parseAts(text: string): ParsedResult {
+  const all = parseCsv(text)
+  const preamble = all.slice(0, 6).map((r) => r.join(',').trim()).filter(Boolean)
+  // 머리말 마지막 줄이 열 이름 줄이면 그 이름을 쓴다
+  const named = all[5] && all[5].length > 24 ? all[5].map(unq) : []
+  const headers = ATS_COLUMNS.map((c, i) => (i > 0 && named[c]) || ATS_FALLBACK[i])
+  const rows: ResultRow[] = []
+  for (const r of all.slice(6)) {
+    if (r.length === 0 || !r[0].includes('[') || !r[0].includes(']')) break
+    const cells = ATS_COLUMNS.map((c) => unq(r[c] ?? ''))
+    const v = parseTime(cells[0])
+    rows.push({
+      index: rows.length,
+      cells,
+      time: v?.kind === 'absolute' ? v.ms : null,
+      cycle: '',
+      status: cells[ATS_MAPPING.status],
+      name: cells[ATS_MAPPING.name],
+      durationMs: null,
+      message: cells[ATS_MAPPING.message],
+      images: [...new Set(r.join(' ').match(IMAGE_PATH) ?? [])].map((p) => p.replace(/\\\\/g, '\\')),
+    })
+  }
+  return { startTime: startFromPreamble(preamble), preamble, headers, mapping: ATS_MAPPING, timeKind: 'absolute', rows }
+}
