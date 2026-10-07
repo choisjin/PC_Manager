@@ -158,8 +158,10 @@ public static class FileEndpoints
         });
 
         // PC 간 붙여넣기 (원본 → 서버 중계 → 대상, 디스크 미경유). 단일 파일만.
-        api.MapPost("/files/cross-copy", async (CrossCopyRequest request, TransferService transfers, SharedFolderStore shares, CancellationToken ct) =>
+        api.MapPost("/files/cross-copy", async (CrossCopyRequest request, TransferService transfers, SharedFolderStore shares, PcLockStore locks, HttpContext context, CancellationToken ct) =>
         {
+            if (PcLockEndpoints.Check(context, locks, request.SourceAgentId, request.DestAgentId) is { } locked)
+                return locked;
             if (string.IsNullOrWhiteSpace(request.SourcePath) || string.IsNullOrWhiteSpace(request.DestFolder))
                 return Results.BadRequest("원본과 대상 폴더가 필요합니다.");
             var result = await transfers.CrossCopyAsync(

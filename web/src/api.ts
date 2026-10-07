@@ -312,6 +312,16 @@ export interface RemoteUsage {
 }
 
 /** 채팅방 메시지. userId가 null이면 시스템 안내(초대·강퇴·나가기 등) */
+/** PIN으로 잠긴 PC */
+export interface PcLock {
+  agentId: string
+  /** 잠근 사람 */
+  ownerUserId: string | null
+  lockedAt: string
+  /** 이 브라우저가 PIN을 넣어 풀었는지 (12시간) */
+  unlocked: boolean
+}
+
 /** 메모: shared(공유, 누구나 보고 고침) | personal(개인, 나만) */
 export interface Note {
   id: string
@@ -468,7 +478,8 @@ function errorMessage(status: number, body: string) {
     const parsed: unknown = JSON.parse(body)
     if (typeof parsed === 'string') return parsed
     if (parsed && typeof parsed === 'object') {
-      const problem = parsed as { detail?: string; title?: string }
+      const problem = parsed as { detail?: string; title?: string; error?: string }
+      if (problem.error) return problem.error
       if (problem.detail || problem.title) return (problem.detail ?? problem.title)!
     }
   } catch {
@@ -483,7 +494,13 @@ export function setCurrentUser(userId: string | null) {
   currentUserId = userId
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+// PIN으로 잠긴 PC(423)를 만났을 때: PIN을 물어 풀면 true (pcLocks가 등록)
+let lockedHandler: ((agentId: string) => Promise<boolean>) | null = null
+export function setLockedHandler(handler: (agentId: string) => Promise<boolean>) {
+  lockedHandler = handler
+}
+
+async function request<T>(url: string, init?: RequestInit, retried = false): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: {
@@ -492,6 +509,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   })
+  if (res.status === 423) {
+    // 잠긴 PC: PIN을 넣어 풀면 한 번 다시 시도
+    const body = await res.text()
+    let agentId: string | undefined
+    try {
+      agentId = (JSON.parse(body) as { agentId?: string }).agentId
+    } catch {
+      // 무시
+    }
+    if (!retried && agentId && lockedHandler && (await lockedHandler(agentId))) return request<T>(url, init, true)
+    throw new Error(errorMessage(res.status, body))
+  }
   if (!res.ok) throw new Error(errorMessage(res.status, await res.text()))
   const text = await res.text()
   return (text ? JSON.parse(text) : undefined) as T
@@ -582,6 +611,14 @@ export const api = {
   remoteUsage: () => request<RemoteUsage>('/api/remote-usage'),
   chatRooms: () => request<ChatRoom[]>('/api/chat/rooms'),
   /** userId: 화면이 처음 뜰 때는 사용자 헤더가 아직 설정되기 전일 수 있어 직접 넣는다 */
+  pcLocks: () => request<PcLock[]>('/api/pc-locks'),
+  lockPc: (agentId: string, pin: string) => request<void>(`/api/pc-locks/${agentId}`, { method: 'POST', body: JSON.stringify({ pin }) }),
+  unlockPc: (agentId: string, pin: string) => request<void>(`/api/pc-locks/${agentId}/unlock`, { method: 'POST', body: JSON.stringify({ pin }) }),
+  /** 이 브라우저에서만 다시 잠그기 */
+  relockPc: (agentId: string) => request<void>(`/api/pc-locks/${agentId}/relock`, { method: 'POST' }),
+  changePcPin: (agentId: string, pin: string, newPin: string) =>
+    request<void>(`/api/pc-locks/${agentId}/pin`, { method: 'PUT', body: JSON.stringify({ pin, newPin }) }),
+  removePcLock: (agentId: string, pin: string) => request<void>(`/api/pc-locks/${agentId}/remove`, { method: 'POST', body: JSON.stringify({ pin }) }),
   notes: (userId: string) => request<Note[]>('/api/notes', { headers: { 'X-User-Id': userId } }),
   createNote: (scope: Note['scope']) => request<Note>('/api/notes', { method: 'POST', body: JSON.stringify({ scope }) }),
   deleteNote: (id: string) => request<void>(`/api/notes/${id}`, { method: 'DELETE' }),

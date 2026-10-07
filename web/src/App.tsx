@@ -9,6 +9,8 @@ import { SettingsPage } from './components/SettingsPage'
 import { TransfersPage } from './components/TransfersPage'
 import { TransfersPip } from './components/TransfersPip'
 import { UpdateDialog } from './components/UpdateDialog'
+import { PinDialog } from './components/PinDialog'
+import { pcLockStore } from './pcLocks'
 import { useDashboard } from './useDashboard'
 
 type Page = 'files' | 'transfers' | 'settings'
@@ -121,6 +123,13 @@ export default function App() {
     return m
   }, [agents, shares])
   const machineName = (id: string) => nameById.get(id) ?? id.slice(0, 8)
+  // PIN 창 제목에 쓸 PC 이름 (별칭 우선)
+  useEffect(() => {
+    pcLockStore.setNameResolver((id) => pcGroups.aliases?.[id]?.trim() || nameById.get(id) || id.slice(0, 8))
+  }, [pcGroups, nameById])
+  useEffect(() => {
+    void pcLockStore.reload()
+  }, [])
   const userName = (id: string | null | undefined) => (id ? org.users.find((u) => u.id === id)?.name ?? '(삭제된 사용자)' : null)
 
   const outdatedAgentCount = updateStatus
@@ -228,6 +237,9 @@ export default function App() {
           <TransfersPage transfers={transfers} artifactByTransfer={artifactByTransfer} machineName={machineName} userName={userName} />
         )}
       </main>
+
+      {/* 잠긴 PC를 열 때 PIN 입력 */}
+      <PinDialog />
 
       {/* 어디서든 보이는 전송 진행률·알림 위젯 */}
       <TransfersPip

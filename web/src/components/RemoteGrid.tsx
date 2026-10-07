@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { type Agent, PC_STATUS_LABEL, type PcStatus, type RemoteUsage, type Thumbnail } from '../api'
+import { usePcLocks } from '../pcLocks'
 import { RemoteModal } from './explorer/RemoteModal'
 
 /** 그룹(폴더) 하나의 PC들. 하위 폴더는 "상위 / 하위" 이름의 별도 구역 */
@@ -35,6 +36,7 @@ function idleText(seconds: number): string {
 /** Remote 모드: 그룹 안 PC들의 화면 미리보기 카드. 클릭하면 원격조작 */
 export function RemoteGrid({ sections, groupName, displayName, thumbnails, watchThumbnails, pcStatuses, remoteUsage, selfUserId, userName }: Props) {
   const [remote, setRemote] = useState<Agent | null>(null)
+  const pcLocks = usePcLocks()
   const agents = sections.flatMap((s) => s.agents)
   const byName = (a: Agent, b: Agent) => displayName(a).localeCompare(displayName(b), 'ko', { numeric: true, sensitivity: 'base' })
   const [notice, setNotice] = useState<string | null>(null)
@@ -92,7 +94,9 @@ export function RemoteGrid({ sections, groupName, displayName, thumbnails, watch
         {[...section.agents]
           .sort(byName)
           .map((agent) => {
-          const t = thumbnails[agent.id]
+          const locked = !!pcLocks[agent.id]
+          // 잠긴 PC는 서버가 썸네일을 찍지 않는다 (남아 있던 것도 안 보이게)
+          const t = locked ? undefined : thumbnails[agent.id]
           const st = pcStatuses[agent.id]
           const by = remoteUsage[agent.id]?.userId
           const busy = !!by && by !== (selfUserId ?? 'anonymous')
@@ -101,7 +105,13 @@ export function RemoteGrid({ sections, groupName, displayName, thumbnails, watch
           return (
             <div key={agent.id} className={cls} onClick={() => open(agent)} title={agent.online ? '클릭하면 원격조작' : '오프라인'}>
               <div className="remote-card-shot">
-                {t ? <img src={`data:image/jpeg;base64,${t.jpeg}`} alt="" /> : <div className="remote-card-blank muted small">{agent.online ? '화면 가져오는 중…' : '오프라인'}</div>}
+                {t ? (
+                  <img src={`data:image/jpeg;base64,${t.jpeg}`} alt="" />
+                ) : locked ? (
+                  <div className="remote-card-blank remote-card-locked muted small">🔒 PIN 잠금</div>
+                ) : (
+                  <div className="remote-card-blank muted small">{agent.online ? '화면 가져오는 중…' : '오프라인'}</div>
+                )}
                 {busy && <div className="remote-card-overlay">사용 중 · {userName(by)}</div>}
                 {!busy && st?.status === 'forbidden' && <div className="remote-card-overlay forbidden">사용 금지</div>}
               </div>
@@ -114,7 +124,7 @@ export function RemoteGrid({ sections, groupName, displayName, thumbnails, watch
                   )}
                 </div>
                 <div className="remote-card-sub small muted ellipsis">
-                  {!agent.online ? '오프라인' : idle ?? '…'}
+                  {!agent.online ? '오프라인' : locked ? 'PIN 잠금 · 클릭하면 PIN 입력' : idle ?? '…'}
                   {st?.note ? ` · ${st.note}` : ''}
                 </div>
               </div>

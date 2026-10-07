@@ -26,6 +26,7 @@ import {
   type UpdateStatus,
 } from './api'
 import { EMPTY_GROUPS } from './components/explorer/pcGroups'
+import { pcLockStore } from './pcLocks'
 
 /** 메모 변경: 바뀐 메모 / 지운 메모 id / 다시 연결됨(목록 새로 불러오기) */
 export type NoteEvent = { note?: Note; removedId?: string; reconnected?: boolean }
@@ -243,6 +244,8 @@ export function useDashboard() {
     connection.on('ThumbnailUpdated', (t: Thumbnail) => setThumbnails((prev) => ({ ...prev, [t.agentId]: t })))
     // 메모: 공유 메모는 모두, 개인 메모는 내 것만 온다 (메모 화면이 받아 반영)
     connection.on('NoteChanged', (note: Note) => noteListenersRef.current.forEach((l) => l({ note })))
+    // PC 잠금: 풀림 여부는 브라우저(쿠키)마다 달라 목록을 다시 받는다
+    connection.on('PcLocksChanged', () => void pcLockStore.reload())
     connection.on('NoteRemoved', (id: string) => noteListenersRef.current.forEach((l) => l({ removedId: id })))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
@@ -302,6 +305,7 @@ export function useDashboard() {
       setConnected(true)
       sync().catch(console.error)
       noteListenersRef.current.forEach((l) => l({ reconnected: true }))
+      void pcLockStore.reload()
     })
 
     const start = async () => {

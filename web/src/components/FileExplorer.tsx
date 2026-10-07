@@ -1,4 +1,5 @@
 import { findSelfAgentId } from '../selfAgent'
+import { ensureUnlocked } from '../pcLocks'
 import { useEffect, useMemo, useState } from 'react'
 import type { Agent, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder, Thumbnail } from '../api'
 import { RemoteGrid, type RemoteSection } from './RemoteGrid'
@@ -218,9 +219,18 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
       setActivePaneId(existing.paneId)
       return
     }
-    const paneId = newId()
-    updatePanes([...panes, { paneId, agentId }])
-    setActivePaneId(paneId)
+    // 잠긴 PC는 PIN을 넣어야 창을 연다
+    void ensureUnlocked(agentId).then((ok) => {
+      if (!ok) return
+      const paneId = newId()
+      setPanes((prev) => {
+        if (prev.some((p) => p.agentId === agentId)) return prev
+        const next = [...prev, { paneId, agentId }]
+        saveLocal(PANES_KEY, next)
+        return next
+      })
+      setActivePaneId(paneId)
+    })
   }
 
   // 트리에서 한 번 클릭: 열려 있으면 닫고, 없으면 연다

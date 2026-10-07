@@ -12,9 +12,11 @@ namespace PcManager.Server.Services;
 /// <summary>
 /// 대시보드 Remote 화면용 PC 썸네일. 보고 있는 대시보드가 하나라도 있는 PC마다 에이전트에 썸네일 프로세스를 띄워
 /// 작은 JPEG를 주기적으로 받고, SignalR로 대시보드에 뿌린다. 아무도 안 보면 세션을 끝낸다.
+/// PIN으로 잠긴 PC는 썸네일을 찍지 않는다 (누구에게도 화면이 보이지 않게).
 /// </summary>
 public class ThumbnailService(
     AgentRegistry registry,
+    PcLockStore locks,
     IHubContext<AgentHub> agentHub,
     IHubContext<DashboardHub, IDashboardClient> dashboard,
     ILogger<ThumbnailService> logger)
@@ -76,9 +78,19 @@ public class ThumbnailService(
         }
     }
 
+    /// <summary>방금 잠긴 PC: 썸네일 세션을 끝내고 마지막 썸네일을 지운다</summary>
+    public void Locked(string agentId)
+    {
+        lock (_lock)
+        {
+            _latest.TryRemove(agentId, out _);
+            Reconcile();
+        }
+    }
+
     private void Reconcile()
     {
-        var wanted = _wants.Values.SelectMany(s => s).ToHashSet();
+        var wanted = _wants.Values.SelectMany(s => s).Where(id => !locks.IsLocked(id)).ToHashSet();
         foreach (var agentId in wanted)
         {
             if (!_sessions.ContainsKey(agentId))
@@ -111,6 +123,9 @@ public class ThumbnailService(
 
     private async Task PublishAsync(ThumbnailView view)
     {
+        // 세션이 끝나기 전에 잠긴 경우
+        if (locks.IsLocked(view.AgentId))
+            return;
         _latest[view.AgentId] = view;
         await dashboard.Clients.Group(Group).ThumbnailUpdated(view);
     }

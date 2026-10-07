@@ -60,8 +60,10 @@ public static class TextEndpoints
         });
 
         // 내 PC 프로그램으로 열기: editorAgentId = 대시보드를 연 PC의 에이전트
-        api.MapPost("/agents/{agentId}/open-local", async (string agentId, OpenLocalRequest request, TransferService transfers, CancellationToken ct) =>
+        api.MapPost("/agents/{agentId}/open-local", async (string agentId, OpenLocalRequest request, TransferService transfers, PcLockStore locks, HttpContext context, CancellationToken ct) =>
         {
+            if (PcLockEndpoints.Check(context, locks, request.EditorAgentId) is { } locked)
+                return locked;
             if (string.IsNullOrWhiteSpace(request.Path) || string.IsNullOrWhiteSpace(request.EditorAgentId))
                 return Results.BadRequest("파일 경로와 내 PC가 필요합니다.");
             var error = await transfers.OpenLocalAsync(agentId, request.Path!, request.EditorAgentId!,

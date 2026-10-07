@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import { api, PC_STATUS_LABEL } from '../../api'
+import { ensureUnlocked } from '../../pcLocks'
 import { fileClipboard, type RemoteFileClip, useFileClipboard } from '../remote/fileClipboard'
 import { RemoteContext } from '../remote/RemoteContext'
 import { MseSink, type VideoSink, WebCodecsSink, webCodecsAvailable } from '../remote/sinks'
@@ -333,8 +334,27 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     focusStage()
   }
 
+  // PIN으로 잠긴 PC는 PIN을 넣어야 연결한다 (서버가 잠금 해제 쿠키 없는 연결을 막는다)
+  const [unlockedFor, setUnlockedFor] = useState<string | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void ensureUnlocked(agentId).then((ok) => {
+      if (cancelled) return
+      if (ok) {
+        setUnlockedFor(agentId)
+        return
+      }
+      setPhase('closed')
+      setMessage('PIN으로 잠긴 PC입니다. PIN을 입력해야 원격조작할 수 있습니다.')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [agentId, attempt])
+
   // 연결 (다시 연결하면 attempt가 바뀐다)
   useEffect(() => {
+    if (unlockedFor !== agentId) return
     const surface = useWebCodecs ? canvasRef.current : videoRef.current
     if (!surface) return
     const sink: VideoSink = useWebCodecs
@@ -495,7 +515,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
       setFormat(null)
       formatRef.current = null
     }
-  }, [agentId, userId, attempt, useWebCodecs])
+  }, [agentId, userId, attempt, useWebCodecs, unlockedFor])
 
   const send = (msg: object) => {
     const ws = wsRef.current

@@ -27,7 +27,8 @@ export function useTopLayer(): HTMLElement {
 function findTopLayer(): HTMLElement {
   const fullscreen = document.fullscreenElement
   if (fullscreen instanceof HTMLElement) return fullscreen
-  const modals = [...document.querySelectorAll('dialog[open]')].filter((d) => {
+  // data-no-pip: PiP를 넣지 않는 대화상자 (PIN 입력처럼 PiP보다 위에 보여야 하는 것)
+  const modals = [...document.querySelectorAll('dialog[open]:not([data-no-pip])')].filter((d) => {
     try {
       return d.matches(':modal')
     } catch {

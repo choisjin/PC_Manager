@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react'
 import { api, type Agent, isLinuxAgent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type SharedFolder } from '../../api'
+import { ensureUnlocked, pcLockStore, usePcLocks } from '../../pcLocks'
+import { askPin } from '../../pinPrompt'
 import { AddShareModal } from './AddShareModal'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { Icon } from './Icon'
@@ -37,6 +39,7 @@ interface Props {
 }
 
 export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange }: Props) {
+  const pcLocks = usePcLocks()
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
@@ -150,6 +153,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
   const agentPad = (depth: number) => 3 + depth * INDENT + CARET
 
   const renderAgent = (agent: Agent, depth: number) => {
+    const lock = pcLocks[agent.id]
     const alias = groups.aliases?.[agent.id]?.trim()
     const viewers = viewersOf(agent.id)
     const status = pcStatuses[agent.id]
@@ -173,6 +177,11 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
       >
         <span className={`dot ${agent.online ? 'on' : 'off'}`} />
         <span className="ellipsis">{displayName(agent, groups)}</span>
+        {lock && (
+          <span className={`pc-lock-badge${lock.unlocked ? ' open' : ''}`} title={lock.unlocked ? 'PIN 잠금 (이 브라우저에서 풀림)' : 'PIN 잠금 — 열 때 PIN 입력'}>
+            {lock.unlocked ? '🔓' : '🔒'}
+          </span>
+        )}
         {proj && <span className="proj-badge">{proj}</span>}
         {alias && <span className="tree-host mono">{agent.machineName}</span>}
         {status && status.status !== 'available' && (
@@ -406,6 +415,47 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
               },
             }))
             const remoteBy = remoteUsage[a.id]?.userId
+            const name = displayName(a, groups)
+            const lock = pcLocks[a.id]
+            const fail = (what: string) => (err: unknown) => window.alert(`${what}: ${err instanceof Error ? err.message : String(err)}`)
+            const lockItems: MenuItem[] = lock
+              ? [
+                  ...(lock.unlocked
+                    ? [{ label: '🔒 이 브라우저에서 다시 잠그기', onClick: () => void api.relockPc(a.id).then(pcLockStore.reload, fail('잠그지 못했습니다')) }]
+                    : [{ label: '🔓 PIN 입력해서 풀기…', onClick: () => void ensureUnlocked(a.id) }]),
+                  {
+                    label: 'PIN 변경…',
+                    onClick: async () => {
+                      const pin = await askPin({ title: `'${name}' 지금 PIN` })
+                      if (pin === null) return
+                      const next = await askPin({ title: `'${name}' 새 PIN`, confirm: true })
+                      if (next === null) return
+                      api.changePcPin(a.id, pin, next).then(() => window.alert('PIN을 바꿨습니다. 다른 브라우저는 새 PIN을 넣어야 합니다.'), fail('바꾸지 못했습니다'))
+                    },
+                  },
+                  {
+                    label: 'PIN 잠금 없애기…',
+                    onClick: async () => {
+                      const pin = await askPin({ title: `'${name}' PIN 잠금 없애기`, message: 'PIN을 넣으면 잠금이 풀려 누구나 탐색·원격조작하고 썸네일도 보입니다.' })
+                      if (pin === null) return
+                      api.removePcLock(a.id, pin).then(pcLockStore.reload, fail('없애지 못했습니다'))
+                    },
+                  },
+                ]
+              : [
+                  {
+                    label: '🔒 PIN 잠금 (내 PC)…',
+                    onClick: async () => {
+                      const pin = await askPin({
+                        title: `'${name}' PIN 잠금`,
+                        message: '잠그면 PIN을 넣은 브라우저에서만 이 PC를 탐색·원격조작할 수 있고, 원격 썸네일은 누구에게도 보이지 않습니다.',
+                        confirm: true,
+                      })
+                      if (pin === null) return
+                      api.lockPc(a.id, pin).then(pcLockStore.reload, fail('잠그지 못했습니다'))
+                    },
+                  },
+                ]
             return [
               { label: '열기', onClick: () => onOpenAgent(a.id) },
               ...(remoteBy
@@ -417,6 +467,8 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
                     },
                   }]
                 : []),
+              { separator: true },
+              ...lockItems,
               { separator: true },
               ...statusItems,
               { separator: true },
