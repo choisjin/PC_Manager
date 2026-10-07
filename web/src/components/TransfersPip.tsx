@@ -4,6 +4,8 @@ import { useTopLayer } from '../useTopLayer'
 import type { ChatMessage, ChatRoom, Org, Transfer } from '../api'
 import { roomTitle } from '../chatRoom'
 import { type ChatActions, ChatPanel } from './ChatPanel'
+import { NotesPanel } from './NotesPanel'
+import type { NoteEvent } from '../useDashboard'
 import { formatBytes } from '../format'
 import { kindLabel } from './explorer/useTransfers'
 
@@ -17,6 +19,7 @@ interface Props {
   chatMessages: Record<string, ChatMessage[]>
   chatActions: ChatActions
   subscribeChat: (listener: (message: ChatMessage) => void) => () => void
+  subscribeNotes: (listener: (event: NoteEvent) => void) => () => void
 }
 
 const SIZE_KEY = 'pcm.pip.size2'
@@ -51,7 +54,7 @@ const beep = () => {
   }
 }
 
-type PipTab = 'transfers' | 'chat'
+type PipTab = 'transfers' | 'chat' | 'notes'
 const TAB_KEY = 'pcm.pip.tab'
 
 const leafOf = (path: string | null) => path?.split(/[\\/]/).filter(Boolean).pop() ?? ''
@@ -94,7 +97,7 @@ function savePos(p: PipPos) {
 }
 
 /** 전송 진행률·알림을 띄우는 떠 있는 위젯 (드래그 이동 + 펴고 접기) */
-export function TransfersPip({ transfers, machineName, userName, org, selfUserId, chatRooms, chatMessages, chatActions, subscribeChat }: Props) {
+export function TransfersPip({ transfers, machineName, userName, org, selfUserId, chatRooms, chatMessages, chatActions, subscribeChat, subscribeNotes }: Props) {
   const [pos, setPos] = useState(loadPos)
   // 위젯 크기 (오른쪽 아래 모서리를 끌어 조절). null이면 기본
   const [size, setSize] = useState<{ w: number; h: number }>(loadSize)
@@ -138,7 +141,8 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
   const bodyStyle = { height: size.h - HEAD_H, maxHeight: 'none' as const }
   const [tab, setTab] = useState<PipTab>(() => {
     try {
-      return localStorage.getItem(TAB_KEY) === 'chat' ? 'chat' : 'transfers'
+      const saved = localStorage.getItem(TAB_KEY)
+      return saved === 'chat' || saved === 'notes' ? saved : 'transfers'
     } catch {
       return 'transfers'
     }
@@ -362,6 +366,9 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
               채팅
               {unread > 0 && <span className="pip-count chat">{unread}</span>}
             </button>
+            <button type="button" role="tab" aria-selected={tab === 'notes'} className={tab === 'notes' ? 'active' : ''} onClick={() => switchTab('notes')}>
+              메모
+            </button>
             <button type="button" role="tab" aria-selected={tab === 'transfers'} className={tab === 'transfers' ? 'active' : ''} onClick={() => switchTab('transfers')}>
               파일 전송
               {activeList.length > 0 && <span className="pip-count">{activeList.length}</span>}
@@ -385,6 +392,12 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
             onActiveRoomChange={changeRoom}
             visible={chatVisible && focused}
           />
+        </div>
+      )}
+
+      {!collapsed && tab === 'notes' && (
+        <div className="pip-body pip-chat" style={bodyStyle}>
+          <NotesPanel selfUserId={selfUserId} nameOf={(id) => userName(id) ?? '(알 수 없음)'} subscribeNotes={subscribeNotes} />
         </div>
       )}
 

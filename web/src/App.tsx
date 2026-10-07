@@ -82,6 +82,7 @@ export default function App() {
     chatActions,
     joinChat,
     subscribeChat,
+    subscribeNotes,
     thumbnails,
     watchThumbnails,
     watchRun,
@@ -239,6 +240,7 @@ export default function App() {
         chatMessages={chatMessages}
         chatActions={chatActions}
         subscribeChat={subscribeChat}
+        subscribeNotes={subscribeNotes}
       />
     </div>
   )

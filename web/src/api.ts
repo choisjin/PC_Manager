@@ -312,6 +312,23 @@ export interface RemoteUsage {
 }
 
 /** 채팅방 메시지. userId가 null이면 시스템 안내(초대·강퇴·나가기 등) */
+/** 메모: shared(공유, 누구나 보고 고침) | personal(개인, 나만) */
+export interface Note {
+  id: string
+  scope: 'shared' | 'personal'
+  ownerId: string
+  /** 목록 제목 (내용 첫 줄) */
+  title: string
+  /** 정리된 HTML (글자·줄바꿈·목록·이미지) */
+  content: string
+  createdAt: string
+  updatedAt: string
+  updatedBy: string
+}
+
+/** 메모 저장 결과: 그 사이 다른 곳에서 고쳤으면 conflict에 최신 메모 */
+export type NoteSaveResult = { note: Note; conflict?: undefined } | { note?: undefined; conflict: Note }
+
 export interface ChatMessage {
   id: number
   roomId: string
@@ -564,6 +581,23 @@ export const api = {
     request<PcStatuses>(`/api/agents/${agentId}/status`, { method: 'PUT', body: JSON.stringify({ status, note }) }),
   remoteUsage: () => request<RemoteUsage>('/api/remote-usage'),
   chatRooms: () => request<ChatRoom[]>('/api/chat/rooms'),
+  /** userId: 화면이 처음 뜰 때는 사용자 헤더가 아직 설정되기 전일 수 있어 직접 넣는다 */
+  notes: (userId: string) => request<Note[]>('/api/notes', { headers: { 'X-User-Id': userId } }),
+  createNote: (scope: Note['scope']) => request<Note>('/api/notes', { method: 'POST', body: JSON.stringify({ scope }) }),
+  deleteNote: (id: string) => request<void>(`/api/notes/${id}`, { method: 'DELETE' }),
+  updateNote: async (id: string, title: string, content: string, baseUpdatedAt: string): Promise<NoteSaveResult> => {
+    const res = await fetch(`/api/notes/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...(currentUserId ? { 'X-User-Id': currentUserId } : {}) },
+      body: JSON.stringify({ title, content, baseUpdatedAt }),
+    })
+    if (res.status === 409) return { conflict: (await res.json()) as Note }
+    if (!res.ok) throw new Error(errorMessage(res.status, await res.text()))
+    return { note: (await res.json()) as Note }
+  },
+  /** 이미지 올리기 (이미 줄인 것) → 메모에 넣을 주소 */
+  uploadNoteImage: (image: Blob) =>
+    request<{ url: string }>('/api/notes/images', { method: 'POST', body: image, headers: { 'Content-Type': image.type || 'image/jpeg' } }),
   chatMessages: (roomId: string, take = 200) => request<ChatMessage[]>(`/api/chat/rooms/${encodeURIComponent(roomId)}/messages?take=${take}`),
   createChatGroup: (name: string, memberIds: string[]) =>
     request<ChatRoom>('/api/chat/rooms', { method: 'POST', body: JSON.stringify({ name, memberIds }) }),

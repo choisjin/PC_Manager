@@ -5,6 +5,7 @@ import {
   type Agent,
   type ChatMessage,
   type ChatRoom,
+  type Note,
   type PcStatus,
   type PcStatuses,
   type PcStatusValue,
@@ -25,6 +26,9 @@ import {
   type UpdateStatus,
 } from './api'
 import { EMPTY_GROUPS } from './components/explorer/pcGroups'
+
+/** 메모 변경: 바뀐 메모 / 지운 메모 id / 다시 연결됨(목록 새로 불러오기) */
+export type NoteEvent = { note?: Note; removedId?: string; reconnected?: boolean }
 
 export interface OrgActions {
   createProject: (name: string) => Promise<void>
@@ -124,6 +128,7 @@ export function useDashboard() {
   const [chatMessages, setChatMessages] = useState<Record<string, ChatMessage[]>>({})
   const chatUserRef = useRef<string | null>(null)
   const chatListenersRef = useRef(new Set<(message: ChatMessage) => void>())
+  const noteListenersRef = useRef(new Set<(event: NoteEvent) => void>())
   const [thumbnails, setThumbnails] = useState<Record<string, Thumbnail>>({})
   const thumbWantsRef = useRef<string[]>([])
   const [connected, setConnected] = useState(false)
@@ -236,6 +241,9 @@ export function useDashboard() {
       )
     })
     connection.on('ThumbnailUpdated', (t: Thumbnail) => setThumbnails((prev) => ({ ...prev, [t.agentId]: t })))
+    // 메모: 공유 메모는 모두, 개인 메모는 내 것만 온다 (메모 화면이 받아 반영)
+    connection.on('NoteChanged', (note: Note) => noteListenersRef.current.forEach((l) => l({ note })))
+    connection.on('NoteRemoved', (id: string) => noteListenersRef.current.forEach((l) => l({ removedId: id })))
 
     // 연결 직후와 재연결 후: 목록을 새로 받고, 보고 있던 구독을 복구한다
     const sync = async () => {
@@ -293,6 +301,7 @@ export function useDashboard() {
     connection.onreconnected(() => {
       setConnected(true)
       sync().catch(console.error)
+      noteListenersRef.current.forEach((l) => l({ reconnected: true }))
     })
 
     const start = async () => {
@@ -504,6 +513,14 @@ export function useDashboard() {
     }
   }, [])
 
+  /** 메모 변경 알림 받기 (재연결하면 { reconnected: true } → 목록을 다시 불러온다) */
+  const subscribeNotes = useCallback((listener: (event: NoteEvent) => void) => {
+    noteListenersRef.current.add(listener)
+    return () => {
+      noteListenersRef.current.delete(listener)
+    }
+  }, [])
+
   const announcePresence = useCallback((userId: string, agentIds: string[]) => {
     presenceRef.current = { userId, agentIds }
     connectionRef.current?.invoke('SetPresence', userId, agentIds).catch(() => {})
@@ -540,6 +557,7 @@ export function useDashboard() {
     chatActions,
     joinChat,
     subscribeChat,
+    subscribeNotes,
     thumbnails,
     watchThumbnails,
     connected,

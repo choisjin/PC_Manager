@@ -3897,6 +3897,99 @@ th.sortable:hover {
   color: var(--danger, #c92a2a);
 }
 
+/* 메모 (PiP '메모' 탭) */
+.notes-scope {
+  display: flex;
+  margin-bottom: 3px;
+}
+
+.notes-scope button {
+  flex: 1;
+}
+
+.notes-status {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.notes-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  padding: 3px 6px;
+  background: var(--hover);
+  border-bottom: 1px solid var(--border);
+}
+
+.note-editor {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 8px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  outline: none;
+  cursor: text;
+}
+
+.note-editor:empty::before {
+  color: var(--muted);
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+
+/* 이미지는 적당한 크기로 줄여 보이고, 클릭하면 크게 */
+.note-editor img {
+  display: inline-block;
+  max-width: min(100%, 260px);
+  max-height: 200px;
+  margin: 2px 0;
+  vertical-align: bottom;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: zoom-in;
+}
+
+.note-editor ul,
+.note-editor ol {
+  margin: 2px 0;
+  padding-left: 20px;
+}
+
+.note-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  background: rgb(0 0 0 / 80%);
+  cursor: zoom-out;
+}
+
+.note-viewer img {
+  max-width: 95vw;
+  max-height: 95vh;
+  object-fit: contain;
+  background: #fff;
+  box-shadow: 0 4px 24px rgb(0 0 0 / 50%);
+  cursor: zoom-in;
+}
+
+/* 원래 크기: 화면보다 크면 스크롤 */
+.note-viewer img.actual {
+  max-width: none;
+  max-height: none;
+  margin: auto;
+  cursor: zoom-out;
+}
+
 .chat-system {
   margin: 4px 0;
   text-align: center;

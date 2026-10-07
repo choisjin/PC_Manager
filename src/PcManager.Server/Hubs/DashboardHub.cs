@@ -28,6 +28,8 @@ public interface IDashboardClient
     Task ChatRoomMessage(ChatRoomMessageView message);
     Task ChatRoomRead(string roomId, string userId, long messageId);
     Task ThumbnailUpdated(ThumbnailView thumbnail);
+    Task NoteChanged(NoteView note);
+    Task NoteRemoved(string noteId);
 }
 
 /// <summary>웹 대시보드가 접속하는 Hub. 출력은 보고 있는 실행에만 전달한다.</summary>
