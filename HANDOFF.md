@@ -34,6 +34,8 @@
   - 정상 종료: 서버 `Api/LauncherEndpoints.cs` `POST /api/launcher/shutdown` (환경변수 `PCM_LAUNCHER_TOKEN`, 실행마다 새 토큰, localhost만). 15초 내 안 끝나면 Kill.
   - 비정상 종료 시 3초 뒤 자동 재시작, 5분 안 3번이면 "오류"로 멈춤.
   - 일괄 업데이트: `/releases/latest` 리디렉션으로 버전 확인(API 미사용) → zip → `server.new` → 실행 중 서버 중지 → `server`↔`server.old` 교체 → 재시작. `[zip으로 업데이트…]`(오프라인).
+  - **0.8.32부터** 서버 바이너리는 버전별 `servers\<버전>\` (인스턴스마다 `launcher.json`의 `ServerVersion`). 업데이트 때 옮길 서버를 골라(`UpdateDialog`) 그 서버만 중지·재시작, 나머지는 이전 버전으로 계속 실행. 아무도 안 쓰는 버전 폴더·옛 `server\`는 정리.
+    "에이전트도 업데이트"를 켜면 환경변수 `PCM_UPDATE_AGENTS=1`로 띄우고, 서버 `AgentAutoUpdater`가 30초마다 구버전·온라인·실행 중 명령 없는 에이전트에 업데이트를 보냄(에이전트당 한 번).
   - **런처 자신은 업데이트하지 않음** → 런처가 바뀐 릴리스는 사용자가 exe를 직접 교체해야 함.
   - 서버 추가/설정/삭제, 방화벽(`netsh` 승격), 트레이, `HKCU\...\Run` 로그인 자동 실행(`--minimized`), 폴더당 런처 1개(Mutex).
 - **0.8.22 PC 목록 "목록에서 삭제"** (우클릭, 연결 끊긴 PC만)

@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 namespace PcManager.ServerLauncher;
 
 /// <summary>
-/// 공용 서버 바이너리(server 폴더) 관리: 설치된 버전 확인, GitHub 최신 버전 확인, 서버 zip에서 server 폴더 교체.
+/// 서버 바이너리(servers\버전 폴더) 관리: 설치된 버전 확인, GitHub 최신 버전 확인, 서버 zip에서 새 버전 폴더 만들기.
 /// 서버 zip(PcManager-Server-버전.zip)은 server\ 아래에 서버·대시보드·에이전트 설치 파일이 들어 있다.
 /// </summary>
 internal static partial class ServerPackage
@@ -21,19 +21,46 @@ internal static partial class ServerPackage
         return http;
     }
 
-    private static string NewDirectory => LauncherPaths.ServerDirectory + ".new";
-    private static string OldDirectory => LauncherPaths.ServerDirectory + ".old";
+    private static string NewDirectory => Path.Combine(LauncherPaths.ServersDirectory, "_new");
     private static string DownloadDirectory => Path.Combine(LauncherPaths.Root, "download");
 
-    /// <summary>server 폴더의 서버 버전. 없으면 null</summary>
-    public static Version? InstalledVersion()
+    private static List<ServerBuild>? _builds;
+
+    /// <summary>설치된 서버 버전들 (servers\버전 + 예전 server 폴더). 같은 버전이면 servers 쪽</summary>
+    public static IReadOnlyList<ServerBuild> InstalledBuilds()
     {
-        var dll = Path.Combine(LauncherPaths.ServerDirectory, "PcManager.Server.dll");
-        if (!File.Exists(dll))
-            return null;
-        var text = FileVersionInfo.GetVersionInfo(dll).FileVersion;
-        return Version.TryParse(text, out var v) ? new Version(v.Major, v.Minor, Math.Max(v.Build, 0)) : null;
+        if (_builds is not null)
+            return _builds;
+        var dirs = Directory.Exists(LauncherPaths.ServersDirectory)
+            ? Directory.GetDirectories(LauncherPaths.ServersDirectory).Where(d => !Path.GetFileName(d).StartsWith('_')).ToList()
+            : [];
+        dirs.Add(LauncherPaths.LegacyServerDirectory);
+        _builds = dirs
+            .Select(d => ReadVersion(d) is { } v ? new ServerBuild(v, d) : null)
+            .OfType<ServerBuild>()
+            .DistinctBy(b => b.Version)
+            .OrderByDescending(b => b.Version)
+            .ToList();
+        return _builds;
     }
+
+    public static ServerBuild? LatestBuild() => InstalledBuilds().FirstOrDefault();
+
+    public static ServerBuild? FindBuild(string? version) =>
+        Version.TryParse(version, out var v) ? InstalledBuilds().FirstOrDefault(b => b.Version == Normalize(v)) : null;
+
+    /// <summary>설치된 최신 서버 버전. 없으면 null</summary>
+    public static Version? InstalledVersion() => LatestBuild()?.Version;
+
+    private static Version? ReadVersion(string directory)
+    {
+        var dll = Path.Combine(directory, "PcManager.Server.dll");
+        if (!File.Exists(dll) || !File.Exists(Path.Combine(directory, "PcManager.Server.exe")))
+            return null;
+        return Version.TryParse(FileVersionInfo.GetVersionInfo(dll).FileVersion, out var v) ? Normalize(v) : null;
+    }
+
+    private static Version Normalize(Version v) => new(v.Major, v.Minor, Math.Max(v.Build, 0));
 
     /// <summary>
     /// 최신 릴리스 버전. API 요청 한도(같은 IP에서 시간당 60회, 사무실 공용)를 쓰지 않도록
@@ -90,8 +117,8 @@ internal static partial class ServerPackage
         throw new InvalidOperationException("리디렉션이 너무 많습니다: " + url);
     }
 
-    /// <summary>zip의 server 폴더를 server.new에 푼다. 풀린 서버 버전을 돌려준다</summary>
-    public static Version? Extract(string zipPath)
+    /// <summary>zip의 server 폴더를 servers\_new에 푼다. 풀린 서버 버전을 돌려준다</summary>
+    public static Version Extract(string zipPath)
     {
         if (Directory.Exists(NewDirectory))
             Directory.Delete(NewDirectory, recursive: true);
@@ -122,49 +149,61 @@ internal static partial class ServerPackage
             }
         }
 
-        var dll = Path.Combine(NewDirectory, "PcManager.Server.dll");
-        if (!File.Exists(Path.Combine(NewDirectory, "PcManager.Server.exe")) || !File.Exists(dll))
+        if (ReadVersion(NewDirectory) is not { } version)
         {
             Directory.Delete(NewDirectory, recursive: true);
-            throw new InvalidOperationException("zip 안에 서버(server\\PcManager.Server.exe)가 없습니다. PcManager-Server-버전.zip 파일인지 확인하세요.");
+            throw new InvalidOperationException("zip 안에 서버(server\\PcManager.Server.exe)가 없거나 버전을 읽지 못했습니다. PcManager-Server-버전.zip 파일인지 확인하세요.");
         }
-        return Version.TryParse(FileVersionInfo.GetVersionInfo(dll).FileVersion, out var v) ? new Version(v.Major, v.Minor, Math.Max(v.Build, 0)) : null;
+        return version;
     }
 
-    /// <summary>server.new를 server로 바꾼다. 모든 인스턴스가 꺼진 뒤 호출해야 한다</summary>
-    public static async Task SwapAsync()
+    /// <summary>
+    /// servers\_new를 servers\버전으로 옮긴다. 실행 중인 서버는 자기 버전 폴더를 쓰므로 멈추지 않아도 된다.
+    /// 같은 버전 폴더가 이미 있으면 그대로 쓴다 (실행 중일 수 있어 지우다 말면 그 서버가 망가진다)
+    /// </summary>
+    public static ServerBuild Commit()
     {
-        if (Directory.Exists(OldDirectory))
-            Directory.Delete(OldDirectory, recursive: true);
-        if (Directory.Exists(LauncherPaths.ServerDirectory))
+        var version = ReadVersion(NewDirectory) ?? throw new InvalidOperationException("풀어 둔 서버가 없습니다.");
+        var target = Path.Combine(LauncherPaths.ServersDirectory, version.ToString(3));
+        if (ReadVersion(target) == version)
         {
-            // 방금 끝난 프로세스의 파일 잠금이 늦게 풀릴 수 있어 몇 번 다시 시도
-            for (var attempt = 1; ; attempt++)
-            {
-                try
-                {
-                    Directory.Move(LauncherPaths.ServerDirectory, OldDirectory);
-                    break;
-                }
-                catch (IOException) when (attempt < 10)
-                {
-                    await Task.Delay(1000);
-                }
-                catch (UnauthorizedAccessException) when (attempt < 10)
-                {
-                    await Task.Delay(1000);
-                }
-            }
+            TryDelete(NewDirectory);
         }
-        Directory.Move(NewDirectory, LauncherPaths.ServerDirectory);
+        else
+        {
+            if (Directory.Exists(target))
+                Directory.Delete(target, recursive: true);
+            Directory.Move(NewDirectory, target);
+        }
+        _builds = null;
+        return new ServerBuild(version, target);
+    }
+
+    /// <summary>최신 버전과 keep(인스턴스가 정했거나 실행 중인 폴더)이 아닌 버전 폴더를 지운다. 잠긴 폴더는 다음에 다시</summary>
+    public static void Cleanup(IEnumerable<string> keep)
+    {
+        var keepSet = keep.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var latest = LatestBuild();
+        foreach (var build in InstalledBuilds())
+        {
+            if (build == latest || keepSet.Contains(Path.GetFullPath(build.Directory)))
+                continue;
+            TryDelete(build.Directory);
+        }
+        foreach (var leftover in new[] { LauncherPaths.LegacyServerDirectory + ".old", LauncherPaths.LegacyServerDirectory + ".new" })
+            TryDelete(leftover);
+        _builds = null;
+    }
+
+    private static void TryDelete(string directory)
+    {
         try
         {
-            if (Directory.Exists(OldDirectory))
-                Directory.Delete(OldDirectory, recursive: true);
+            if (Directory.Exists(directory))
+                Directory.Delete(directory, recursive: true);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            // 이전 버전 폴더는 다음 업데이트 때 다시 지운다
         }
     }
 
@@ -182,4 +221,10 @@ internal static partial class ServerPackage
 
     [GeneratedRegex(@"/tag/v?([0-9]+(?:\.[0-9]+)+)$")]
     private static partial Regex TagRegex();
+}
+
+/// <summary>설치된 서버 한 버전 (폴더)</summary>
+internal sealed record ServerBuild(Version Version, string Directory)
+{
+    public string Exe => Path.Combine(Directory, "PcManager.Server.exe");
 }

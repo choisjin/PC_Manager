@@ -23,6 +23,8 @@ internal sealed class ServerInstance
     // 서버 PcManager.Server.Api.LauncherEndpoints와 맞춘다
     private const string TokenVariable = "PCM_LAUNCHER_TOKEN";
     private const string TokenHeader = "X-Launcher-Token";
+    // 서버 PcManager.Server.Services.AgentAutoUpdater와 맞춘다
+    private const string UpdateAgentsVariable = "PCM_UPDATE_AGENTS";
     private const long MaxLogBytes = 5 * 1024 * 1024;
     private const int MaxCrashesInWindow = 3;
     private static readonly TimeSpan CrashWindow = TimeSpan.FromMinutes(5);
@@ -47,6 +49,10 @@ internal sealed class ServerInstance
     public InstanceState State { get; private set; } = InstanceState.Stopped;
     public string? Message { get; private set; }
     public DateTime? StartedAt { get; private set; }
+    /// <summary>지금 떠 있는 서버 프로세스의 버전 폴더 (꺼져 있으면 null)</summary>
+    public ServerBuild? RunningBuild { get; private set; }
+    /// <summary>켜질 때 서버가 구버전 에이전트를 자동 업데이트하게 한다 (업데이트로 다시 띄울 때 켬)</summary>
+    public bool UpdateAgents { get; set; }
 
     public bool IsActive => State is InstanceState.Starting or InstanceState.Running or InstanceState.Stopping;
 
@@ -64,7 +70,9 @@ internal sealed class ServerInstance
 
     private void Launch()
     {
-        if (!File.Exists(LauncherPaths.ServerExe))
+        // 정해 둔 버전이 없거나 지워졌으면 설치된 최신 버전으로 정한다
+        var build = ServerPackage.FindBuild(Config.ServerVersion) ?? ServerPackage.LatestBuild();
+        if (build is null)
         {
             SetState(InstanceState.Failed, "서버 파일이 없습니다. [일괄 업데이트]로 먼저 받으세요.");
             return;
@@ -79,10 +87,12 @@ internal sealed class ServerInstance
         Directory.CreateDirectory(Config.ResolvedDataDirectory);
         OpenLog();
 
+        Config.ServerVersion = build.Version.ToString(3);
+
         _token = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        var info = new ProcessStartInfo(LauncherPaths.ServerExe)
+        var info = new ProcessStartInfo(build.Exe)
         {
-            WorkingDirectory = LauncherPaths.ServerDirectory,
+            WorkingDirectory = build.Directory,
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
@@ -102,6 +112,8 @@ internal sealed class ServerInstance
             info.ArgumentList.Add(ServerCertificate.PfxPath);
         }
         info.Environment[TokenVariable] = _token;
+        if (UpdateAgents)
+            info.Environment[UpdateAgentsVariable] = "1";
 
         try
         {
@@ -115,7 +127,8 @@ internal sealed class ServerInstance
             process.BeginErrorReadLine();
             _process = process;
             StartedAt = DateTime.Now;
-            WriteLog($"[launcher] 시작: 포트 {Config.Port}{(Config.ResolvedHttpsPort > 0 ? $" (HTTPS {Config.ResolvedHttpsPort})" : "")}, 데이터 {Config.ResolvedDataDirectory} (PID {process.Id})");
+            RunningBuild = build;
+            WriteLog($"[launcher] 시작: v{build.Version.ToString(3)}, 포트 {Config.Port}{(Config.ResolvedHttpsPort > 0 ? $" (HTTPS {Config.ResolvedHttpsPort})" : "")}, 데이터 {Config.ResolvedDataDirectory} (PID {process.Id})");
             SetState(InstanceState.Starting, null);
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
@@ -133,6 +146,7 @@ internal sealed class ServerInstance
             var code = SafeExitCode(process);
             _process = null;
             StartedAt = null;
+            RunningBuild = null;
             if (_stopRequested)
             {
                 WriteLog("[launcher] 종료됨");

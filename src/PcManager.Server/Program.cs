@@ -92,6 +92,7 @@ builder.Services.AddSingleton<TransferService>();
 builder.Services.AddSingleton<JobService>();
 builder.Services.AddSingleton<UpdateService>();
 builder.Services.AddHostedService<UpdateRefresher>();
+builder.Services.AddHostedService<AgentAutoUpdater>();
 
 var app = builder.Build();
 

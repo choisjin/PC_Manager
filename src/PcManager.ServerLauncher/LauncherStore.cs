@@ -7,7 +7,8 @@ namespace PcManager.ServerLauncher;
 /// 런처 폴더 구성 (런처 exe가 있는 폴더 기준)
 /// <code>
 ///   launcher.json              인스턴스 목록
-///   server\                    공용 서버 바이너리 (모든 인스턴스가 같이 씀)
+///   servers\버전\              서버 바이너리 (버전별. 인스턴스마다 쓸 버전을 정해 일부만 업데이트할 수 있다)
+///   server\                    예전 런처의 공용 서버 폴더 (쓰는 인스턴스가 없어지면 지운다)
 ///   instances\이름\data        인스턴스별 DB·로그·결과 파일 (기본 위치)
 ///   instances\이름\server.log  서버 출력
 /// </code>
@@ -16,8 +17,8 @@ internal static class LauncherPaths
 {
     public static string Root { get; } = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
     public static string ConfigFile => Path.Combine(Root, "launcher.json");
-    public static string ServerDirectory => Path.Combine(Root, "server");
-    public static string ServerExe => Path.Combine(ServerDirectory, "PcManager.Server.exe");
+    public static string ServersDirectory => Path.Combine(Root, "servers");
+    public static string LegacyServerDirectory => Path.Combine(Root, "server");
     public static string InstancesDirectory => Path.Combine(Root, "instances");
     public static string InstanceDirectory(string name) => Path.Combine(InstancesDirectory, name);
     public static string DefaultDataDirectory(string name) => Path.Combine(InstanceDirectory(name), "data");
@@ -36,6 +37,8 @@ internal sealed class InstanceConfig
     public string? DataDirectory { get; set; }
     /// <summary>런처가 켜질 때 자동 시작</summary>
     public bool AutoStart { get; set; } = true;
+    /// <summary>이 인스턴스가 쓰는 서버 버전 (servers\버전). null이면 설치된 최신 버전</summary>
+    public string? ServerVersion { get; set; }
 
     /// <summary>실제 HTTPS 포트. 0이면 끔</summary>
     [JsonIgnore]

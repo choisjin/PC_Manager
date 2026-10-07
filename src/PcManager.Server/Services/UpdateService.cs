@@ -378,7 +378,7 @@ public class UpdateService
         await _dashboard.Clients.All.UpdateStatusChanged(GetStatus());
     }
 
-    private static bool IsOlder(string? versionText) =>
+    public static bool IsOlder(string? versionText) =>
         Version.TryParse(versionText, out var v) && NormalizeVersion(v) < CurrentVersion;
 
     private sealed record ReleaseInfo(Version Version, string Name, string? Notes, string? HtmlUrl, DateTime? PublishedAt, string? ServerAssetUrl)

@@ -69,6 +69,7 @@ internal sealed partial class MainForm : Form
 
         _list.Columns.Add("상태", 90);
         _list.Columns.Add("이름", 120);
+        _list.Columns.Add("버전", 70);
         _list.Columns.Add("포트", 60);
         _list.Columns.Add("에이전트 접속 주소", 180);
         _list.Columns.Add("대시보드 HTTPS", 180);
@@ -215,6 +216,7 @@ internal sealed partial class MainForm : Form
             [
                 StateText(instance.State),
                 instance.Config.Name,
+                VersionCell(instance),
                 instance.Config.Port.ToString(),
                 AgentAddress(instance),
                 instance.Config.ResolvedHttpsPort > 0 ? $"https://{NetInfo.LanAddress()}:{instance.Config.ResolvedHttpsPort}" : "",
@@ -250,7 +252,7 @@ internal sealed partial class MainForm : Form
     private void UpdateButtons()
     {
         var s = Selected;
-        var hasServer = File.Exists(LauncherPaths.ServerExe);
+        var hasServer = ServerPackage.LatestBuild() is not null;
         _add.Enabled = !_busy;
         _start.Enabled = !_busy && hasServer && s is { IsActive: false };
         _stop.Enabled = !_busy && s is { IsActive: true };
@@ -308,6 +310,18 @@ internal sealed partial class MainForm : Form
         _ => Color.DimGray,
     };
 
+    /// <summary>실행 중이면 그 버전, 아니면 다음에 켤 버전</summary>
+    private static Version? InstanceVersion(ServerInstance instance) =>
+        instance.RunningBuild?.Version ?? (ServerPackage.FindBuild(instance.Config.ServerVersion) ?? ServerPackage.LatestBuild())?.Version;
+
+    private static string VersionCell(ServerInstance instance)
+    {
+        var version = InstanceVersion(instance);
+        if (version is null)
+            return "";
+        return ServerPackage.InstalledVersion() is { } latest && version < latest ? $"v{version.ToString(3)} ↑" : $"v{version.ToString(3)}";
+    }
+
     private static string AgentAddress(ServerInstance instance) => $"http://{NetInfo.LanAddress()}:{instance.Config.Port}";
 
     // ── 서버 추가 / 설정 / 삭제
@@ -332,7 +346,7 @@ internal sealed partial class MainForm : Form
             OpenFirewall(config);
         if (config.ResolvedHttpsPort > 0)
             EnsureCertificate(askTrust: true);
-        if (File.Exists(LauncherPaths.ServerExe))
+        if (ServerPackage.LatestBuild() is not null)
             StartInstance(instance);
         RefreshList();
         SelectInstance(instance);
@@ -490,7 +504,7 @@ internal sealed partial class MainForm : Form
         }
     }
 
-    // ── 일괄 업데이트 (모든 서버가 같은 server 폴더를 쓴다)
+    // ── 일괄 업데이트 (서버 버전마다 servers\버전 폴더. 고른 서버만 새 버전으로 옮긴다)
 
     private async Task CheckLatestAsync()
     {
@@ -513,22 +527,24 @@ internal sealed partial class MainForm : Form
         {
             _latest = await ServerPackage.LatestVersionAsync(CancellationToken.None);
             var installed = ServerPackage.InstalledVersion();
-            if (installed is not null && installed >= _latest)
-            {
-                MessageBox.Show(this, $"이미 최신 버전(v{installed.ToString(3)})입니다.", "일괄 업데이트", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-            if (!ConfirmUpdate(installed, _latest))
+            if (ChooseInstances(_latest, installed) is not { } choice)
                 return;
 
-            _progress.Value = 0;
-            _progress.Visible = true;
-            SetStatus($"v{_latest.ToString(3)} 다운로드 중…");
-            var progress = new Progress<double>(p => _progress.Value = (int)Math.Clamp(p * 100, 0, 100));
-            var zip = await ServerPackage.DownloadAsync(_latest, progress, CancellationToken.None);
-            _progress.Visible = false;
-            await InstallAsync(zip);
-            ServerPackage.CleanupDownloads();
+            var build = ServerPackage.FindBuild(_latest.ToString(3));
+            if (build is null)
+            {
+                _progress.Value = 0;
+                _progress.Visible = true;
+                SetStatus($"v{_latest.ToString(3)} 다운로드 중…");
+                var progress = new Progress<double>(p => _progress.Value = (int)Math.Clamp(p * 100, 0, 100));
+                var zip = await ServerPackage.DownloadAsync(_latest, progress, CancellationToken.None);
+                _progress.Visible = false;
+                SetStatus("압축 푸는 중…");
+                await Task.Run(() => ServerPackage.Extract(zip));
+                build = ServerPackage.Commit();
+                ServerPackage.CleanupDownloads();
+            }
+            await MoveInstancesAsync(build, choice);
         });
         _progress.Visible = false;
     }
@@ -544,46 +560,75 @@ internal sealed partial class MainForm : Form
             return;
         await RunBusy("zip 확인 중…", async () =>
         {
-            // 먼저 풀어 보고 버전을 확인한 뒤 교체할지 묻는다
+            // 먼저 풀어 보고 버전을 확인한 뒤 어느 서버를 옮길지 묻는다
             var version = await Task.Run(() => ServerPackage.Extract(dialog.FileName));
-            if (!ConfirmUpdate(ServerPackage.InstalledVersion(), version))
+            if (ChooseInstances(version, ServerPackage.InstalledVersion(), fromZip: true) is not { } choice)
                 return;
-            await InstallAsync(null);
+            await MoveInstancesAsync(ServerPackage.Commit(), choice);
         });
     }
 
-    private bool ConfirmUpdate(Version? installed, Version? next)
-    {
-        var running = _instances.Count(i => i.IsActive);
-        var message = $"서버를 {(installed is null ? "새로 설치" : $"v{installed.ToString(3)}에서")} " +
-            $"v{next?.ToString(3) ?? "?"}{(installed is null ? "" : "(으)로 업데이트")}합니다.";
-        if (running > 0)
-            message += $"\n\n실행 중인 서버 {running}개가 잠시 중지됐다가 다시 시작됩니다.";
-        return MessageBox.Show(this, message, "일괄 업데이트", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK;
-    }
+    private sealed record UpdateChoice(IReadOnlyList<ServerInstance> Instances, bool UpdateAgents);
 
-    /// <param name="zipPath">null이면 이미 server.new에 풀려 있음</param>
-    private async Task InstallAsync(string? zipPath)
+    /// <summary>target 버전으로 옮길 인스턴스를 고른다. null이면 취소(또는 할 일 없음)</summary>
+    private UpdateChoice? ChooseInstances(Version target, Version? installed, bool fromZip = false)
     {
-        if (zipPath is not null)
+        // 버전을 정해 두지 않은 인스턴스는 지금 쓰는 버전으로 정해 둔다 (새 버전이 설치돼도 고르지 않은 서버는 그대로)
+        foreach (var instance in _instances.Where(i => i.Config.ServerVersion is null))
+            instance.Config.ServerVersion = InstanceVersion(instance)?.ToString(3);
+        Save();
+
+        var installNeeded = fromZip || installed is null || ServerPackage.FindBuild(target.ToString(3)) is null;
+        var candidates = _instances.Where(i => InstanceVersion(i) != target).ToList();
+        if (candidates.Count == 0)
         {
-            SetStatus("압축 푸는 중…");
-            await Task.Run(() => ServerPackage.Extract(zipPath));
+            if (!installNeeded)
+            {
+                MessageBox.Show(this, $"모든 서버가 이미 v{target.ToString(3)}입니다.", "일괄 업데이트", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return null;
+            }
+            return MessageBox.Show(this, $"서버 v{target.ToString(3)}을(를) 설치합니다.", "일괄 업데이트",
+                MessageBoxButtons.OKCancel, MessageBoxIcon.Question) == DialogResult.OK ? new UpdateChoice([], false) : null;
         }
 
-        var wasActive = _instances.Where(i => i.IsActive).ToList();
-        SetStatus($"서버 {wasActive.Count}개 중지 중…");
-        await Task.WhenAll(wasActive.Select(i => i.StopAsync()));
+        using var dialog = new UpdateDialog(target, installNeeded ? installed : target, candidates);
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return null;
+        if (dialog.Selected.Count == 0 && !installNeeded)
+            return null;
+        return new UpdateChoice(dialog.Selected, dialog.UpdateAgents);
+    }
 
-        SetStatus("서버 파일 교체 중…");
-        await ServerPackage.SwapAsync();
-
+    /// <summary>고른 인스턴스를 새 버전으로 바꾼다. 실행 중이던 것만 중지 → 다시 시작, 나머지 서버는 건드리지 않는다</summary>
+    private async Task MoveInstancesAsync(ServerBuild build, UpdateChoice choice)
+    {
+        var version = build.Version.ToString(3);
+        var wasActive = choice.Instances.Where(i => i.IsActive).ToList();
+        if (wasActive.Count > 0)
+        {
+            SetStatus($"서버 {wasActive.Count}개 중지 중…");
+            await Task.WhenAll(wasActive.Select(i => i.StopAsync()));
+        }
+        foreach (var instance in choice.Instances)
+        {
+            instance.Config.ServerVersion = version;
+            instance.UpdateAgents = choice.UpdateAgents;
+        }
+        Save();
         foreach (var instance in wasActive)
             instance.Start();
-        var version = ServerPackage.InstalledVersion();
-        MessageBox.Show(this, $"서버를 v{version?.ToString(3)}(으)로 바꿨습니다." +
-            (wasActive.Count > 0 ? $"\n서버 {wasActive.Count}개를 다시 시작했습니다." : "") +
-            "\n\n에이전트는 각 대시보드의 업데이트 창에서 올릴 수 있습니다.",
+
+        // 아무도 안 쓰는 이전 버전 폴더 정리
+        ServerPackage.Cleanup(_instances
+            .SelectMany(i => new[] { i.RunningBuild?.Directory, ServerPackage.FindBuild(i.Config.ServerVersion)?.Directory })
+            .OfType<string>());
+
+        var others = _instances.Except(choice.Instances).Count(i => InstanceVersion(i) != build.Version);
+        MessageBox.Show(this, $"서버 v{version}" +
+            (choice.Instances.Count > 0 ? $"(으)로 {choice.Instances.Count}개를 옮겼습니다." : "을(를) 설치했습니다.") +
+            (wasActive.Count > 0 ? $"\n실행 중이던 {wasActive.Count}개를 다시 시작했습니다." : "") +
+            (choice.UpdateAgents && choice.Instances.Count > 0 ? "\n\n그 서버들은 구버전 에이전트를 차례로 업데이트합니다 (실행 중인 명령이 끝난 PC부터)." : "") +
+            (others > 0 ? $"\n\n이전 버전으로 남은 서버 {others}개는 나중에 [일괄 업데이트]로 올릴 수 있습니다." : ""),
             "일괄 업데이트", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
