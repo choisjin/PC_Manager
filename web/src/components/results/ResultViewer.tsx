@@ -4,7 +4,7 @@ import { api, type ResultSet, type ResultSetSummary } from '../../api'
 import { formatBytes } from '../../format'
 import { type ClipItem, FILES_MIME, type FilesDragPayload } from '../explorer/pcGroups'
 import {
-  ATS_ACTION_CELL, ATS_RESULT_CELL, type AtsImages, type ColumnRole, compareCells, formatSeconds, formatWall, type ParsedResult, parseAts, parseResult,
+  type AtsImages, compareCells, formatSeconds, formatWall, type ParsedResult, parseAts, parseRfw, type TableSpec,
   RESULT_MODE_LABEL, type ResultMapping, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
@@ -13,21 +13,16 @@ import {
   type SetupState, type Source, startSession, toMessage, updateSessionVideo, useResults, type ViewConfig,
 } from './resultSessions'
 import {
-  type Anchor, baseSeconds, emptySync, resolveStart, rowAtTime, solveAnchors, START_SOURCE_LABEL, type SyncState,
+  type Anchor, baseSeconds, emptySync, resolveStart, rowAtTime, START_SOURCE_LABEL, type SyncState,
   toRowTime, toVideoTime, type VideoInfo, videoForRow,
 } from './sync'
 import { type ColFilters, ColumnFilterMenu, type ColSort } from './ColumnFilter'
 import { VideoTransport } from './VideoTransport'
 
 type PutSlot = 'result' | 'video' | 'image' | 'ref'
-type Dialog = null | 'sync' | 'save' | 'trim'
+type Dialog = null | 'save' | 'trim'
 
 const ROW_HEIGHT = 26
-/** ATS 표에서 값을 가운데 맞추는 짧은 열: ITERATION · ACTION CHECK · STEP RESULT */
-const ATS_CENTER = new Set([1, ATS_ACTION_CELL, ATS_RESULT_CELL])
-const ROLE_LABEL: Record<ColumnRole, string> = {
-  time: '시간', cycle: '회차', status: '결과', name: '스텝 이름', duration: '걸린 시간', message: '메시지',
-}
 
 const sourceFromSet = (set: ResultSet): Source => ({
   mode: (set.config as ViewConfig | null)?.mode ?? 'rfw',
@@ -200,7 +195,7 @@ function SetupPopup({ setup, machineName }: { setup: SetupState; machineName: (a
         </span>
         <span className="muted small ellipsis">{source.machineName}</span>
         <span className="rv-spacer" />
-        <button type="button" className="small" onClick={openSets}>저장된 셋</button>
+        <button type="button" className="small" onClick={openSets} title="저장해 둔 결과 확인 불러오기">불러오기</button>
         <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc)" onClick={closeSetup}>✕</button>
       </header>
       <p className="hint">탐색기 창에서 파일·폴더를 아래 칸으로 끌어다 놓으세요 (칸 밖에 놓으면 확장자로 알아서 넣습니다)</p>
@@ -287,8 +282,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
 }) {
   const { id, source, set, rawText, videos: rawVideos, images, refImages } = session
   const savedConfig = session.config
-  const [mapping, setMapping] = useState<Partial<ResultMapping>>(savedConfig?.mapping ?? {})
-  const [sync, setSync] = useState<SyncState>(savedConfig?.sync ?? emptySync())
+  const [mapping] = useState<Partial<ResultMapping>>(savedConfig?.mapping ?? {})
+  const [sync] = useState<SyncState>(savedConfig?.sync ?? emptySync())
   // 열 지정·보정은 세션에 남겨 다른 결과로 갔다 와도 그대로
   useEffect(() => saveSessionConfig(id, { mapping, sync }), [id, mapping, sync])
   const [current, setCurrent] = useState<string | null>(source.videoPaths[0] ?? null)
@@ -316,7 +311,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
 
   const ats = source.mode === 'ats'
   const parsed: ParsedResult | null = useMemo(
-    () => (rawText === null ? null : ats ? parseAts(rawText) : parseResult(rawText, mapping)),
+    () => (rawText === null ? null : ats ? parseAts(rawText) : parseRfw(rawText)),
     [rawText, mapping, ats],
   )
   const absolute = parsed?.timeKind === 'absolute'
@@ -348,16 +343,6 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     [images, ats],
   )
 
-  // 기준점이 바뀌면 보정·배율 다시 계산
-  const baseOfAnchor = useCallback(
-    (a: Anchor) => {
-      const row = rows.find((r) => r.index === a.row)
-      if (!row || row.time === null) return null
-      return baseSeconds(row.time, videos.find((v) => v.path === a.video) ?? null, absolute)
-    },
-    [rows, videos, absolute],
-  )
-
   const videoTimeOf = useCallback(
     (row: ResultRow, video: VideoInfo | null) => {
       if (row.time === null) return null
@@ -382,7 +367,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     const video = videoForRow(row, videos, currentVideo, absolute)
     if (!video) return setNotice('영상이 없습니다')
     const t = videoTimeOf(row, video)
-    if (t === null) return setNotice('영상 시작 시각을 몰라 위치를 계산할 수 없습니다 → 동기화에서 지정하세요')
+    if (t === null) return setNotice('영상 시작 시각을 몰라 이 스텝의 영상 위치를 계산할 수 없습니다')
     if (video.path !== current) {
       pendingSeek.current = t
       setCurrent(video.path)
@@ -444,20 +429,11 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     return best.entry.fullPath
   }, [wallNow, timedImages])
 
-  const addAnchor = () => {
-    const video = videoRef.current
-    if (selected === null || !video || !current) return setNotice('표에서 스텝을 고르고, 영상을 그 장면에 맞춘 뒤 누르세요')
-    setSync((s) => {
-      const anchors = [...s.anchors.filter((a) => a.row !== selected), { row: selected, video: current, videoTime: video.currentTime }]
-      return { ...s, anchors, ...solveAnchors(anchors, baseOfAnchor) }
-    })
-    setNotice('기준점을 넣었습니다. 두 곳 이상 맞추면 시계 속도 차이까지 보정합니다.')
-  }
-
   return (
     <>
       <ViewerHead session={session} sessions={sessions} onBack={onBack} setDialog={setDialog} />
-      <div className="rv-main">
+      {/* RFW는 열이 11개라 표 쪽을 넓게 */}
+      <div className={`rv-main${parsed?.table && !ats ? ' wide' : ''}`}>
         <section className={`rv-left${ats ? ' fit' : ''}`}>
           <VideoTransport
             src={currentRaw?.prep === 'ready' && currentRaw.playPath ? fileUrl(currentRaw.playPath) : null}
@@ -490,9 +466,6 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
                     {videos.map((v) => <option key={v.path} value={v.path}>{v.name}</option>)}
                   </select>
                 )}
-                <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={addAnchor} title="표에서 고른 스텝이 지금 장면이라고 알려 동기화를 맞춘다">
-                  📍 이 장면 = 선택 스텝
-                </button>
                 <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!current} onClick={() => setDialog('trim')} title="영상 구간 자르기 (테스트 PC에서 ffmpeg, 원래 영상 폴더에 저장)">✂ 자르기</button>
               </>
             }
@@ -504,10 +477,9 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           )}
           <div className="rv-sync-line small muted">
             {currentVideo
-              ? <>영상 시작: {currentVideo.start !== null ? formatWall(currentVideo.start, true) : '모름'} ({START_SOURCE_LABEL[currentVideo.startSource]}) · 보정 {sync.offset >= 0 ? '+' : ''}{sync.offset.toFixed(2)}초{sync.rate !== 1 ? ` · 배율 ${sync.rate.toFixed(5)}` : ''}{sync.anchors.length ? ` · 기준점 ${sync.anchors.length}개` : ''}</>
+              ? <>영상 시작: {currentVideo.start !== null ? formatWall(currentVideo.start, true) : '모름'} ({START_SOURCE_LABEL[currentVideo.startSource]})</>
               : 'Result만 보는 중 (영상 없음)'}
             {wallNow !== null && absolute && <> · 지금 {formatWall(wallNow)}</>}
-            <button type="button" className="link" onClick={() => setDialog('sync')}>동기화·열 설정</button>
           </div>
           {notice && <div className="rv-notice small">{notice}</div>}
           <div className="rv-images">
@@ -552,8 +524,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           </div>
         </section>
         <section className="rv-right">
-          {ats ? (Object.keys(colFilters).length > 0 || colSort) && (
-            // ATS: 거르기·정렬은 머리글에서, 표는 항상 재생 중인 스텝을 따라간다
+          {parsed?.table ? (Object.keys(colFilters).length > 0 || colSort) && (
+            // ATS·RFW: 거르기·정렬은 머리글에서, 표는 항상 재생 중인 스텝을 따라간다
             <div className="rv-filters">
               <button type="button" className="link small" onClick={() => {
                 setColFilters({})
@@ -576,14 +548,15 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           )}
           {!parsed ? <p className="muted rv-loading">Result 읽는 중…</p> : (
             <RowTable
-              headers={ats ? parsed.headers : null}
+              headers={parsed.table ? parsed.headers : null}
+              spec={parsed.table ?? null}
               filtered={colFilters}
               sort={colSort}
               onHeader={(col, rect) => setFilterMenu((m) => (m?.col === col ? null : { col, x: rect.left, y: rect.bottom + 2 }))}
               rows={visible}
               selected={selected}
               playing={playing}
-              follow={ats || follow}
+              follow={!!parsed.table || follow}
               anchors={sync.anchors}
               videoTime={(row) => {
                 const t = videoTimeOf(row, videoForRow(row, videos, currentVideo, absolute))
@@ -602,7 +575,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           y={filterMenu.y}
           title={parsed.headers[filterMenu.col]}
           values={menuValues}
-          label={filterMenu.col === 0 ? (v) => v.replace(/^\[|\]$/g, '') : (v) => v.replace(/\s+/g, ' ')}
+          label={filterMenu.col === parsed.table?.timeCell ? (v) => v.replace(/^\[|\]$/g, '') : (v) => v.replace(/\s+/g, ' ')}
           filter={colFilters[filterMenu.col]}
           sort={colSort?.col === filterMenu.col ? (colSort.asc ? 'asc' : 'desc') : null}
           onApply={(f) => setColFilters((all) => {
@@ -613,20 +586,6 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           })}
           onSort={(asc) => setColSort({ col: filterMenu.col, asc })}
           onClose={() => setFilterMenu(null)}
-        />
-      )}
-      {dialog === 'sync' && parsed && (
-        <SyncDialog
-          ats={ats}
-          parsed={parsed}
-          mapping={mapping}
-          setMapping={setMapping}
-          videos={videos}
-          sync={sync}
-          setSync={setSync}
-          rows={rows}
-          baseOfAnchor={baseOfAnchor}
-          onClose={() => setDialog(null)}
         />
       )}
       {dialog === 'trim' && current && (
@@ -695,9 +654,8 @@ function ViewerHead({ session, sessions, onBack, setDialog }: {
         </span>
       )}
       <span className="rv-spacer" />
-      <button type="button" onClick={() => setDialog('sync')}>동기화·열 설정</button>
-      <button type="button" onClick={openSets}>저장된 셋</button>
-      <button type="button" className="primary" onClick={() => setDialog('save')}>셋 저장</button>
+      <button type="button" onClick={openSets} title="저장해 둔 결과 확인 불러오기">불러오기</button>
+      <button type="button" className="primary" onClick={() => setDialog('save')} title="Result·이미지(·영상)를 서버에 저장">저장</button>
       <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc) — 진행상황에서 다시 열 수 있습니다" onClick={closeViewer}>✕</button>
     </header>
   )
@@ -809,9 +767,10 @@ function AtsImageCard({ title, path, url, onPreview, empty, tools }: {
 
 // ─────────────────────────────── 스텝 표 (행이 많아 보이는 부분만 그린다)
 
-function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, follow, anchors, videoTime, onPick }: {
-  /** ATS: 이 열 이름으로 행의 칸을 그대로 보여 준다 (null이면 RFW 공통 열) */
+function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, playing, follow, anchors, videoTime, onPick }: {
+  /** ATS·RFW: 이 열 이름으로 행의 칸을 그대로 보여 준다 (null이면 자동 판별 공통 열) */
   headers: string[] | null
+  spec: TableSpec | null
   filtered: ColFilters
   sort: ColSort | null
   /** ATS 머리글 누름 → 거르기 메뉴 */
@@ -851,21 +810,23 @@ function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, 
   const first = Math.max(0, Math.floor(scroll / ROW_HEIGHT) - 10)
   const last = Math.min(rows.length, Math.ceil((scroll + height) / ROW_HEIGHT) + 10)
   const anchorRows = new Set(anchors.map((a) => a.row))
+  const center = new Set(spec?.center ?? [])
+  const grid = spec ? { gridTemplateColumns: `40px ${spec.columns}` } : undefined
 
   return (
-    <div className={`rv-table${headers ? ' ats' : ''}`}>
-      <div className="rv-row rv-row-head small">
+    <div className={`rv-table${spec ? ' fixed' : ''}`}>
+      <div className="rv-row rv-row-head small" style={grid}>
         {headers
           ? <><span>#</span>{headers.map((h, i) => (
               <button
                 key={i}
                 type="button"
-                className={`rv-colhead${filtered[i] ? ' filtered' : ''}${ATS_CENTER.has(i) ? ' center' : ''}`}
+                className={`rv-colhead${filtered[i] ? ' filtered' : ''}${center.has(i) ? ' center' : ''}`}
                 title={`${h} — 눌러서 거르기·정렬`}
                 onClick={(e) => onHeader(i, e.currentTarget.getBoundingClientRect())}
               >
                 {/* 짧은 열은 낱말마다 줄을 바꿔 좁게 (ACTION / CHECK) */}
-                <span className="rv-colhead-label">{ATS_CENTER.has(i) ? h.replace(/\s+/g, '\n') : h}</span>
+                <span className="rv-colhead-label">{center.has(i) ? h.replace(/\s+/g, '\n') : h}</span>
                 <span className="rv-colhead-ico">{sort?.col === i ? (sort.asc ? '↑' : '↓') : ''}{filtered[i] ? '⧩' : '▾'}</span>
               </button>
             ))}</>
@@ -882,20 +843,25 @@ function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, 
             <div
               key={row.index}
               className={`rv-row${row.index === selected ? ' selected' : ''}${row.index === playing ? ' playing' : ''} tone-${statusTone(row.status) || 'none'}`}
-              style={{ position: 'absolute', top: (first + i) * ROW_HEIGHT, left: 0, right: 0, height: ROW_HEIGHT }}
+              style={{ position: 'absolute', top: (first + i) * ROW_HEIGHT, left: 0, right: 0, height: ROW_HEIGHT, ...grid }}
               onClick={() => onPick(row)}
               title="누르면 영상의 이 시점으로"
             >
               <span className="muted">{anchorRows.has(row.index) ? '📍' : row.index + 1}</span>
-              {headers ? row.cells.map((c, i) => (
-                <span
-                  key={i}
-                  className={`${i === 0 ? 'mono' : i === ATS_RESULT_CELL || (i === ATS_ACTION_CELL && c === row.status) ? 'rv-status' : 'ellipsis'}${ATS_CENTER.has(i) ? ' rv-center' : ''}`}
-                  title={c}
-                >
-                  {i === 0 ? formatWall(row.time) || c : c}
-                </span>
-              )) : (
+              {headers && spec ? row.cells.map((c, i) => {
+                const tone = statusTone(c)
+                // 결과 열은 늘 색, 알림 열(ACTION CHECK·Message Level)은 실패·경고일 때만
+                const colored = spec.statusCells.includes(i) || (spec.alertCells.includes(i) && (tone === 'bad' || tone === 'warn'))
+                return (
+                  <span
+                    key={i}
+                    className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}`}
+                    title={c}
+                  >
+                    {i === spec.timeCell ? formatWall(row.time) || c : c}
+                  </span>
+                )
+              }) : (
                 <>
                   <span className="mono">{formatWall(row.time)}</span>
                   <span>{row.cycle}</span>
@@ -912,138 +878,6 @@ function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, 
       </div>
     </div>
   )
-}
-
-// ─────────────────────────────── 동기화·열 설정
-
-function SyncDialog({ ats, parsed, mapping, setMapping, videos, sync, setSync, rows, baseOfAnchor, onClose }: {
-  /** ATS는 열이 정해져 있어 열 설정을 숨긴다 */
-  ats: boolean
-  parsed: ParsedResult
-  mapping: Partial<ResultMapping>
-  setMapping: React.Dispatch<React.SetStateAction<Partial<ResultMapping>>>
-  videos: VideoInfo[]
-  sync: SyncState
-  setSync: React.Dispatch<React.SetStateAction<SyncState>>
-  rows: ResultRow[]
-  baseOfAnchor: (a: Anchor) => number | null
-  onClose: () => void
-}) {
-  const roles = Object.keys(ROLE_LABEL) as ColumnRole[]
-  const [startText, setStartText] = useState<Record<string, string>>({})
-  return (
-    <div className="rv-drawer">
-      <div className="rv-drawer-head">
-        <strong>동기화 · 열 설정</strong>
-        <button type="button" className="icon" aria-label="닫기" onClick={onClose}>✕</button>
-      </div>
-      {!ats && (
-        <>
-        <h4>Result 열</h4>
-        <p className="hint">자동으로 고른 열입니다. 틀리면 바꾸세요. 시간 형식은 {parsed.timeKind === 'absolute' ? '날짜·시각' : parsed.timeKind === 'elapsed' ? '경과 시간' : '알 수 없음'}으로 읽었습니다.</p>
-        <div className="rv-form">
-          {roles.map((role) => (
-            <label key={role}>
-              {ROLE_LABEL[role]}
-              <select
-                value={parsed.mapping[role]}
-                onChange={(e) => setMapping((m) => ({ ...m, [role]: Number(e.target.value) }))}
-              >
-                <option value={-1}>(없음)</option>
-                {parsed.headers.map((h, i) => <option key={i} value={i}>{h || `열 ${i + 1}`}</option>)}
-              </select>
-            </label>
-          ))}
-          <label>
-            시간 해석
-            <select value={mapping.timeMode ?? 'auto'} onChange={(e) => setMapping((m) => ({ ...m, timeMode: e.target.value as ResultMapping['timeMode'] }))}>
-              <option value="auto">자동</option>
-              <option value="absolute">날짜·시각 (영상 시작 시각 기준)</option>
-              <option value="elapsed">경과 시간 (영상 0초 = 시작)</option>
-            </select>
-          </label>
-          <label>
-            걸린 시간 단위
-            <select value={parsed.mapping.durationUnit} onChange={(e) => setMapping((m) => ({ ...m, durationUnit: e.target.value as 's' | 'ms' }))}>
-              <option value="s">초</option>
-              <option value="ms">밀리초</option>
-            </select>
-          </label>
-        </div>
-        </>
-      )}
-
-      <h4>영상 시작 시각</h4>
-      <p className="hint">메타 파일 → 파일 이름의 시각 → 파일 수정 시각−길이 → Result 첫 행 순서로 자동으로 찾습니다. 직접 입력하면 그 값을 씁니다.</p>
-      {videos.map((v) => (
-        <div key={v.path} className="rv-video-start">
-          <div className="small ellipsis" title={v.path}>{v.name} {v.duration ? `(${formatSeconds(v.duration)})` : ''}</div>
-          <div className="rv-inline">
-            <input
-              className="mono"
-              placeholder="YYYY-MM-DD HH:mm:ss.fff"
-              value={startText[v.path] ?? formatWall(v.start, true)}
-              onChange={(e) => setStartText((s) => ({ ...s, [v.path]: e.target.value }))}
-              onBlur={(e) => {
-                if (e.target.value === formatWall(v.start, true)) return
-                const ms = parseManual(e.target.value)
-                if (ms !== null) setSync((s) => ({ ...s, manualStarts: { ...s.manualStarts, [v.path]: ms } }))
-              }}
-            />
-            <span className="muted small">{START_SOURCE_LABEL[v.startSource]}</span>
-            {sync.manualStarts[v.path] !== undefined && (
-              <button type="button" className="link" onClick={() => {
-                setStartText((s) => ({ ...s, [v.path]: '' }))
-                setSync((s) => {
-                  const manualStarts = { ...s.manualStarts }
-                  delete manualStarts[v.path]
-                  return { ...s, manualStarts }
-                })
-              }}>자동으로</button>
-            )}
-          </div>
-        </div>
-      ))}
-
-      <h4>보정</h4>
-      <p className="hint">영상에서 스텝이 시작되는 장면을 찾아 표에서 그 스텝을 고르고 '📍 이 장면 = 선택 스텝'을 누르면 자동 계산됩니다. 두 곳 이상이면 Result 기록과 녹화의 시계 속도 차이까지 맞춥니다.</p>
-      <div className="rv-form">
-        <label>
-          보정 (초)
-          <input type="number" step={0.1} value={Number(sync.offset.toFixed(3))} onChange={(e) => setSync((s) => ({ ...s, offset: Number(e.target.value) }))} />
-        </label>
-        <label>
-          배율
-          <input type="number" step={0.0001} value={Number(sync.rate.toFixed(6))} onChange={(e) => setSync((s) => ({ ...s, rate: Number(e.target.value) || 1 }))} />
-        </label>
-      </div>
-      {sync.anchors.length > 0 && (
-        <ul className="rv-anchors small">
-          {sync.anchors.map((a) => {
-            const row = rows.find((r) => r.index === a.row)
-            return (
-              <li key={a.row}>
-                📍 #{a.row + 1} {row?.name} → {baseName(a.video)} {formatSeconds(a.videoTime)}
-                <button type="button" className="icon" aria-label="빼기" onClick={() => setSync((s) => {
-                  const anchors = s.anchors.filter((x) => x.row !== a.row)
-                  return { ...s, anchors, ...solveAnchors(anchors, baseOfAnchor) }
-                })}>✕</button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-      <button type="button" onClick={() => setSync((s) => ({ ...s, offset: 0, rate: 1, anchors: [] }))}>보정 초기화</button>
-    </div>
-  )
-}
-
-/** 직접 입력한 시각: 2026-10-06 14:12:30.5 등 */
-function parseManual(text: string): number | null {
-  const m = /^(\d{4})\D(\d{1,2})\D(\d{1,2})\D+(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?$/.exec(text.trim())
-  if (!m) return null
-  const [, y, mo, d, h, mi, s, f] = m
-  return Date.UTC(+y, +mo - 1, +d, +h, +mi, s ? +s : 0) + (f ? Number(`0.${f}`) * 1000 : 0)
 }
 
 // ─────────────────────────────── 자르기
@@ -1169,7 +1003,7 @@ function SaveDialog({ source, set, config, videos, backupFiles, onSaved, onClose
     <div className="rv-modal">
       <div className="rv-modal-box panel">
         <div className="rv-drawer-head">
-          <strong>셋 저장</strong>
+          <strong>저장</strong>
           <button type="button" className="icon" aria-label="닫기" onClick={onClose}>✕</button>
         </div>
         {!saved ? (
@@ -1180,7 +1014,7 @@ function SaveDialog({ source, set, config, videos, backupFiles, onSaved, onClose
             </label>
             <p className="hint">
               Result 파일과 이미지 {backupFiles.length.toLocaleString()}개를 서버에 백업해 테스트 PC가 꺼져 있어도 열 수 있게 합니다.
-              열 지정·동기화 보정도 함께 저장합니다.
+              열 지정도 함께 저장합니다.
             </p>
             {source.videoPaths.length > 0 && (
               <label className="small">
@@ -1234,11 +1068,11 @@ function SetsDialog({ onOpen, onClose }: { onOpen: (s: ResultSetSummary) => void
     <div className="rv-modal">
       <div className="rv-modal-box panel wide">
         <div className="rv-drawer-head">
-          <strong>저장된 셋</strong>
+          <strong>불러오기</strong>
           <button type="button" className="icon" aria-label="닫기" onClick={onClose}>✕</button>
         </div>
         {error && <p className="error small">{error}</p>}
-        {!sets ? <p className="muted">불러오는 중…</p> : sets.length === 0 ? <p className="muted">저장된 셋이 없습니다</p> : (
+        {!sets ? <p className="muted">불러오는 중…</p> : sets.length === 0 ? <p className="muted">저장된 결과가 없습니다</p> : (
           <ul className="rv-sets">
             {sets.map((s) => (
               <li key={s.id}>

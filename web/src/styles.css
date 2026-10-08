@@ -4375,15 +4375,14 @@ body.rv-open .pip { display: none; }
 .rv-colfilter-list label .ellipsis { flex: 1; min-width: 0; }
 .rv-colfilter .rv-setup-actions { margin-top: 2px; }
 /* ATS: 시간 · B · Status · Action · Remark · Result · Y (Video_editor.py와 같은 열) */
-.rv-table.ats .rv-row { grid-template-columns: 40px 112px 66px minmax(80px, 1fr) 64px minmax(120px, 1.8fr) 62px minmax(80px, 1.2fr); }
 /* 머리글은 두 줄까지 (ACTION / CHECK, STEP / RESULT), 열 사이 세로 줄 */
-.rv-table.ats .rv-row { gap: 0; padding: 0; }
-.rv-table.ats .rv-row > * { align-self: stretch; display: block; line-height: 25px; padding: 0 5px; border-right: 1px solid var(--border); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rv-table.ats .rv-row > *:last-child { border-right: 0; }
-.rv-table.ats .rv-row > .rv-center { text-align: center; }
-.rv-table.ats .rv-row-head { height: 36px; }
-.rv-table.ats .rv-row-head > * { display: flex; align-items: center; line-height: normal; padding: 0 2px; }
-.rv-table.ats .rv-colhead { width: 100%; height: 100%; border-radius: 0; border: 0; white-space: normal; line-height: 1.15; overflow: hidden; }
+.rv-table.fixed .rv-row { gap: 0; padding: 0; }
+.rv-table.fixed .rv-row > * { align-self: stretch; display: block; line-height: 25px; padding: 0 5px; border-right: 1px solid var(--border); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-table.fixed .rv-row > *:last-child { border-right: 0; }
+.rv-table.fixed .rv-row > .rv-center { text-align: center; }
+.rv-table.fixed .rv-row-head { height: 36px; }
+.rv-table.fixed .rv-row-head > * { display: flex; align-items: center; line-height: normal; padding: 0 2px; }
+.rv-table.fixed .rv-colhead { width: 100%; height: 100%; border-radius: 0; border: 0; white-space: normal; line-height: 1.15; overflow: hidden; }
 .rv-colhead-label { flex: 1; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .rv-colhead.center { justify-content: center; text-align: center; }
 .rv-colhead.center .rv-colhead-label { flex: 0 1 auto; }
@@ -4806,3 +4805,11 @@ body.rv-open .pip { display: none; }
   font-size: 11px;
   color: #6f7fa6;
 }
+
+/* 고정 열 표(ATS·RFW): 결과·알림 칸은 칸 값으로 색 */
+.rv-row > .rv-status.cell-ok { color: var(--ok); font-weight: 600; }
+.rv-row > .rv-status.cell-bad { color: var(--bad); font-weight: 700; }
+.rv-row > .rv-status.cell-warn { color: var(--warn); font-weight: 600; }
+.rv-row > .rv-status.cell-idle { color: var(--muted); }
+
+.rv-main.wide { grid-template-columns: minmax(380px, 0.85fr) minmax(560px, 1.3fr); }

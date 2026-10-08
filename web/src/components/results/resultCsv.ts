@@ -60,6 +60,17 @@ export interface ParsedResult {
   /** 시간 열이 절대 시각인지 경과 시간인지 (mapping.timeMode가 auto일 때 판별 결과) */
   timeKind: 'absolute' | 'elapsed' | 'unknown'
   rows: ResultRow[]
+  /** 형식이 정해진 결과(ATS·RFW): 열을 그대로 보여 주는 표 설정. 없으면 자동 판별 표 */
+  table?: TableSpec
+}
+
+/** 고정 열 표: 열 폭(grid, # 열 제외) · 가운데 정렬 열 · 결과 색 열 · 실패일 때만 색 칠할 열 · 시각 열 */
+export interface TableSpec {
+  columns: string
+  center: number[]
+  statusCells: number[]
+  alertCells: number[]
+  timeCell: number
 }
 
 // ── 바이트 → 문자열 (BOM이면 UTF-8, 아니면 UTF-8 시도 후 안 되면 CP949)
@@ -378,7 +389,14 @@ export function parseAts(text: string): ParsedResult {
       ats: atsImages(r),
     })
   }
-  return { startTime: startFromPreamble(preamble), preamble, headers, mapping: ATS_MAPPING, timeKind: 'absolute', rows }
+  const table: TableSpec = {
+    columns: '112px 66px minmax(80px, 1fr) 64px minmax(120px, 1.8fr) 62px minmax(80px, 1.2fr)',
+    center: [1, ATS_ACTION_CELL, ATS_RESULT_CELL],
+    statusCells: [ATS_RESULT_CELL],
+    alertCells: [ATS_ACTION_CELL],
+    timeCell: 0,
+  }
+  return { startTime: startFromPreamble(preamble), preamble, headers, mapping: ATS_MAPPING, timeKind: 'absolute', rows, table }
 }
 
 const IMAGE_FILE = /\.(?:bmp|png|jpe?g|gif|webp)$/i
@@ -409,3 +427,41 @@ function atsImages(r: string[]): AtsImages | undefined {
 const collator = new Intl.Collator('ko', { numeric: true, sensitivity: 'base' })
 /** 칸 값 비교 (숫자는 숫자 크기로) */
 export const compareCells = (a: string, b: string) => collator.compare(a, b)
+
+// ── RFW (Video_editor_2_result.py와 같은 규칙): 첫 줄이 열 이름, 아래 11개 열을 이 순서로 보여 준다
+export const RFW_COLUMNS = ['Test Name', 'Start Time', 'Cycle Index', 'Cycle Total', 'KW Name', 'Owner', 'Status', 'Elapsed', 'Status Message', 'Message Level', 'Message']
+const RFW_MAPPING: ResultMapping = { time: 1, cycle: 2, status: 6, name: 4, duration: 7, message: 10, durationUnit: 's', timeMode: 'absolute' }
+
+/** RFW Result. 필수 열이 없으면 자동 판별로 읽는다 (다른 형식의 CSV) */
+export function parseRfw(text: string): ParsedResult {
+  const all = parseCsv(text).filter((r) => r.some((c) => c.trim() !== ''))
+  const head = (all[0] ?? []).map(unq)
+  const source = RFW_COLUMNS.map((name) => head.indexOf(name))
+  if (source.some((i) => i < 0)) return parseResult(text)
+  const rows: ResultRow[] = all.slice(1).map((r, index) => {
+    const cells = source.map((c) => unq(r[c] ?? ''))
+    // Start Time: [2026-10-02T13:07:34.900747] → 2026-10-02 13:07:34.900747
+    cells[1] = cells[1].replace(/^\[|\]$/g, '').replace('T', ' ')
+    const v = parseTime(cells[1])
+    const elapsed = cells[7]
+    return {
+      index,
+      cells,
+      time: v?.kind === 'absolute' ? v.ms : null,
+      cycle: cells[2],
+      status: cells[6],
+      name: cells[4],
+      durationMs: NUMBER.test(elapsed) ? Number(elapsed) * 1000 : null,
+      message: cells[10],
+      images: [...new Set(r.join(' ').match(IMAGE_PATH) ?? [])].map((p) => p.replace(/\\\\/g, '\\')),
+    }
+  })
+  const table: TableSpec = {
+    columns: 'minmax(70px, 0.9fr) 112px 48px 48px minmax(100px, 1.4fr) minmax(60px, 0.6fr) 58px 60px minmax(70px, 0.8fr) 58px minmax(110px, 1.8fr)',
+    center: [2, 3, 6, 7, 9],
+    statusCells: [6],
+    alertCells: [9],
+    timeCell: 1,
+  }
+  return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_COLUMNS, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table }
+}
