@@ -4,7 +4,7 @@ import { useSyncExternalStore } from 'react'
 import { api, type FileEntry, type ResultSet } from '../../api'
 import { isImageFile, isVideoFile } from '../../fileTypes'
 import { type ClipItem, newId } from '../explorer/pcGroups'
-import { decodeText, type ResultMapping, type ResultMode } from './resultCsv'
+import { decodeText, detectResultMode, type ResultMapping, type ResultMode } from './resultCsv'
 import { type SyncState, wallFromIso } from './sync'
 
 /** 셋에 저장하는 화면 설정 */
@@ -127,9 +127,31 @@ const patch = (id: string, p: Partial<ResultSession> | ((s: ResultSession) => Pa
 // ── 경로 지정 창
 const RESULT_EXT = /\.(csv|tsv|txt|log|json)$/i
 
+// 원본 이미지 폴더는 PC·형식(ATS·RFW)마다 마지막으로 쓴 경로를 기억해 다음에 미리 채운다
+const REF_DIR_KEY = 'results.refDir'
+const refDirKey = (agentId: string, mode: ResultMode) => `${agentId}|${mode}`
+const readRefDirs = (): Record<string, string> => {
+  try {
+    return JSON.parse(localStorage.getItem(REF_DIR_KEY) ?? '{}') as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+export const rememberedRefDir = (agentId: string, mode: ResultMode): string | null =>
+  readRefDirs()[refDirKey(agentId, mode)] ?? null
+export function rememberRefDir(agentId: string, mode: ResultMode, dir: string | null) {
+  if (!dir) return
+  try {
+    localStorage.setItem(REF_DIR_KEY, JSON.stringify({ ...readRefDirs(), [refDirKey(agentId, mode)]: dir }))
+  } catch {
+    // 저장이 막힌 브라우저면 기억만 못 한다
+  }
+}
+
 /** 탐색기 '결과 확인' 버튼: 고른 항목을 확장자로 나눠 넣고 경로 지정 창을 연다 */
 export function openResultSetup(agentId: string, machineName: string, items: ClipItem[]) {
-  openSetup(autoAssign({ mode: 'ats', agentId, machineName, resultPath: '', videoPaths: [], imageDir: null, refDir: null }, items))
+  const refDir = rememberedRefDir(agentId, 'ats')
+  openSetup(autoAssign({ mode: 'ats', agentId, machineName, resultPath: '', videoPaths: [], imageDir: null, refDir }, items))
 }
 
 /** 항목들을 확장자로 나눠 넣는다 (Result 파일·영상·폴더) */
@@ -221,7 +243,9 @@ async function load(id: string) {
       const res = await fetch(sessionFileUrl(set, source.agentId, source.resultPath))
       if (!res.ok) throw new Error(`Result 파일을 읽지 못했습니다 (${res.status}): ${await res.text()}`)
       const text = decodeText(await res.arrayBuffer())
-      patch(id, { rawText: text })
+      // 고른 형식과 파일 내용이 다르면 내용을 따른다 (ATS로 두고 RFW 결과를 연 경우 등)
+      const mode = detectResultMode(text)
+      patch(id, (cur) => ({ rawText: text, source: mode && mode !== cur.source.mode ? { ...cur.source, mode } : cur.source }))
       tick(id)
     })()
     const folders = (async () => {

@@ -5,11 +5,11 @@ import { formatBytes } from '../../format'
 import { type ClipItem, FILES_MIME, type FilesDragPayload } from '../explorer/pcGroups'
 import {
   type AtsImages, compareCells, formatSeconds, formatWall, type ParsedResult, parseAts, parseRfw, type TableSpec,
-  RESULT_MODE_LABEL, type ResultMapping, type ResultRow, statusTone, timeFromName,
+  RESULT_MODE_LABEL, type ResultMapping, type ResultMode, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
   addSessionVideo, autoAssign, baseName, closeSets, closeSetup, closeViewer, dirName, dismissToast, openSets, openSetup, openViewer,
-  type RawVideo, type ResultSession, saveSessionConfig, sessionFileUrl, sessionTitle, setSessionSet,
+  type RawVideo, rememberedRefDir, rememberRefDir, type ResultSession, saveSessionConfig, sessionFileUrl, sessionTitle, setSessionSet,
   type SetupState, type Source, startSession, toMessage, updateSessionVideo, useResults, type ViewConfig,
 } from './resultSessions'
 import {
@@ -118,12 +118,21 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
 
 // ─────────────────────────────── 경로 지정: 떠 있는 작은 창 (탐색기에서 끌어다 놓기)
 
+/** 형식을 바꾸면 원본 이미지 폴더도 그 형식의 기억한 경로로 (직접 놓은 경로는 그대로) */
+function switchRefDir(s: Source, mode: ResultMode): string | null {
+  const before = rememberedRefDir(s.agentId, s.mode)
+  if (s.refDir && s.refDir !== before) return s.refDir
+  return rememberedRefDir(s.agentId, mode)
+}
+
 function SetupPopup({ setup, machineName }: { setup: SetupState; machineName: (agentId: string) => string }) {
   const [source, setSource] = useState<Source>(setup.source)
   const [warn, setWarn] = useState<string | null>(null)
   const [pos, setPos] = useState(() => ({ x: Math.max(8, window.innerWidth - 500), y: 70 }))
   const ats = source.mode === 'ats'
-  const empty = !source.resultPath && source.videoPaths.length === 0 && !source.imageDir && !source.refDir
+  // 원본 이미지 폴더를 기억해 둔 값으로 미리 채웠으면 '비어 있음'으로 본다 (다른 PC 파일을 놓을 수 있게)
+  const empty = !source.resultPath && source.videoPaths.length === 0 && !source.imageDir
+    && (!source.refDir || source.refDir === rememberedRefDir(source.agentId, source.mode))
 
   const put = (slot: PutSlot, item: ClipItem) =>
     setSource((s) =>
@@ -145,7 +154,7 @@ function SetupPopup({ setup, machineName }: { setup: SetupState; machineName: (a
         setWarn(`다른 PC(${machineName(payload.agentId)})의 파일입니다. 한 결과의 파일은 모두 같은 PC(${source.machineName})에 있어야 합니다.`)
         return null
       }
-      setSource((s) => ({ ...s, agentId: payload.agentId, machineName: machineName(payload.agentId) }))
+      setSource((s) => ({ ...s, agentId: payload.agentId, machineName: machineName(payload.agentId), refDir: rememberedRefDir(payload.agentId, s.mode) }))
     }
     setWarn(null)
     return payload.items
@@ -188,7 +197,7 @@ function SetupPopup({ setup, machineName }: { setup: SetupState; machineName: (a
         <strong>결과 확인</strong>
         <span className="rv-mode" role="group" aria-label="결과 형식">
           {(['ats', 'rfw'] as const).map((m) => (
-            <button key={m} type="button" className={source.mode === m ? 'active' : ''} onClick={() => setSource((s) => ({ ...s, mode: m }))}>
+            <button key={m} type="button" className={source.mode === m ? 'active' : ''} onClick={() => setSource((s) => ({ ...s, mode: m, refDir: switchRefDir(s, m) }))}>
               {RESULT_MODE_LABEL[m]}
             </button>
           ))}
@@ -222,6 +231,7 @@ function SetupPopup({ setup, machineName }: { setup: SetupState; machineName: (a
           className="primary"
           disabled={!source.resultPath}
           onClick={() => {
+            rememberRefDir(source.agentId, source.mode, source.refDir)
             startSession(source, null, setup.replaceId)
             closeSetup()
           }}

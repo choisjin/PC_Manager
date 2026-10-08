@@ -484,6 +484,15 @@ export function parseRfw(text: string): ParsedResult {
   return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_SHOWN, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table }
 }
 
+/** 내용으로 형식 판별: 첫 줄이 RFW 열 이름이면 RFW, 7번째 줄이 [시각]으로 시작하면 ATS, 모르면 null */
+export function detectResultMode(text: string): ResultMode | null {
+  const all = parseCsv(text.slice(0, 64 * 1024))
+  const head = (all[0] ?? []).map((c) => unq(c.replace(/^﻿/, '')))
+  if (RFW_COLUMNS.every((name) => head.includes(name))) return 'rfw'
+  if (/^\[.+\]$/.test(unq(all[6]?.[0] ?? ''))) return 'ats'
+  return null
+}
+
 // RFW 이미지 비교는 여러 행에 나뉘어 적힌다:
 //   Compare Images                    <img src=".../Image/20261002_131214_IMG_X.bmp">  (캡처, 실패면 ..._result.bmp)
 //   Process Image Comparison Result   : Image Compare Pass|Fail: .../rnavn_project/Image/IMG_X.bmp  (원본)
