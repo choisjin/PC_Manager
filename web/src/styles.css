@@ -4275,7 +4275,39 @@ body.rv-open .pip { display: none; }
 .pip-result.fresh { box-shadow: inset 3px 0 0 var(--ok); }
 .pip-result-open { padding: 0 8px; }
 .pip-count.ready { background: var(--ok); }
-.rv-keys { cursor: help; }
+.rv-keys { position: relative; flex: none; }
+.rv-keys > button.active { background: var(--selected); border-color: var(--accent); }
+/* 단축키 목록 (도구 모음 위로 펼침) */
+.rv-keys-pop {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 290px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+  white-space: normal;
+}
+.rv-keys-row { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; }
+.rv-keys-row kbd {
+  justify-self: start;
+  padding: 1px 6px;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+.rv-keys-note { margin-top: 2px; font-size: 10.5px; color: var(--muted); }
 .rv-sync-line { padding: 4px 10px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .rv-sync-line .link { margin-left: auto; }
 .rv-notice { margin: 0 10px; padding: 4px 8px; border-radius: 4px; background: var(--selected); }
@@ -4343,7 +4375,7 @@ body.rv-open .pip { display: none; }
 .rv-colfilter-list label .ellipsis { flex: 1; min-width: 0; }
 .rv-colfilter .rv-setup-actions { margin-top: 2px; }
 /* ATS: 시간 · B · Status · Action · Remark · Result · Y (Video_editor.py와 같은 열) */
-.rv-table.ats .rv-row { grid-template-columns: 40px 92px 62px minmax(80px, 1fr) 58px minmax(120px, 1.8fr) 58px minmax(80px, 1.2fr) 60px; }
+.rv-table.ats .rv-row { grid-template-columns: 40px 112px 66px minmax(80px, 1fr) 64px minmax(120px, 1.8fr) 62px minmax(80px, 1.2fr); }
 /* 머리글은 두 줄까지 (ACTION / CHECK, STEP / RESULT), 열 사이 세로 줄 */
 .rv-table.ats .rv-row { gap: 0; padding: 0; }
 .rv-table.ats .rv-row > * { align-self: stretch; display: block; line-height: 25px; padding: 0 5px; border-right: 1px solid var(--border); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

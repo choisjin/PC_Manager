@@ -437,7 +437,6 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   }, [filterMenu, baseRows, filterSets])
 
   const focusRow = rows.find((r) => r.index === (playing ?? selected)) ?? null
-  const detailRow = rows.find((r) => r.index === (selected ?? playing)) ?? null
   const nearImage = useMemo(() => {
     if (wallNow === null || timedImages.length === 0) return null
     let best = timedImages[0]
@@ -592,16 +591,6 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               }}
               onPick={seekToRow}
             />
-          )}
-          {detailRow && parsed && (
-            <details className="rv-detail" open>
-              <summary className="small">#{detailRow.index + 1} 자세히</summary>
-              <dl>
-                {parsed.headers.map((h, i) => detailRow.cells[i] ? (
-                  <div key={i}><dt>{h || `열 ${i + 1}`}</dt><dd>{detailRow.cells[i]}</dd></div>
-                ) : null)}
-              </dl>
-            </details>
           )}
         </section>
       </div>
@@ -879,7 +868,7 @@ function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, 
                 <span className="rv-colhead-label">{ATS_CENTER.has(i) ? h.replace(/\s+/g, '\n') : h}</span>
                 <span className="rv-colhead-ico">{sort?.col === i ? (sort.asc ? '↑' : '↓') : ''}{filtered[i] ? '⧩' : '▾'}</span>
               </button>
-            ))}<span>영상</span></>
+            ))}</>
           : <><span>#</span><span>시간</span><span>회차</span><span>스텝</span><span>결과</span><span>걸린 시간</span><span>메시지</span><span>영상</span></>}
       </div>
       <div
@@ -916,7 +905,7 @@ function RowTable({ headers, filtered, sort, onHeader, rows, selected, playing, 
                   <span className="ellipsis" title={row.message}>{row.message}</span>
                 </>
               )}
-              <span className="mono muted">{videoTime(row)}</span>
+              {!headers && <span className="mono muted">{videoTime(row)}</span>}
             </div>
           ))}
         </div>

@@ -4,6 +4,14 @@ import { formatSeconds } from './resultCsv'
 // ReplayKit 결과 화면과 같은 단축키 (e.code 기준이라 한글 입력 상태에서도 동작)
 //   Space 재생/정지 · A/D 뒤로/앞으로(이동 간격) · S/W 배속 내림/올림(x0=정지) · Q/E 한 프레임 · F/R 다음/이전 영상
 const SPEEDS = [0, 1, 2, 4, 8, 10]
+// '단축키' 버튼을 누르면 펼치는 목록
+const KEY_HELP: [string, string][] = [
+  ['Space', '재생 / 일시정지'],
+  ['A / D', '뒤로 / 앞으로 (이동 간격 × 배속)'],
+  ['S / W', '배속 내림 / 올림 (x0 = 정지)'],
+  ['Q / E', '이전 / 다음 프레임'],
+  ['F / R', '다음 / 이전 영상 (영상이 여럿일 때)'],
+]
 const JUMPS = [0.5, 1, 2, 5, 10]
 
 interface Props {
@@ -36,6 +44,26 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
   // 브라우저가 길이를 모르면(Infinity) ffmpeg가 읽은 길이
   const duration = Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : (durationHint ?? 0)
   const [osd, setOsd] = useState<string | null>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const helpRef = useRef<HTMLSpanElement>(null)
+  // 단축키 목록: 바깥을 누르거나 Esc면 닫는다 (Esc가 결과 확인 창을 닫지 않게 먼저 받는다)
+  useEffect(() => {
+    if (!helpOpen) return
+    const onDown = (e: MouseEvent) => {
+      if (!helpRef.current?.contains(e.target as Node)) setHelpOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      setHelpOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [helpOpen])
   const osdTimer = useRef(0)
   const frameRef = useRef(1 / 30)
 
@@ -235,7 +263,19 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
         <span className="rv-spacer" />
         {extra}
         <button type="button" onMouseDown={noFocus} onClick={fullscreen} title="전체 화면">⛶</button>
-        <span className="rv-keys muted small" title="Space 재생/정지 · A/D 이동 · S/W 배속 · Q/E 프레임 · F/R 영상 전환">⌨ 단축키</span>
+        <span className="rv-keys" ref={helpRef}>
+          <button type="button" className={`small${helpOpen ? ' active' : ''}`} onMouseDown={noFocus} onClick={() => setHelpOpen((v) => !v)} aria-expanded={helpOpen} title="단축키 보기">
+            ⌨ 단축키
+          </button>
+          {helpOpen && (
+            <span className="rv-keys-pop" role="dialog" aria-label="단축키">
+              {KEY_HELP.map(([k, d]) => (
+                <span key={k} className="rv-keys-row"><kbd>{k}</kbd><span>{d}</span></span>
+              ))}
+              <span className="rv-keys-note">한글 입력 상태에서도 동작 · 입력 칸에 글자를 쓰는 중에는 꺼짐</span>
+            </span>
+          )}
+        </span>
       </div>
     </div>
   )
