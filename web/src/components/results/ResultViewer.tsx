@@ -302,6 +302,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   const [follow, setFollow] = useState(true)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const pendingSeek = useRef<number | null>(null)
+  // 누른 스텝: 시각이 같거나 몇 ms 차이인 다음 스텝으로 바로 넘어가지 않게 잠시 붙잡는다
+  const picked = useRef<{ index: number; time: number } | null>(null)
 
   const fileUrl = useCallback((path: string) => sessionFileUrl(set, source.agentId, path), [set, source.agentId])
   const onBack = () => {
@@ -393,6 +395,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   const seekToRow = (row: ResultRow) => {
     setSelected(row.index)
     setNotice(null)
+    picked.current = row.index >= 0 && row.time !== null ? { index: row.index, time: row.time } : null
+    if (picked.current) setPlaying(row.index)
     const video = videoForRow(row, videos, currentVideo, absolute)
     if (!video) return setNotice('영상이 없습니다')
     const t = videoTimeOf(row, video)
@@ -414,6 +418,13 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     if (wall === null) return
     // 스텝 시작 직전(0.5초)부터 그 스텝으로 본다 (ReplayKit과 같음)
     const row = rowAtTime(sortedRows, wall + 500)
+    // 누른 스텝은 다른 곳으로 옮기거나, 재생이 그 시각을 0.3초 넘기고 다음 시각의 스텝에 닿을 때까지 유지
+    const pin = picked.current
+    if (pin) {
+      const moved = wall < pin.time - 1000 || (wall > pin.time + 300 && (row?.time ?? -Infinity) > pin.time)
+      if (!moved) return
+      picked.current = null
+    }
     if (row && row.index !== playing) setPlaying(row.index)
   }
 
