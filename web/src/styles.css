@@ -4469,3 +4469,25 @@ body.rv-open .pip { display: none; }
 .remote-grid-head > .remote-show-all + span {
   margin-right: auto;
 }
+
+/* 원격 전체 화면: 붙여넣기 진행 · 복사해 둔 파일 (머리 줄 대신) */
+.remote-fs-status {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  pointer-events: auto;
+}
+
+.remote-fs-status .remote-badge {
+  padding: 4px 10px;
+  font-size: 12px;
+  background: rgba(20, 20, 20, 0.82);
+  cursor: default;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.remote-fs-status .remote-badge.clip {
+  cursor: pointer;
+}

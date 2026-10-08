@@ -441,8 +441,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
             // 원격 클립보드가 바뀌면 이 PC 클립보드에 반영 (보안 컨텍스트에서만, 창에 포커스가 있어야 함)
             if (typeof msg.text === 'string' && msg.text !== lastClipRef.current) {
               lastClipRef.current = msg.text
-              fileClipboard.noteLocalText(msg.text, false)
-              navigator.clipboard?.writeText?.(msg.text).catch(() => {})
+              const text = msg.text as string
+              navigator.clipboard?.writeText?.(text).then(() => fileClipboard.noteLocalText(text, false), () => {})
               // 원격에서 새로 텍스트를 복사함 → 파일 클립보드는 비운다 (연결 직후 알려 오는 기존 내용은 제외)
               if (clipTextSeenRef.current) {
                 fileClipboard.clear()
@@ -834,6 +834,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     setPipOpen(false)
     setEdgeOpen(false)
     focusStage()
+    const clip = fileClipboard.get()
+    if (clip && !clip.delivered.has(id)) showHint(`${clip.machineName}에서 복사한 파일 ${clip.paths.length}개 — Ctrl+V로 붙여넣습니다.`)
   }
 
   const pcList = (
@@ -1039,6 +1041,20 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
             <div className="remote-pclist-title small">PC 목록 · 클릭하면 전환{fsPinned ? ' · 고정됨' : ''}</div>
             {pcList}
           </aside>
+        )}
+
+        {fullscreen && (pasting || fileClip) && (
+          <div className="remote-fs-status" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
+            {pasting ? (
+              <span className="remote-badge">{pasting}</span>
+            ) : (
+              fileClip && (
+                <span className="remote-badge clip" title="클릭하면 비웁니다" onClick={() => fileClipboard.clear()}>
+                  📋 {fileClip.machineName} · 파일 {fileClip.paths.length}개 (Ctrl+V)
+                </span>
+              )
+            )}
+          </div>
         )}
 
         {hint && <div className="remote-hint">{hint}</div>}
