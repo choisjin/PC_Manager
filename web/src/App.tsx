@@ -6,6 +6,7 @@ import { useTransfers } from './components/explorer/useTransfers'
 import { type Identity, SelectGate } from './components/SelectGate'
 import { SettingsModal } from './components/SettingsModal'
 import { SettingsPage } from './components/SettingsPage'
+import { StatePage } from './components/StatePage'
 import { TransfersPage } from './components/TransfersPage'
 import { TransfersPip } from './components/TransfersPip'
 import { ResultHost } from './components/results/ResultViewer'
@@ -14,7 +15,7 @@ import { PinDialog } from './components/PinDialog'
 import { pcLockStore } from './pcLocks'
 import { useDashboard } from './useDashboard'
 
-type Page = 'files' | 'transfers' | 'settings'
+type Page = 'files' | 'state' | 'transfers' | 'settings'
 
 function cmpVersion(a: string, b: string) {
   const pa = a.split('.').map(Number)
@@ -169,6 +170,9 @@ export default function App() {
           <button type="button" role="tab" aria-selected={page === 'files'} className={page === 'files' ? 'active' : ''} onClick={() => setPage('files')}>
             PC Manager
           </button>
+          <button type="button" role="tab" aria-selected={page === 'state'} className={page === 'state' ? 'active' : ''} onClick={() => setPage('state')}>
+            State
+          </button>
           <button type="button" role="tab" aria-selected={page === 'transfers'} className={page === 'transfers' ? 'active' : ''} onClick={() => setPage('transfers')}>
             History
             {transfers.some((t) => t.state === 'Pending') && <span className="tab-badge">{transfers.filter((t) => t.state === 'Pending').length}</span>}
@@ -231,6 +235,19 @@ export default function App() {
             announcePresence={announcePresence}
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}
+          />
+        ) : page === 'state' ? (
+          <StatePage
+            agents={agents}
+            pcGroups={pcGroups}
+            pcStatuses={pcStatuses}
+            remoteUsage={remoteUsage}
+            presence={presence}
+            transfers={transfers}
+            org={org}
+            serverHostName={serverHostName}
+            selfUserId={identity.userId}
+            connected={connected}
           />
         ) : page === 'settings' ? (
           <SettingsPage org={org} actions={orgActions} agents={agents} pcGroups={pcGroups} selfAgentId={selfAgentOnlineId} />
