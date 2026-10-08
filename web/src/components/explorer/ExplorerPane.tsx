@@ -216,6 +216,24 @@ export function ExplorerPane({
     return { modified: 132, type: 80, size: 62 }
   })
   const [dragOver, setDragOver] = useState(false)
+  // 끌기가 어디서 끝나든(다른 곳에 놓기·Esc 취소·브라우저 밖으로) 놓기 표시를 끈다 — 남아 있던 문제
+  useEffect(() => {
+    const clear = () => {
+      setDragOver(false)
+      setDropDir(null)
+    }
+    const onLeaveWindow = (e: DragEvent) => {
+      if (!e.relatedTarget) clear()
+    }
+    window.addEventListener('dragend', clear, true)
+    window.addEventListener('drop', clear, true)
+    window.addEventListener('dragleave', onLeaveWindow, true)
+    return () => {
+      window.removeEventListener('dragend', clear, true)
+      window.removeEventListener('drop', clear, true)
+      window.removeEventListener('dragleave', onLeaveWindow, true)
+    }
+  }, [])
   const [dropDir, setDropDir] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const sectionRef = useRef<HTMLElement>(null)
@@ -1177,7 +1195,11 @@ export function ExplorerPane({
             }
           }}
           onDragLeave={(e) => {
-            if (e.currentTarget === e.target) setDragOver(false)
+            // 파일 줄 위에서 바로 창 밖으로 나가도 끈다 (나간 곳이 창 안이면 그대로)
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+              setDragOver(false)
+              setDropDir(null)
+            }
           }}
           onDrop={(e) => {
             setDragOver(false)

@@ -194,6 +194,16 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openAgentKey, selfUserId, announcePresence])
   const [dropActive, setDropActive] = useState(false)
+  // 끌기가 어디서 끝나든 놓기 표시를 끈다 (다른 곳에 놓기·Esc 취소)
+  useEffect(() => {
+    const clear = () => setDropActive(false)
+    window.addEventListener('dragend', clear, true)
+    window.addEventListener('drop', clear, true)
+    return () => {
+      window.removeEventListener('dragend', clear, true)
+      window.removeEventListener('drop', clear, true)
+    }
+  }, [])
   const [activePaneId, setActivePaneId] = useState<string | null>(null)
   const [activeController, setActiveController] = useState<PaneController | null>(null)
 
@@ -321,7 +331,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
             }
           }}
           onDragLeave={(e) => {
-            if (e.currentTarget === e.target) setDropActive(false)
+            if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropActive(false)
           }}
           onDrop={(e) => {
             setDropActive(false)

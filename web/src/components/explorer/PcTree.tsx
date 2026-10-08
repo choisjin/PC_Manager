@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api, type Agent, isLinuxAgent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type SharedFolder } from '../../api'
 import { ensureUnlocked, pcLockStore, usePcLocks } from '../../pcLocks'
 import { askPin } from '../../pinPrompt'
@@ -44,6 +44,16 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
   const [editing, setEditing] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null) // folderId 또는 'root'
+  // 끌기가 어디서 끝나든 놓기 표시를 끈다
+  useEffect(() => {
+    const clear = () => setDropTarget(null)
+    window.addEventListener('dragend', clear, true)
+    window.addEventListener('drop', clear, true)
+    return () => {
+      window.removeEventListener('dragend', clear, true)
+      window.removeEventListener('drop', clear, true)
+    }
+  }, [])
   const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null)
   const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; folderId: string; name: string } | null>(null)
   const [shareMenu, setShareMenu] = useState<{ x: number; y: number; share: SharedFolder } | null>(null)

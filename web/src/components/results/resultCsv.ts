@@ -87,7 +87,19 @@ export function decodeText(bytes: ArrayBuffer): string {
 }
 
 // ── CSV (RFC 4180: 따옴표 안 줄바꿈·"" 이스케이프, 줄 끝 CR/LF/CRLF 섞임)
-export function parseCsv(text: string): string[][] {
+/** 구분자 고르기: 첫 줄(열 이름)에 탭이 쉼표보다 많으면 탭 (확장자는 .csv인데 탭으로 나눈 RFW 결과 등) */
+function detectDelimiter(text: string): string {
+  const firstLine = text.slice(0, Math.min(text.length, 4096)).split(/\r?\n/).find((l) => l.trim() !== '') ?? ''
+  const count = (ch: string) => firstLine.split(ch).length - 1
+  const tabs = count('\t')
+  const commas = count(',')
+  const semis = count(';')
+  if (tabs > commas && tabs >= semis) return '\t'
+  if (semis > commas && semis > tabs) return ';'
+  return ','
+}
+
+export function parseCsv(text: string, delimiter = detectDelimiter(text)): string[][] {
   const rows: string[][] = []
   let row: string[] = []
   let cell = ''
@@ -106,7 +118,7 @@ export function parseCsv(text: string): string[][] {
     if (ch === '"' && cell.trim() === '') {
       quoted = true
       cell = ''
-    } else if (ch === ',') {
+    } else if (ch === delimiter) {
       row.push(cell)
       cell = ''
     } else if (ch === '\r' || ch === '\n') {
@@ -485,6 +497,8 @@ const rfwPaths = (r: string[]) =>
     const path = p.replace(/^file:/i, '').replace(/^\/{2,}/, '/')
     return /^[A-Za-z]:/.test(path) ? path.replace(/\\\\/g, '\\') : path
   })
+    // 절대 경로만 (HTML 문구 속 './img/bg2.jpg' 같은 상대 경로는 이미지 비교가 아님)
+    .filter((p) => /^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(p))
 const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
 /** 이미지 이름 (날짜_시각_ 접두사·_result 접미사를 뗀 것, 소문자) */
 const imageKey = (p: string) => fileName(p).replace(STAMP, '').replace(/_result(\.\w+)$/i, '$1').toLowerCase()

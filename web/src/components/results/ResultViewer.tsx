@@ -338,7 +338,34 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     () => new Map([...refImages, ...images].map((i) => [i.name.toLowerCase(), i.fullPath])),
     [images, refImages],
   )
-  const resolveImage = useCallback((p: string) => imagesByName.get(baseName(p).toLowerCase()) ?? p, [imagesByName])
+  // 결과 폴더의 '날짜_시각_이름' 파일: 이름별로 시각을 모아 둔다 (CSV와 몇 초 다르게 저장된 캡처도 찾게)
+  const stamped = useMemo(() => {
+    const map = new Map<string, { time: number; path: string }[]>()
+    for (const i of images) {
+      const m = /^\d{8}_\d{6}_(.+)$/.exec(i.name.toLowerCase())
+      const time = m ? timeFromName(i.name) : null
+      if (!m || time === null) continue
+      const list = map.get(m[1]) ?? []
+      list.push({ time, path: i.fullPath })
+      map.set(m[1], list)
+    }
+    return map
+  }, [images])
+  /** 파일 이름으로 찾기 → 없으면 같은 이름 중 시각이 2분 안으로 가장 가까운 결과 캡처 → 그래도 없으면 Result에 적힌 경로 */
+  const resolveImage = useCallback((p: string) => {
+    const name = baseName(p).toLowerCase()
+    const exact = imagesByName.get(name)
+    if (exact) return exact
+    const m = /^\d{8}_\d{6}_(.+)$/.exec(name)
+    const t0 = m ? timeFromName(name) : null
+    const list = m ? stamped.get(m[1]) : undefined
+    if (t0 !== null && list) {
+      let best: { time: number; path: string } | null = null
+      for (const c of list) if (Math.abs(c.time - t0) <= 120_000 && (!best || Math.abs(c.time - t0) < Math.abs(best.time - t0))) best = c
+      if (best) return best.path
+    }
+    return p
+  }, [imagesByName, stamped])
   const timedImages = useMemo(
     () => images.filter((i) => !pairImages || !ATS_VARIANT.test(i.name))
       .map((i) => ({ entry: i, time: timeFromName(i.name) })).filter((x) => x.time !== null).sort((a, b) => a.time! - b.time!),
@@ -489,6 +516,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               <AtsImagePanel
                 row={focusRow}
                 byName={imagesByName}
+                resolve={resolveImage}
                 url={(p) => fileUrl(resolveImage(p))}
                 onPreview={setPreview}
               />
@@ -694,15 +722,17 @@ const ATS_KIND_LABEL: Record<AtsImages['kind'], string> = {
 }
 
 /** 영상 아래: 원본 · 결과 두 장. P열(찾을 이미지)과 Y열(비교 이미지)을 구분해 보여 준다 */
-function AtsImagePanel({ row, byName, url, onPreview }: {
+function AtsImagePanel({ row, byName, resolve, url, onPreview }: {
   row: ResultRow | null
   byName: Map<string, string>
+  /** Result에 적힌 경로 → 실제로 찾은 파일 (차이·전체 화면 사본은 찾은 캡처 이름으로) */
+  resolve: (path: string) => string
   url: (path: string) => string
   onPreview: (url: string) => void
 }) {
   const [view, setView] = useState<'capture' | 'diff' | 'full'>('capture')
   const ats = row?.ats ?? null
-  const v = variantsOf(ats?.result ?? null, byName)
+  const v = variantsOf(ats?.result ? resolve(ats.result) : null, byName)
   const diff = v.diff ?? ats?.diff ?? null
   const result = view === 'full' && v.full ? v.full : view === 'diff' && diff ? diff : ats?.result ?? null
   // 원본: 비교(Y)가 있으면 비교 기준 이미지, 찾기(P)만 있으면 찾을 이미지
