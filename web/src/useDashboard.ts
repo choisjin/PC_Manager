@@ -17,6 +17,7 @@ import {
   type Org,
   type OutputLine,
   type PcFavorites,
+  type StateLayout,
   type PcGroups,
   type Run,
   type RunState,
@@ -122,6 +123,10 @@ export function useDashboard() {
   const [presence, setPresence] = useState<Record<string, string[]>>({})
   // 대시보드를 열어 둔 사용자 (State 화면)
   const [onlineUsers, setOnlineUsers] = useState<string[]>([])
+  // State 화면 배치 (모든 사용자 공유)
+  const [stateLayout, setStateLayout] = useState<StateLayout | null>(null)
+  // 내가 막 저장한 배치의 되울림(끄는 중 보낸 옛 위치)이 화면을 되돌리지 않게
+  const lastLayoutSaveRef = useRef(0)
   const onlineUserRef = useRef<string | null>(null)
   const [pcStatuses, setPcStatuses] = useState<Record<string, PcStatus>>({})
   const [serverHostName, setServerHostName] = useState<string | null>(null)
@@ -197,6 +202,10 @@ export function useDashboard() {
     connection.on('OrgChanged', (o: Org) => setOrg(o))
     connection.on('PresenceChanged', (viewers: Record<string, string[]>) => setPresence(viewers))
     connection.on('OnlineUsersChanged', (ids: string[]) => setOnlineUsers(ids))
+    connection.on('StateLayoutChanged', (layout: StateLayout) => {
+      if (layout.updatedBy && layout.updatedBy === onlineUserRef.current && Date.now() - lastLayoutSaveRef.current < 1500) return
+      setStateLayout(layout)
+    })
     connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
     connection.on('RemoteUsageChanged', (v: RemoteUsage) => setRemoteUsage(v.inUseBy))
     // 채팅: 서버는 내가 속한 방의 것만 보낸다
@@ -293,6 +302,7 @@ export function useDashboard() {
       if (presenceRef.current)
         connection.invoke('SetPresence', presenceRef.current.userId, presenceRef.current.agentIds).catch(() => {})
       if (onlineUserRef.current) connection.invoke('SetUser', onlineUserRef.current).catch(() => {})
+      api.stateLayout().then(setStateLayout, () => {})
       for (const jobRunId of loadedJobIds) {
         api
           .job(jobRunId)
@@ -530,6 +540,13 @@ export function useDashboard() {
     }
   }, [])
 
+  /** State 배치 저장 (바로 화면에 반영하고 서버가 모두에게 알린다) */
+  const saveStateLayout = useCallback((layout: StateLayout) => {
+    setStateLayout(layout)
+    lastLayoutSaveRef.current = Date.now()
+    api.saveStateLayout(layout).catch(() => {})
+  }, [])
+
   /** 이 대시보드의 사용자를 서버에 알린다 (탭과 상관없이 접속 중으로 보이게) */
   const announceUser = useCallback((userId: string | null) => {
     onlineUserRef.current = userId
@@ -564,6 +581,8 @@ export function useDashboard() {
     announcePresence,
     announceUser,
     onlineUsers,
+    stateLayout,
+    saveStateLayout,
     pcStatuses,
     setPcStatus,
     serverHostName,

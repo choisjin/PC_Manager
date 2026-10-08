@@ -168,6 +168,14 @@ export interface DirectoryListing {
   truncated?: boolean
 }
 
+/** State 화면 배치 (모든 사용자 공유). 위치는 화면 영역 비율 0~1 */
+export interface StateLayout {
+  positions: Record<string, { x: number; y: number }>
+  locked: boolean
+  updatedBy: string | null
+  updatedAt: string | null
+}
+
 export type ArchiveFormat = 'zip' | '7z' | 'tar' | 'tar.gz'
 export const ARCHIVE_FORMATS: { value: ArchiveFormat; label: string }[] = [
   { value: 'zip', label: 'ZIP (.zip)' },
@@ -575,6 +583,8 @@ export const api = {
     request<PcGroups>('/api/pc-groups', { method: 'PUT', body: JSON.stringify(groups) }),
 
   pcFavorites: () => request<PcFavorites>('/api/pc-favorites'),
+  stateLayout: () => request<StateLayout>('/api/state-layout'),
+  saveStateLayout: (layout: StateLayout) => request<StateLayout>('/api/state-layout', { method: 'PUT', body: JSON.stringify(layout) }),
   savePcFavorites: (favorites: PcFavorites) =>
     request<PcFavorites>('/api/pc-favorites', { method: 'PUT', body: JSON.stringify(favorites) }),
 

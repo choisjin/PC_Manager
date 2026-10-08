@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { type Agent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type RemoteUsage, type Transfer } from '../api'
+import { type Agent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type RemoteUsage, type StateLayout, type Transfer } from '../api'
 import { buildTree, displayName, type FolderNode } from './explorer/pcGroups'
 import { kindLabel } from './explorer/useTransfers'
 
@@ -16,6 +16,9 @@ interface Props {
   selfUserId: string | null
   /** 대시보드를 열어 둔 사용자 */
   onlineUsers: string[]
+  /** 배치 (서버에 저장, 모든 사용자 공유). null이면 아직 못 받음 */
+  layout: StateLayout | null
+  saveLayout: (layout: StateLayout) => void
   connected: boolean
 }
 
@@ -89,7 +92,6 @@ const HEAD_H = 30
 const PAD = 10
 const SERVER_W = 124
 const SERVER_H = 54
-const POS_KEY = 'pcm.state.pos'
 
 const pcColor = (n: PcNode) =>
   !n.online ? COLORS.offline
@@ -103,24 +105,26 @@ const transferColor = (t: Transfer) =>
 
 const leaf = (p: string | null) => p?.split(/[\\/]/).filter(Boolean).pop() ?? ''
 
-function loadPos(): Pos {
-  try {
-    return JSON.parse(localStorage.getItem(POS_KEY) ?? '{}') as Pos
-  } catch {
-    return {}
-  }
-}
 
 /** State: 격자 위에 서버·그룹(PC)·사용자를 빛이 흐르는 선으로 잇고 상태·동작을 실시간으로. 노드는 끌어서 옮긴다 */
-export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence, transfers, org, serverHostName, selfUserId, onlineUsers, connected }: Props) {
+export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence, transfers, org, serverHostName, selfUserId, onlineUsers, layout: shared, saveLayout, connected }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ w: 800, h: 600 })
   const [hover, setHover] = useState<{ x: number; y: number; lines: string[] } | null>(null)
   const [log, setLog] = useState<LogEntry[]>([])
-  // 끌어서 옮긴 위치 (화면 영역 비율 0~1: 창 크기가 바뀌어도 같은 자리)
-  const [pos, setPos] = useState<Pos>(loadPos)
+  // 위치 (화면 영역 비율 0~1: 창 크기가 바뀌어도 같은 자리). 서버에 저장해 모든 사용자가 같은 배치를 본다
+  const [pos, setPos] = useState<Pos>(shared?.positions ?? {})
   const [drag, setDrag] = useState<{ key: string; dx: number; dy: number } | null>(null)
+  const locked = shared?.locked ?? false
+  // 다른 사람이 옮기면 따라간다 (내가 끄는 중에는 내 위치 그대로)
+  const dragging = !!drag
+  useEffect(() => {
+    if (!dragging && shared) setPos(shared.positions)
+  }, [shared, dragging])
+  const pushTimer = useRef(0)
+  const publish = (next: Pos, lockedNext = locked) =>
+    saveLayout({ positions: next, locked: lockedNext, updatedBy: selfUserId, updatedAt: null })
   const burstsRef = useRef<Burst[]>([])
   const logId = useRef(0)
 
@@ -633,6 +637,7 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
   const onDown = (e: React.MouseEvent) => {
+    if (locked) return
     const { x, y } = local(e)
     const key = hitTest(x, y)
     if (!key) return
@@ -643,11 +648,9 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
   const onUp = () => {
     if (!drag) return
     setDrag(null)
-    try {
-      localStorage.setItem(POS_KEY, JSON.stringify(pos))
-    } catch {
-      // 무시
-    }
+    clearTimeout(pushTimer.current)
+    pushTimer.current = 0
+    publish(pos)
   }
 
   const onMove = (e: React.MouseEvent) => {
@@ -655,7 +658,14 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
     if (drag) {
       const nx = Math.max(0.02, Math.min(0.98, (x - drag.dx) / areaW))
       const ny = Math.max(0.03, Math.min(0.97, (y - drag.dy) / size.h))
-      setPos((p) => ({ ...p, [drag.key]: { x: nx, y: ny } }))
+      const next = { ...pos, [drag.key]: { x: nx, y: ny } }
+      setPos(next)
+      // 끄는 동안에도 다른 사람 화면에 따라 움직이게 (0.25초마다)
+      if (!pushTimer.current)
+        pushTimer.current = window.setTimeout(() => {
+          pushTimer.current = 0
+          publish(next)
+        }, 250)
       return
     }
     const pc = layout.pcs.find((p) => Math.abs(p.x - x) < CARD_W / 2 && Math.abs(p.y - y) < CARD_H / 2)
@@ -692,17 +702,16 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
   }
 
   const resetLayout = () => {
+    if (locked || !window.confirm('모든 사용자의 State 배치를 처음 상태로 되돌릴까요?')) return
     setPos({})
-    try {
-      localStorage.removeItem(POS_KEY)
-    } catch {
-      // 무시
-    }
+    publish({})
   }
+  const toggleLocked = () => publish(pos, !locked)
+  const updatedBy = shared?.updatedBy ? userName(shared.updatedBy) : null
 
   const online = agents.filter((a) => a.online).length
   const remoteCount = Object.keys(remoteUsage).length
-  const cursor = drag ? 'grabbing' : hover ? 'grab' : 'default'
+  const cursor = drag ? 'grabbing' : hover && !locked ? 'grab' : 'default'
 
   return (
     <div className="state-page" ref={wrapRef}>
@@ -718,6 +727,12 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
           setHover(null)
         }}
       />
+      {/* 움직임 / 고정 (모든 사용자 공유) */}
+      <div className="state-mode" role="group" aria-label="배치 편집">
+        <button type="button" className={!locked ? 'active' : ''} onClick={() => locked && toggleLocked()} title="서버 · 그룹 · 사용자를 끌어서 옮깁니다 (모든 사용자에게 보임)">✋ 움직임</button>
+        <button type="button" className={locked ? 'active' : ''} onClick={() => !locked && toggleLocked()} title="배치를 고정해 실수로 옮기지 않게 합니다 (모든 사용자 공유)">🔒 고정</button>
+        {updatedBy && <span className="state-mode-by">마지막 변경 · {updatedBy}</span>}
+      </div>
       {hover && !drag && (
         <div className="state-tip" style={{ left: Math.min(hover.x + 14, areaW - 240), top: hover.y + 14 }}>
           {hover.lines.filter(Boolean).map((l, i) => <div key={i} className={i === 0 ? 'state-tip-head' : ''}>{l}</div>)}
@@ -771,8 +786,8 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
           ))}
         </div>
         <div className="state-foot">
-          <span>서버 · 그룹 · 사용자를 끌어서 옮길 수 있습니다</span>
-          <button type="button" className="link" onClick={resetLayout}>배치 초기화</button>
+          <span>{locked ? '배치가 고정돼 있습니다 (왼쪽 위에서 풀기)' : '끌어서 옮기면 모든 사용자에게 같은 배치로 보입니다'}</span>
+          <button type="button" className="link" disabled={locked} onClick={resetLayout}>배치 초기화</button>
         </div>
       </aside>
     </div>

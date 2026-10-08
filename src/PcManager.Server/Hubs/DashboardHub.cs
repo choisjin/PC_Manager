@@ -23,6 +23,8 @@ public interface IDashboardClient
     Task PresenceChanged(IReadOnlyDictionary<string, IReadOnlyList<string>> viewers);
     /// <summary>대시보드를 열어 둔 사용자 id 목록</summary>
     Task OnlineUsersChanged(IReadOnlyList<string> userIds);
+    /// <summary>State 화면 배치(위치·고정)가 바뀜</summary>
+    Task StateLayoutChanged(StateLayoutView layout);
     Task PcStatusesChanged(PcStatusesView statuses);
     Task RemoteUsageChanged(RemoteUsageView usage);
     Task ChatRoomChanged(ChatRoomView room);

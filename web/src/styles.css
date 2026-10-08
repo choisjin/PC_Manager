@@ -4734,3 +4734,43 @@ body.rv-open .pip { display: none; }
   flex: none;
   color: #8fc4ff;
 }
+
+/* State: 움직임 / 고정 토글 */
+.state-mode {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 3px;
+  background: rgba(10, 16, 36, 0.85);
+  border: 1px solid rgba(120, 170, 255, 0.35);
+  border-radius: 8px;
+}
+
+.state-mode button {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #9fb0d6;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+}
+
+.state-mode button:hover:not(.active) {
+  background: rgba(120, 170, 255, 0.12);
+}
+
+.state-mode button.active {
+  color: #0a1020;
+  font-weight: 700;
+  background: #8fd3ff;
+}
+
+.state-mode-by {
+  padding: 0 8px;
+  font-size: 11px;
+  color: #6f7fa6;
+}

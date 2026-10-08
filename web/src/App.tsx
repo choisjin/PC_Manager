@@ -78,6 +78,8 @@ export default function App() {
     announcePresence,
     announceUser,
     onlineUsers,
+    stateLayout,
+    saveStateLayout,
     pcStatuses,
     setPcStatus,
     serverHostName,
@@ -252,6 +254,8 @@ export default function App() {
             serverHostName={serverHostName}
             selfUserId={identity.userId}
             onlineUsers={onlineUsers}
+            layout={stateLayout}
+            saveLayout={saveStateLayout}
             connected={connected}
           />
         ) : page === 'settings' ? (
