@@ -161,7 +161,19 @@ app.UsePcLocks();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(15), KeepAliveTimeout = TimeSpan.FromSeconds(30) });
 
 app.UseDefaultFiles();
-app.UseStaticFiles();
+// 업데이트 후 옛 대시보드가 보이지 않게: index.html 은 매번 서버에 확인(no-cache),
+// 파일 이름에 해시가 붙는 Vite 빌드 결과(/assets)는 오래 캐시
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var headers = ctx.Context.Response.Headers;
+        if (ctx.Context.Request.Path.StartsWithSegments("/assets"))
+            headers.CacheControl = "public, max-age=31536000, immutable";
+        else if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            headers.CacheControl = "no-cache";
+    },
+});
 
 app.MapHub<AgentHub>(HubPaths.Agent);
 app.MapHub<DashboardHub>(HubPaths.Dashboard);

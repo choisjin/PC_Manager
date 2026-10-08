@@ -9,7 +9,11 @@ public static class SpaFallbackEndpoints
         {
             var indexPath = Path.Combine(env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot"), "index.html");
             var isApi = context.Request.Path.StartsWithSegments("/api") || context.Request.Path.StartsWithSegments("/hubs");
-            return isApi || !File.Exists(indexPath) ? Results.NotFound() : Results.File(indexPath, "text/html; charset=utf-8");
+            if (isApi || !File.Exists(indexPath))
+                return Results.NotFound();
+            // 업데이트 후 옛 대시보드가 남지 않게 매번 서버에 확인
+            context.Response.Headers.CacheControl = "no-cache";
+            return Results.File(indexPath, "text/html; charset=utf-8");
         });
     }
 }
