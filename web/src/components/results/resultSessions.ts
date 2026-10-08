@@ -160,7 +160,7 @@ export function startSession(source: Source, set: ResultSet | null = null, repla
   const session: ResultSession = {
     id, source, set, config, state: 'loading', error: null, rawText: null,
     videos: source.videoPaths.map(newRawVideo), images: [], refImages: [],
-    done: 0, total: 1 + source.videoPaths.length + (source.imageDir ? 1 : 0) + (source.mode === 'ats' && source.refDir ? 1 : 0),
+    done: 0, total: 1 + source.videoPaths.length + (source.imageDir ? 1 : 0) + (source.refDir ? 1 : 0),
     step: '준비 중', startedAt: Date.now(), readyAt: null, opened: false,
   }
   const sessions = replaceId ? state.sessions.filter((s) => s.id !== replaceId) : state.sessions
@@ -230,7 +230,7 @@ async function load(id: string) {
         patch(id, { images })
         tick(id)
       }
-      if (source.mode === 'ats' && source.refDir) {
+      if (source.refDir) {
         const refImages = await listImages(source.agentId, source.refDir, set)
         patch(id, { refImages })
         tick(id)

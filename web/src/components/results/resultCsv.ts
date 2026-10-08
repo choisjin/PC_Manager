@@ -49,6 +49,8 @@ export interface AtsImages {
   diff: string | null
   /** Y열 첫 줄 (예: IMAGE(FAIL), FIND_IMAGE_ONSCREEN_TOUCH:('Can not find…')) */
   note: string
+  /** 종류 표시를 바꿀 때 (RFW) */
+  label?: string
 }
 
 export interface ParsedResult {
@@ -428,40 +430,100 @@ const collator = new Intl.Collator('ko', { numeric: true, sensitivity: 'base' })
 /** 칸 값 비교 (숫자는 숫자 크기로) */
 export const compareCells = (a: string, b: string) => collator.compare(a, b)
 
-// ── RFW (Video_editor_2_result.py와 같은 규칙): 첫 줄이 열 이름, 아래 11개 열을 이 순서로 보여 준다
+// ── RFW (Video_editor_2_result.py와 같은 규칙): 첫 줄이 열 이름, 아래 11개 열이 있어야 한다
 export const RFW_COLUMNS = ['Test Name', 'Start Time', 'Cycle Index', 'Cycle Total', 'KW Name', 'Owner', 'Status', 'Elapsed', 'Status Message', 'Message Level', 'Message']
-const RFW_MAPPING: ResultMapping = { time: 1, cycle: 2, status: 6, name: 4, duration: 7, message: 10, durationUnit: 's', timeMode: 'absolute' }
+// 화면에 보여 주는 열 (Test Name · Cycle Total · Elapsed는 뺀다)
+const RFW_SHOWN = ['Start Time', 'Cycle Index', 'KW Name', 'Owner', 'Status', 'Status Message', 'Message Level', 'Message']
+const RFW_MAPPING: ResultMapping = { time: 0, cycle: 1, status: 4, name: 2, duration: -1, message: 7, durationUnit: 's', timeMode: 'absolute' }
 
 /** RFW Result. 필수 열이 없으면 자동 판별로 읽는다 (다른 형식의 CSV) */
 export function parseRfw(text: string): ParsedResult {
   const all = parseCsv(text).filter((r) => r.some((c) => c.trim() !== ''))
   const head = (all[0] ?? []).map(unq)
-  const source = RFW_COLUMNS.map((name) => head.indexOf(name))
-  if (source.some((i) => i < 0)) return parseResult(text)
+  if (RFW_COLUMNS.some((name) => !head.includes(name))) return parseResult(text)
+  const source = RFW_SHOWN.map((name) => head.indexOf(name))
+  const elapsedAt = head.indexOf('Elapsed')
   const rows: ResultRow[] = all.slice(1).map((r, index) => {
     const cells = source.map((c) => unq(r[c] ?? ''))
     // Start Time: [2026-10-02T13:07:34.900747] → 2026-10-02 13:07:34.900747
-    cells[1] = cells[1].replace(/^\[|\]$/g, '').replace('T', ' ')
-    const v = parseTime(cells[1])
-    const elapsed = cells[7]
+    cells[0] = cells[0].replace(/^\[|\]$/g, '').replace('T', ' ')
+    const v = parseTime(cells[0])
+    const elapsed = unq(r[elapsedAt] ?? '')
     return {
       index,
       cells,
       time: v?.kind === 'absolute' ? v.ms : null,
-      cycle: cells[2],
-      status: cells[6],
-      name: cells[4],
+      cycle: cells[1],
+      status: cells[4],
+      name: cells[2],
       durationMs: NUMBER.test(elapsed) ? Number(elapsed) * 1000 : null,
-      message: cells[10],
+      message: cells[7],
       images: [...new Set(r.join(' ').match(IMAGE_PATH) ?? [])].map((p) => p.replace(/\\\\/g, '\\')),
     }
   })
   const table: TableSpec = {
-    columns: 'minmax(70px, 0.9fr) 112px 48px 48px minmax(100px, 1.4fr) minmax(60px, 0.6fr) 58px 60px minmax(70px, 0.8fr) 58px minmax(110px, 1.8fr)',
-    center: [2, 3, 6, 7, 9],
-    statusCells: [6],
-    alertCells: [9],
-    timeCell: 1,
+    columns: '112px 52px minmax(110px, 1.4fr) minmax(60px, 0.6fr) 60px minmax(80px, 0.9fr) 62px minmax(130px, 2fr)',
+    center: [1, 4, 6],
+    statusCells: [4],
+    alertCells: [6],
+    timeCell: 0,
   }
-  return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_COLUMNS, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table }
+  attachRfwImages(rows, all.slice(1))
+  return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_SHOWN, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table }
+}
+
+// RFW 이미지 비교는 여러 행에 나뉘어 적힌다:
+//   Compare Images                    <img src=".../Image/20261002_131214_IMG_X.bmp">  (캡처, 실패면 ..._result.bmp)
+//   Process Image Comparison Result   : Image Compare Pass|Fail: .../rnavn_project/Image/IMG_X.bmp  (원본)
+//   Process Image Comparison Result   <img src=원본><img src=캡처>
+//   Log                               : Image compare Result : name=원본, match=99%
+// → 행마다 그 행과 앞뒤 행에서 같은 이미지 이름(IMG_X)의 원본·결과·차이를 모은다
+const RFW_IMAGE = /[^\s"'<>,()=]+?\.(?:bmp|png|jpe?g)/gi
+const STAMP = /^\d{8}_\d{6}_/
+const rfwPaths = (r: string[]) =>
+  [...new Set(r.join(' ').match(RFW_IMAGE) ?? [])].map((p) => {
+    const path = p.replace(/^file:/i, '').replace(/^\/{2,}/, '/')
+    return /^[A-Za-z]:/.test(path) ? path.replace(/\\\\/g, '\\') : path
+  })
+const fileName = (p: string) => p.split(/[\\/]/).pop() ?? p
+/** 이미지 이름 (날짜_시각_ 접두사·_result 접미사를 뗀 것, 소문자) */
+const imageKey = (p: string) => fileName(p).replace(STAMP, '').replace(/_result(\.\w+)$/i, '$1').toLowerCase()
+
+function attachRfwImages(rows: ResultRow[], raw: string[][]) {
+  const paths = raw.map(rfwPaths)
+  const notes = raw.map((r) => {
+    const m = /(Image compare[^\r\n]*)/i.exec(r.join(' '))
+    return m ? m[1].replace(/\s*[:]?\s*(?:name=)?\S+\.(?:bmp|png|jpe?g)/i, '').trim() : ''
+  })
+  rows.forEach((row, i) => {
+    const own = paths[i] ?? []
+    if (own.length === 0) return
+    const keys = new Set(own.map(imageKey))
+    let ref: string | null = null
+    let result: string | null = null
+    let diff: string | null = null
+    let note = ''
+    for (let k = Math.max(0, i - 3); k <= Math.min(rows.length - 1, i + 3); k++) {
+      if (rows[k].cycle !== row.cycle) continue
+      const near = (paths[k] ?? []).filter((p) => keys.has(imageKey(p)))
+      if (near.length === 0) continue
+      for (const p of near) {
+        const name = fileName(p)
+        if (!STAMP.test(name)) ref ??= p
+        else if (/_result\.\w+$/i.test(name)) diff ??= p
+        else result ??= p
+      }
+      if (!note && notes[k]) note = notes[k]
+    }
+    if (!ref && !result && !diff) return
+    row.ats = {
+      kind: result || diff ? 'y' : 'p',
+      target: null,
+      ref,
+      result: result ?? diff,
+      diff,
+      note,
+      label: result || diff ? '이미지 비교' : '이미지 일치 확인',
+    }
+  })
 }

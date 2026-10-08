@@ -204,13 +204,13 @@ function SetupPopup({ setup, machineName }: { setup: SetupState; machineName: (a
           items={source.resultPath ? [source.resultPath] : []} onRemove={() => setSource((s) => ({ ...s, resultPath: '' }))} />
         <Slot title="영상 (여러 개 가능)" hint="영상 파일을 끌어다 놓으세요 (회차별 녹화 등)" onDrop={dropInto('video')} onDragOver={allowDrop}
           items={source.videoPaths} onRemove={(p) => setSource((s) => ({ ...s, videoPaths: s.videoPaths.filter((v) => v !== p) }))} />
-        {ats && (
-          <Slot title="원본 이미지 폴더" hint="비교 기준 이미지 폴더 (예: D:\excelrunner_report\captured_image)" onDrop={dropInto('ref')} onDragOver={allowDrop}
+        {(
+          <Slot title="원본 이미지 폴더" hint={ats ? '비교 기준 이미지 폴더 (예: D:\excelrunner_report\captured_image)' : '비교 기준 이미지 폴더 (예: rnavn_project/Image)'} onDrop={dropInto('ref')} onDragOver={allowDrop}
             items={source.refDir ? [source.refDir] : []} onRemove={() => setSource((s) => ({ ...s, refDir: null }))} />
         )}
         <Slot
-          title={ats ? '결과 이미지 폴더' : '이미지 폴더'}
-          hint={ats ? '실행 때 캡처한 이미지 폴더 (예: D:\\excelrunner_report\\2026-10-06-1403\\RVC_001)' : '폴더를 끌어다 놓으세요'}
+          title="결과 이미지 폴더"
+          hint={ats ? '실행 때 캡처한 이미지 폴더 (예: D:\\excelrunner_report\\2026-10-06-1403\\RVC_001)' : '실행 때 캡처한 이미지 폴더 (예: RF_TESTLOG/…/Image)'}
           onDrop={dropInto('image')} onDragOver={allowDrop}
           items={source.imageDir ? [source.imageDir] : []} onRemove={() => setSource((s) => ({ ...s, imageDir: null }))} />
       </div>
@@ -314,6 +314,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     () => (rawText === null ? null : ats ? parseAts(rawText) : parseRfw(rawText)),
     [rawText, mapping, ats],
   )
+  // ATS·RFW(형식이 정해진 결과): 영상 아래 원본 · 결과 두 장
+  const pairImages = !!parsed?.table
   const absolute = parsed?.timeKind === 'absolute'
   const rows = useMemo(() => parsed?.rows ?? [], [parsed])
   const sortedRows = useMemo(() => rows.filter((r) => r.time !== null).sort((a, b) => a.time! - b.time! || a.index - b.index), [rows])
@@ -338,9 +340,9 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   )
   const resolveImage = useCallback((p: string) => imagesByName.get(baseName(p).toLowerCase()) ?? p, [imagesByName])
   const timedImages = useMemo(
-    () => images.filter((i) => !ats || !ATS_VARIANT.test(i.name))
+    () => images.filter((i) => !pairImages || !ATS_VARIANT.test(i.name))
       .map((i) => ({ entry: i, time: timeFromName(i.name) })).filter((x) => x.time !== null).sort((a, b) => a.time! - b.time!),
-    [images, ats],
+    [images, pairImages],
   )
 
   const videoTimeOf = useCallback(
@@ -434,7 +436,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
       <ViewerHead session={session} sessions={sessions} onBack={onBack} setDialog={setDialog} />
       {/* RFW는 열이 11개라 표 쪽을 넓게 */}
       <div className={`rv-main${parsed?.table && !ats ? ' wide' : ''}`}>
-        <section className={`rv-left${ats ? ' fit' : ''}`}>
+        <section className={`rv-left${pairImages ? ' fit' : ''}`}>
           <VideoTransport
             src={currentRaw?.prep === 'ready' && currentRaw.playPath ? fileUrl(currentRaw.playPath) : null}
             waiting={
@@ -483,7 +485,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           </div>
           {notice && <div className="rv-notice small">{notice}</div>}
           <div className="rv-images">
-            {ats ? (
+            {pairImages ? (
               <AtsImagePanel
                 row={focusRow}
                 byName={imagesByName}
@@ -502,7 +504,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               {focusRow && focusRow.images.length === 0 && <span className="muted small">이 스텝에 적힌 이미지가 없습니다</span>}
             </div>
             </>}
-            {!ats && timedImages.length > 0 && (
+            {!pairImages && timedImages.length > 0 && (
               <>
                 <div className="rv-images-title small muted">이미지 폴더 ({timedImages.length}) · 누르면 그 시각으로 이동</div>
                 <div className="rv-strip">
@@ -613,7 +615,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           }}
           videos={rawVideos}
           backupFiles={[...new Set([
-            ...images.filter((i) => !ats || !/_full\.\w+$/i.test(i.name)).map((i) => i.fullPath),
+            ...images.filter((i) => !pairImages || !/_full\.\w+$/i.test(i.name)).map((i) => i.fullPath),
             ...rows.flatMap((r) => [...r.images, ...atsVariants(r.ats, imagesByName)].map(resolveImage)),
           ])]}
           onSaved={(saved) => setSessionSet(id, saved)}
@@ -712,7 +714,7 @@ function AtsImagePanel({ row, byName, url, onPreview }: {
   return (
     <div className="rv-ats-images">
       <div className="rv-images-title small">
-        {ats && <span className={`rv-ats-kind kind-${ats.kind}`}>{ATS_KIND_LABEL[ats.kind]}</span>}
+        {ats && <span className={`rv-ats-kind kind-${ats.kind}`}>{ats.label ?? ATS_KIND_LABEL[ats.kind]}</span>}
         {row ? <span className="muted"> #{row.index + 1} {row.name}</span> : <span className="muted">원본 · 결과 이미지</span>}
         {row?.status && <span className={`rv-ats-status tone-${tone || 'none'}`}> {row.status}</span>}
         {ats?.kind === 'py' && ats.target && (
@@ -727,7 +729,7 @@ function AtsImagePanel({ row, byName, url, onPreview }: {
           path={result}
           url={url}
           onPreview={onPreview}
-          empty={emptyText ?? (ats?.kind === 'p' ? '결과 이미지 없음 — 화면에서 찾지 못함' : '결과 이미지 없음')}
+          empty={emptyText ?? (ats?.kind !== 'p' ? '결과 이미지 없음' : ats.label ? '결과 이미지 없음 (원본과의 일치율만 기록됨)' : '결과 이미지 없음 — 화면에서 찾지 못함')}
           tools={ats?.result && (diff || v.full) ? (
             <span className="rv-ats-views">
               <button type="button" className={view === 'capture' ? 'active' : ''} onClick={() => setView('capture')}>캡처</button>
