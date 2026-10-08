@@ -14,6 +14,9 @@ public static class LocalControl
 
     /// <summary>에이전트 서비스(프로세스)를 완전히 종료</summary>
     public const string StopCommand = "stop";
+
+    /// <summary>물리 모니터가 켜져 있어 가상 모니터를 끈다 (런처가 사용자 세션에서 확장 화면 상태를 발견했을 때)</summary>
+    public const string ReleaseVirtualDisplayCommand = "release-virtual-display";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<ConnectionStatus>))]

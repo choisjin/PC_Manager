@@ -458,8 +458,22 @@ internal static class RemoteSessionApp
                     _ = SendJsonAsync(new { type = "error", message = $"가상 모니터를 준비하지 못했습니다: {ex.Message}" }, ct);
                 }
 
+                var displayCheck = Stopwatch.StartNew();
                 while (!ct.IsCancellationRequested)
                 {
+                    // 물리 모니터가 다시 켜졌으면 가상 모니터를 끄고(멀티 모니터 방지) 주 모니터를 다시 잡는다
+                    if (displayCheck.ElapsedMilliseconds >= 5000)
+                    {
+                        displayCheck.Restart();
+                        if (ReleaseVirtualDisplay())
+                        {
+                            capturer?.Dispose();
+                            capturer = null;
+                            appliedMatch = (int.MinValue, 0, 0, false);
+                            _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "virtual-released" }, ct);
+                        }
+                    }
+
                     // 데스크톱 전환(UAC, 잠금 화면, 로그인)이나 모니터 변경 시 캡처 장치를 다시 만든다
                     var desktopChanged = DesktopSwitcher.SyncThreadToInputDesktop();
                     if (desktopChanged && currentMonitor != int.MinValue)
@@ -628,6 +642,23 @@ internal static class RemoteSessionApp
         /// 원격 모니터의 디스플레이 모드를 대시보드 PC 해상도에 맞춘다. 끄면 원래 모드로 되돌린다.
         /// </summary>
         /// <returns>모드가 실제로 바뀌어 캡처 장치를 다시 만들어야 하면 true</returns>
+        /// <summary>물리 모니터가 다시 켜졌으면 가상 모니터를 끈다 (멀티 모니터 방지). 껐으면 주 모니터로 되돌린다</summary>
+        private bool ReleaseVirtualDisplay()
+        {
+            try
+            {
+                if (!VirtualDisplay.ReleaseIfPhysicalPresent(m => Trace.WriteLine(m)))
+                    return false;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                Trace.WriteLine($"가상 모니터 끄기 실패: {ex.Message}");
+                return false;
+            }
+            _monitorIndex = -1;
+            return true;
+        }
+
         private bool ApplyDisplayMode(int monitorIndex, int screenWidth, int screenHeight, bool on, CancellationToken ct)
         {
             var displays = DisplayModes.Enumerate();

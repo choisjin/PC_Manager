@@ -76,6 +76,8 @@ export default function App() {
     orgActions,
     presence,
     announcePresence,
+    announceUser,
+    onlineUsers,
     pcStatuses,
     setPcStatus,
     serverHostName,
@@ -115,7 +117,9 @@ export default function App() {
     reloadShares()
     // 채팅: 이 사용자의 방만 받는다
     joinChat(identity?.userId ?? null)
-  }, [identity?.userId, reloadShares, joinChat])
+    // 접속 중인 사용자로 알린다 (State 화면)
+    announceUser(identity?.userId ?? null)
+  }, [identity?.userId, reloadShares, joinChat, announceUser])
 
   // id → 이름 해석 (PC/공유, 사용자)
   const nameById = useMemo(() => {
@@ -247,6 +251,7 @@ export default function App() {
             org={org}
             serverHostName={serverHostName}
             selfUserId={identity.userId}
+            onlineUsers={onlineUsers}
             connected={connected}
           />
         ) : page === 'settings' ? (

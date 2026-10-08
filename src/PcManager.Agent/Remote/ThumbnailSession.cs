@@ -81,8 +81,27 @@ internal sealed class ThumbnailSession(ClientWebSocket socket) : IDisposable
                 Send(JsonSerializer.SerializeToUtf8Bytes(new { type = "error", message = $"가상 모니터 준비 실패: {ex.Message}" }, Json), WebSocketMessageType.Text);
             }
 
+            var displayCheck = Stopwatch.StartNew();
             while (!ct.IsCancellationRequested)
             {
+                // 물리 모니터가 다시 켜졌으면 가상 모니터를 끈다 (멀티 모니터로 쓰지 않게) → 캡처를 다시 만든다
+                if (displayCheck.ElapsedMilliseconds >= 5000)
+                {
+                    displayCheck.Restart();
+                    try
+                    {
+                        if (VirtualDisplay.ReleaseIfPhysicalPresent(m => Trace.WriteLine(m)))
+                        {
+                            capturer?.Dispose();
+                            capturer = null;
+                        }
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                    {
+                        Trace.WriteLine($"가상 모니터 끄기 실패: {ex.Message}");
+                    }
+                }
+
                 var desktopChanged = DesktopSwitcher.SyncThreadToInputDesktop();
                 if (desktopChanged || capturer is null)
                 {

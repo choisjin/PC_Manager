@@ -489,3 +489,6 @@ src/PcManager.Server/App_Data/
 
 # 배포 패키지 빌드 결과 (build/package.ps1)
 artifacts/
+
+# 참고 자료 (발표 양식·샘플 등) — 저장소에 올리지 않음
+Reference/

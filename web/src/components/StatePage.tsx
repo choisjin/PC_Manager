@@ -14,10 +14,12 @@ interface Props {
   org: Org
   serverHostName: string | null
   selfUserId: string | null
+  /** 대시보드를 열어 둔 사용자 */
+  onlineUsers: string[]
   connected: boolean
 }
 
-// ── 화면 모델 (Canvas가 매 프레임 읽는다)
+// ── 화면 모델
 interface PcNode {
   id: string
   name: string
@@ -28,18 +30,28 @@ interface PcNode {
   viewers: string[]
   x: number
   y: number
-  angle: number
+}
+interface GroupPanel {
+  key: string
+  name: string
+  color: string
+  x: number
+  y: number
+  w: number
+  h: number
+  total: number
+  online: number
 }
 interface UserNode {
   id: string
   name: string
   self: boolean
+  active: boolean
   x: number
   y: number
 }
 interface Burst {
-  x: number
-  y: number
+  id: string
   color: string
   born: number
   big: boolean
@@ -50,23 +62,34 @@ interface LogEntry {
   text: string
   tone: 'ok' | 'bad' | 'info' | 'remote'
 }
+type Pos = Record<string, { x: number; y: number }>
 
 const COLORS = {
-  online: '#35f0c9',
-  offline: '#4a5468',
-  remote: '#ff3fa4',
+  online: '#35e0b5',
+  offline: '#556074',
+  remote: '#ff4fa8',
   testing: '#ffb547',
-  forbidden: '#ff4d5e',
+  forbidden: '#ff5466',
   maintenance: '#5aa8ff',
-  server: '#7fd8ff',
-  user: '#c49bff',
+  server: '#8fd3ff',
+  user: '#b896ff',
   self: '#ffd36b',
-  fetch: '#4fe3ff',
+  fetch: '#4fd8ff',
   push: '#ffc95a',
   compress: '#b37dff',
-  extract: '#7dffa8',
+  extract: '#6ff0a0',
 }
+const GROUP_COLORS = ['#5aa8ff', '#35e0b5', '#ffb547', '#c49bff', '#ff7ab6', '#7dd3fc', '#a3e635', '#f97316']
 const HUD_WIDTH = 300
+const CELL_W = 104
+const CELL_H = 52
+const CARD_W = 94
+const CARD_H = 40
+const HEAD_H = 30
+const PAD = 10
+const SERVER_W = 124
+const SERVER_H = 54
+const POS_KEY = 'pcm.state.pos'
 
 const pcColor = (n: PcNode) =>
   !n.online ? COLORS.offline
@@ -80,43 +103,56 @@ const transferColor = (t: Transfer) =>
 
 const leaf = (p: string | null) => p?.split(/[\\/]/).filter(Boolean).pop() ?? ''
 
-/** State: 우주 배경 위에 서버·PC·사용자를 광케이블로 잇고 상태·동작을 실시간으로 보여 준다 */
-export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence, transfers, org, serverHostName, selfUserId, connected }: Props) {
+function loadPos(): Pos {
+  try {
+    return JSON.parse(localStorage.getItem(POS_KEY) ?? '{}') as Pos
+  } catch {
+    return {}
+  }
+}
+
+/** State: 격자 위에 서버·그룹(PC)·사용자를 빛이 흐르는 선으로 잇고 상태·동작을 실시간으로. 노드는 끌어서 옮긴다 */
+export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence, transfers, org, serverHostName, selfUserId, onlineUsers, connected }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ w: 800, h: 600 })
   const [hover, setHover] = useState<{ x: number; y: number; lines: string[] } | null>(null)
   const [log, setLog] = useState<LogEntry[]>([])
+  // 끌어서 옮긴 위치 (화면 영역 비율 0~1: 창 크기가 바뀌어도 같은 자리)
+  const [pos, setPos] = useState<Pos>(loadPos)
+  const [drag, setDrag] = useState<{ key: string; dx: number; dy: number } | null>(null)
   const burstsRef = useRef<Burst[]>([])
   const logId = useRef(0)
 
   const userName = (id: string) => org.users.find((u) => u.id === id)?.name ?? '사용자'
+  const areaW = Math.max(320, size.w - HUD_WIDTH)
 
-  // 그룹(폴더) 순서대로 PC를 늘어놓는다 (하위 폴더는 "상위 / 하위")
-  const ordered = useMemo(() => {
+  // 그룹(폴더)별 PC (하위 폴더는 "상위 / 하위")
+  const grouped = useMemo(() => {
     const { roots, ungrouped } = buildTree(pcGroups, agents)
-    const out: { agent: Agent; group: string }[] = []
+    const out: { key: string; name: string; agents: Agent[] }[] = []
     const walk = (n: FolderNode, path: string) => {
-      for (const a of n.agents) out.push({ agent: a, group: path })
+      if (n.agents.length) out.push({ key: n.folder.id, name: path, agents: n.agents })
       for (const c of n.children) walk(c, `${path} / ${c.folder.name}`)
     }
     for (const r of roots) walk(r, r.folder.name)
-    for (const a of ungrouped) out.push({ agent: a, group: '미분류' })
+    if (ungrouped.length) out.push({ key: 'ungrouped', name: '미분류', agents: ungrouped })
     return out
   }, [agents, pcGroups])
 
-  // 지금 활동 중인 사용자: 원격조작 · PC 탐색 · 전송을 실행한 사람 + 나
   const activeTransfers = useMemo(() => transfers.filter((t) => t.state === 'Pending' && t.kind !== 'Collect'), [transfers])
-  const userIds = useMemo(() => {
-    const ids = new Set<string>()
-    if (selfUserId) ids.add(selfUserId)
-    for (const u of Object.values(remoteUsage)) ids.add(u.userId)
-    for (const list of Object.values(presence)) for (const id of list) ids.add(id)
-    for (const t of activeTransfers) if (t.startedByUserId) ids.add(t.startedByUserId)
-    return [...ids].filter((id) => org.users.some((u) => u.id === id))
-  }, [selfUserId, remoteUsage, presence, activeTransfers, org.users])
 
-  // 크기
+  // 사용자: 대시보드를 열어 둔 모든 사람 + 원격조작·탐색·전송 중인 사람 + 나
+  const users = useMemo(() => {
+    const active = new Set<string>()
+    for (const u of Object.values(remoteUsage)) active.add(u.userId)
+    for (const list of Object.values(presence)) for (const id of list) active.add(id)
+    for (const t of activeTransfers) if (t.startedByUserId) active.add(t.startedByUserId)
+    const ids = new Set<string>([...onlineUsers, ...active])
+    if (selfUserId) ids.add(selfUserId)
+    return [...ids].filter((id) => org.users.some((u) => u.id === id)).map((id) => ({ id, active: active.has(id) }))
+  }, [onlineUsers, remoteUsage, presence, activeTransfers, selfUserId, org.users])
+
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return
@@ -125,65 +161,53 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
     return () => ro.disconnect()
   }, [])
 
-  // 배치: 서버는 가운데(HUD 왼쪽 영역), PC는 서버 둘레 궤도, 사용자는 왼쪽 세로줄
+  // 배치: 저장한 위치가 있으면 그 자리, 없으면 서버 둘레에 그룹 패널, 왼쪽에 사용자
   const layout = useMemo(() => {
-    const areaW = Math.max(320, size.w - HUD_WIDTH)
-    const cx = areaW * 0.56
-    const cy = size.h * 0.5
-    const base = Math.min(areaW * 0.62, size.h) * 0.36
-    const n = ordered.length
-    const rings = n > 28 ? 2 : 1
-    // 그룹 사이에 빈칸을 두어 구역이 보이게
-    const groups: string[] = []
-    for (const o of ordered) if (groups[groups.length - 1] !== o.group) groups.push(o.group)
-    const slots = n + groups.length
+    const at = (key: string, fx: number, fy: number) => {
+      const p = pos[key]
+      return { x: (p?.x ?? fx) * areaW, y: (p?.y ?? fy) * size.h }
+    }
+    const server = at('server', 0.56, 0.5)
+    const panels: GroupPanel[] = []
     const pcs: PcNode[] = []
-    const groupArcs: { name: string; angle: number; r: number }[] = []
-    let slot = 0
-    let lastGroup = ''
-    let groupStart = 0
-    ordered.forEach(({ agent, group }, i) => {
-      if (group !== lastGroup) {
-        if (lastGroup) groupArcs.push({ name: lastGroup, angle: (groupStart + slot - 1) / 2, r: 0 })
-        slot += 1
-        groupStart = slot
-        lastGroup = group
-      }
-      const angle = -Math.PI / 2 + (slot / Math.max(1, slots)) * Math.PI * 2
-      const r = rings === 2 ? base * (i % 2 === 0 ? 0.92 : 1.22) : base
-      pcs.push({
-        id: agent.id,
-        name: displayName(agent, pcGroups),
-        group,
-        online: agent.online,
-        status: pcStatuses[agent.id]?.status ?? null,
-        inUseBy: remoteUsage[agent.id]?.userId ?? null,
-        viewers: presence[agent.id] ?? [],
-        x: cx + Math.cos(angle) * r,
-        y: cy + Math.sin(angle) * r * 0.86,
-        angle,
+    grouped.forEach((g, i) => {
+      const n = g.agents.length
+      const cols = Math.max(1, Math.min(n, Math.ceil(Math.sqrt(n * 1.4))))
+      const rows = Math.ceil(n / cols)
+      const w = cols * CELL_W + PAD * 2 - (CELL_W - CARD_W)
+      const h = HEAD_H + rows * CELL_H + PAD - (CELL_H - CARD_H)
+      // 기본 자리: 서버 둘레 타원 (위에서 시계 방향)
+      const angle = -Math.PI / 2 + (i / Math.max(1, grouped.length)) * Math.PI * 2 + (grouped.length === 2 ? Math.PI / 2 : 0)
+      const def = { x: 0.56 + Math.cos(angle) * 0.3, y: 0.5 + Math.sin(angle) * 0.32 }
+      const c = at(`g:${g.key}`, def.x, def.y)
+      const x = Math.max(4, Math.min(areaW - w - 4, c.x - w / 2))
+      const y = Math.max(4, Math.min(size.h - h - 4, c.y - h / 2))
+      panels.push({ key: g.key, name: g.name, color: GROUP_COLORS[i % GROUP_COLORS.length], x, y, w, h, total: n, online: g.agents.filter((a) => a.online).length })
+      g.agents.forEach((agent, k) => {
+        const col = k % cols
+        const row = Math.floor(k / cols)
+        pcs.push({
+          id: agent.id,
+          name: displayName(agent, pcGroups),
+          group: g.name,
+          online: agent.online,
+          status: pcStatuses[agent.id]?.status ?? null,
+          inUseBy: remoteUsage[agent.id]?.userId ?? null,
+          viewers: presence[agent.id] ?? [],
+          x: x + PAD + col * CELL_W + CARD_W / 2,
+          y: y + HEAD_H + row * CELL_H + CARD_H / 2,
+        })
       })
-      slot += 1
     })
-    if (lastGroup) groupArcs.push({ name: lastGroup, angle: (groupStart + slot - 1) / 2, r: 0 })
-    const labels = groupArcs.map((g) => {
-      const angle = -Math.PI / 2 + (g.angle / Math.max(1, slots)) * Math.PI * 2
-      const r = base * (rings === 2 ? 1.5 : 1.32)
-      return { name: g.name, x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r * 0.86 }
+    const userNodes: UserNode[] = users.map((u, i) => {
+      const def = { x: Math.max(60, areaW * 0.07) / areaW, y: 0.5 + (i - (users.length - 1) / 2) * Math.min(0.11, 0.8 / Math.max(1, users.length)) }
+      const p = at(`u:${u.id}`, def.x, def.y)
+      return { id: u.id, name: userName(u.id), self: u.id === selfUserId, active: u.active, x: p.x, y: p.y }
     })
-    const users: UserNode[] = userIds.map((id, i) => ({
-      id,
-      name: userName(id),
-      self: id === selfUserId,
-      x: Math.max(70, areaW * 0.08),
-      y: size.h / 2 + (i - (userIds.length - 1) / 2) * Math.min(70, (size.h - 120) / Math.max(1, userIds.length)),
-    }))
-    return { cx, cy, base, pcs, users, labels }
-    // userName은 org에서 매번 찾는다
+    return { server, panels, pcs, users: userNodes }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size, ordered, pcGroups, pcStatuses, remoteUsage, presence, userIds, selfUserId, org.users])
+  }, [size, areaW, pos, grouped, pcGroups, pcStatuses, remoteUsage, presence, users, selfUserId, org.users])
 
-  // 화면 모델은 ref로 넘겨 애니메이션이 다시 시작되지 않게
   const modelRef = useRef({ layout, activeTransfers })
   modelRef.current = { layout, activeTransfers }
 
@@ -191,14 +215,10 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
   const prevRef = useRef<{ transfers: Map<string, Transfer['state']>; remote: Record<string, string>; online: Map<string, boolean> } | null>(null)
   useEffect(() => {
     const now = performance.now()
-    const pcAt = (id: string) => layout.pcs.find((p) => p.id === id)
-    const pcName = (id: string) => pcAt(id)?.name ?? id.slice(0, 8)
+    const pcName = (id: string) => layout.pcs.find((p) => p.id === id)?.name ?? id.slice(0, 8)
     const entries: LogEntry[] = []
     const add = (text: string, tone: LogEntry['tone']) => entries.push({ id: ++logId.current, at: Date.now(), text, tone })
-    const burst = (id: string, color: string, big = false) => {
-      const p = pcAt(id)
-      if (p) burstsRef.current.push({ x: p.x, y: p.y, color, born: now, big })
-    }
+    const burst = (id: string, color: string, big = false) => burstsRef.current.push({ id, color, born: now, big })
     const prev = prevRef.current
     const cur = {
       transfers: new Map(transfers.map((t) => [t.id, t.state])),
@@ -207,8 +227,8 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
     }
     if (prev) {
       for (const t of transfers) {
-        const before = prev.transfers.get(t.id)
         if (t.kind === 'Collect') continue
+        const before = prev.transfers.get(t.id)
         if (before === undefined && t.state === 'Pending') add(`${pcName(t.agentId)} · ${kindLabel(t.kind)} 시작 ${leaf(t.path)}`, 'info')
         if (before === 'Pending' && t.state === 'Succeeded') {
           add(`${pcName(t.agentId)} · ${kindLabel(t.kind)} 완료 ${leaf(t.path)}`, 'ok')
@@ -252,327 +272,318 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
     canvas.style.width = `${size.w}px`
     canvas.style.height = `${size.h}px`
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    const speed = reduced ? 0.3 : 1
+    const speed = reduced ? 0.4 : 1
 
-    // 별 3겹 (먼 것은 느리게)
-    const rand = (seed: number) => {
-      let s = seed
-      return () => ((s = (s * 16807) % 2147483647) / 2147483647)
+    // 격자는 한 번 그려 두고 매 프레임 복사
+    const grid = document.createElement('canvas')
+    grid.width = canvas.width
+    grid.height = canvas.height
+    const g = grid.getContext('2d')!
+    g.scale(dpr, dpr)
+    const bg = g.createRadialGradient(size.w * 0.45, size.h * 0.5, 0, size.w * 0.45, size.h * 0.5, Math.max(size.w, size.h) * 0.75)
+    bg.addColorStop(0, '#0f1730')
+    bg.addColorStop(1, '#070b16')
+    g.fillStyle = bg
+    g.fillRect(0, 0, size.w, size.h)
+    for (const [step, color] of [[24, 'rgba(120, 160, 255, 0.06)'], [120, 'rgba(120, 160, 255, 0.14)']] as const) {
+      g.strokeStyle = color
+      g.lineWidth = 1
+      g.beginPath()
+      for (let x = 0.5; x < size.w; x += step) {
+        g.moveTo(x, 0)
+        g.lineTo(x, size.h)
+      }
+      for (let y = 0.5; y < size.h; y += step) {
+        g.moveTo(0, y)
+        g.lineTo(size.w, y)
+      }
+      g.stroke()
     }
-    const r = rand(12345)
-    const stars = [0.15, 0.35, 0.7].flatMap((depth, layer) =>
-      Array.from({ length: Math.round((size.w * size.h) / (layer === 0 ? 2600 : layer === 1 ? 6500 : 16000)) }, () => ({
-        x: r() * size.w,
-        y: r() * size.h,
-        size: (layer + 1) * 0.45 + r() * 0.6,
-        depth,
-        tw: r() * Math.PI * 2,
-      })),
-    )
-    const nebulae = Array.from({ length: 4 }, (_, i) => ({
-      x: r() * size.w,
-      y: r() * size.h,
-      rad: Math.max(size.w, size.h) * (0.25 + r() * 0.25),
-      hue: [265, 200, 320, 185][i],
-    }))
 
     let raf = 0
     const start = performance.now()
 
-    const curve = (ax: number, ay: number, bx: number, by: number, bend = 0.12) => {
-      const mx = (ax + bx) / 2
-      const my = (ay + by) / 2
+    const curve = (ax: number, ay: number, bx: number, by: number, bend = 0.1) => {
       const dx = bx - ax
       const dy = by - ay
-      return { ax, ay, bx, by, qx: mx - dy * bend, qy: my + dx * bend }
+      return { ax, ay, bx, by, qx: (ax + bx) / 2 - dy * bend, qy: (ay + by) / 2 + dx * bend }
     }
     type Curve = ReturnType<typeof curve>
     const at = (c: Curve, t: number) => {
       const u = 1 - t
       return { x: u * u * c.ax + 2 * u * t * c.qx + t * t * c.bx, y: u * u * c.ay + 2 * u * t * c.qy + t * t * c.by }
     }
-    const stroke = (c: Curve, color: string, width: number, alpha: number, dash?: number[]) => {
+    const stroke = (c: Curve, color: string, width: number, alpha: number, dash?: number[], dashOffset = 0) => {
       ctx.save()
       ctx.globalAlpha = alpha
       ctx.strokeStyle = color
       ctx.lineWidth = width
-      if (dash) ctx.setLineDash(dash)
+      ctx.lineCap = 'round'
+      if (dash) {
+        ctx.setLineDash(dash)
+        ctx.lineDashOffset = dashOffset
+      }
       ctx.beginPath()
       ctx.moveTo(c.ax, c.ay)
       ctx.quadraticCurveTo(c.qx, c.qy, c.bx, c.by)
       ctx.stroke()
       ctx.restore()
     }
-    /** 선을 따라 흐르는 빛 (꼬리 포함). reverse면 b → a */
-    const pulses = (c: Curve, now: number, color: string, count: number, period: number, sizePx: number, reverse = false, tail = 6) => {
-      for (let k = 0; k < count; k++) {
-        const phase = ((now / period + k / count) % 1 + 1) % 1
-        for (let j = 0; j < tail; j++) {
-          const t = phase - j * 0.012
-          if (t < 0) continue
-          const p = at(c, reverse ? 1 - t : t)
-          const a = (1 - j / tail) * 0.9
-          glowDot(p.x, p.y, sizePx * (1 - j / (tail * 1.4)), color, a)
-        }
-      }
-    }
     const glowDot = (x: number, y: number, rad: number, color: string, alpha: number) => {
-      const g = ctx.createRadialGradient(x, y, 0, x, y, rad * 3)
-      g.addColorStop(0, color)
-      g.addColorStop(0.35, color + 'aa')
-      g.addColorStop(1, color + '00')
+      const gr = ctx.createRadialGradient(x, y, 0, x, y, rad * 3)
+      gr.addColorStop(0, color)
+      gr.addColorStop(0.4, color + '99')
+      gr.addColorStop(1, color + '00')
       ctx.globalAlpha = alpha
-      ctx.fillStyle = g
+      ctx.fillStyle = gr
       ctx.beginPath()
       ctx.arc(x, y, rad * 3, 0, Math.PI * 2)
       ctx.fill()
       ctx.globalAlpha = 1
     }
+    /** 선을 따라 흐르는 빛 (꼬리 포함). reverse면 b → a */
+    const pulses = (c: Curve, now: number, color: string, count: number, period: number, sizePx: number, reverse = false, tail = 6) => {
+      for (let k = 0; k < count; k++) {
+        const phase = ((now / period + k / count) % 1 + 1) % 1
+        for (let j = 0; j < tail; j++) {
+          const t = phase - j * 0.014
+          if (t < 0) continue
+          const p = at(c, reverse ? 1 - t : t)
+          glowDot(p.x, p.y, sizePx * (1 - j / (tail * 1.3)), color, (1 - j / tail) * 0.85)
+        }
+      }
+    }
+    /** 직사각형 가장자리에서 (tx, ty) 쪽으로 나가는 점 */
+    const edge = (x: number, y: number, w: number, h: number, tx: number, ty: number) => {
+      const cx = x + w / 2
+      const cy = y + h / 2
+      const dx = tx - cx
+      const dy = ty - cy
+      const s = Math.min(Math.abs(w / 2 / (dx || 1e-6)), Math.abs(h / 2 / (dy || 1e-6)))
+      return { x: cx + dx * s, y: cy + dy * s }
+    }
 
     const frame = (nowAbs: number) => {
       const now = (nowAbs - start) * speed
       const { layout: L, activeTransfers: T } = modelRef.current
+      const { server } = L
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.drawImage(grid, 0, 0)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-      // 배경: 깊은 우주 + 성운 + 별
-      const bg = ctx.createLinearGradient(0, 0, 0, size.h)
-      bg.addColorStop(0, '#04050d')
-      bg.addColorStop(1, '#0a0b1f')
-      ctx.globalCompositeOperation = 'source-over'
-      ctx.fillStyle = bg
-      ctx.fillRect(0, 0, size.w, size.h)
+      // 그룹 패널
+      for (const p of L.panels) {
+        ctx.save()
+        ctx.fillStyle = 'rgba(14, 22, 44, 0.78)'
+        ctx.strokeStyle = p.color
+        ctx.globalAlpha = 1
+        ctx.lineWidth = 1.2
+        ctx.beginPath()
+        ctx.roundRect(p.x, p.y, p.w, p.h, 8)
+        ctx.fill()
+        ctx.globalAlpha = 0.6
+        ctx.stroke()
+        ctx.globalAlpha = 0.16
+        ctx.fillStyle = p.color
+        ctx.beginPath()
+        ctx.roundRect(p.x, p.y, p.w, HEAD_H - 6, [8, 8, 0, 0])
+        ctx.fill()
+        ctx.restore()
+        ctx.font = '700 12px "Segoe UI", "Malgun Gothic", sans-serif'
+        ctx.textAlign = 'left'
+        ctx.textBaseline = 'middle'
+        ctx.fillStyle = p.color
+        ctx.fillText(p.name, p.x + 10, p.y + (HEAD_H - 6) / 2)
+        ctx.textAlign = 'right'
+        ctx.font = '600 10.5px "Segoe UI", sans-serif'
+        ctx.fillStyle = '#9fb0d6'
+        ctx.fillText(`${p.online} / ${p.total}`, p.x + p.w - 10, p.y + (HEAD_H - 6) / 2)
+        ctx.textBaseline = 'alphabetic'
+      }
+
       ctx.globalCompositeOperation = 'lighter'
-      for (const nb of nebulae) {
-        const g = ctx.createRadialGradient(nb.x, nb.y, 0, nb.x, nb.y, nb.rad)
-        g.addColorStop(0, `hsla(${nb.hue}, 80%, 45%, 0.10)`)
-        g.addColorStop(1, `hsla(${nb.hue}, 80%, 30%, 0)`)
-        ctx.fillStyle = g
-        ctx.fillRect(nb.x - nb.rad, nb.y - nb.rad, nb.rad * 2, nb.rad * 2)
-      }
-      for (const s of stars) {
-        const x = (((s.x - now * 0.004 * s.depth) % size.w) + size.w) % size.w
-        const tw = 0.55 + 0.45 * Math.sin(now * 0.002 + s.tw)
-        ctx.globalAlpha = tw * (0.35 + s.depth)
-        ctx.fillStyle = '#dfe8ff'
-        ctx.fillRect(x, s.y, s.size, s.size)
-      }
-      ctx.globalAlpha = 1
-
-      const { cx, cy } = L
-      // 궤도 고리
-      ctx.save()
-      ctx.globalAlpha = 0.18
-      ctx.strokeStyle = '#6fa8ff'
-      ctx.setLineDash([2, 6])
-      ctx.lineDashOffset = -now * 0.01
-      ctx.beginPath()
-      ctx.ellipse(cx, cy, L.base, L.base * 0.86, 0, 0, Math.PI * 2)
-      ctx.stroke()
-      ctx.restore()
-
-      // 서버 ↔ PC 광케이블
-      for (const p of L.pcs) {
-        const c = curve(cx, cy, p.x, p.y, 0.1)
-        const col = pcColor(p)
-        if (!p.online) {
-          stroke(c, COLORS.offline, 1, 0.35, [3, 5])
-          continue
-        }
-        stroke(c, col, 3, 0.08)
-        stroke(c, col, 1, 0.45)
-        // 평소: 느린 심장 박동 빛
-        pulses(c, now + p.angle * 900, col, 1, 2600, 1.6, false, 5)
+      // 서버 ↔ 그룹 간선 (그룹 색, 천천히 흐르는 빛)
+      for (const p of L.panels) {
+        const a = edge(server.x - SERVER_W / 2, server.y - SERVER_H / 2, SERVER_W, SERVER_H, p.x + p.w / 2, p.y + p.h / 2)
+        const b = edge(p.x, p.y, p.w, p.h, server.x, server.y)
+        const c = curve(a.x, a.y, b.x, b.y, 0.06)
+        stroke(c, p.color, 6, 0.08)
+        stroke(c, p.color, 2, 0.55)
+        if (p.online > 0) pulses(c, now + p.x * 3, p.color, 1, 3200, 2, false, 6)
       }
       // 사용자 ↔ 서버
       for (const u of L.users) {
-        const c = curve(u.x, u.y, cx, cy, -0.08)
+        const c = curve(u.x, u.y, server.x - SERVER_W / 2, server.y, -0.06)
         const col = u.self ? COLORS.self : COLORS.user
-        stroke(c, col, 3, 0.07)
-        stroke(c, col, 1, 0.4)
-        pulses(c, now + u.y * 7, col, 1, 3200, 1.4, false, 5)
+        stroke(c, col, 1.5, u.active ? 0.5 : 0.25)
+        if (u.active) pulses(c, now + u.y * 5, col, 1, 3600, 1.5, false, 5)
       }
 
-      // 원격조작: 사용자 → 서버 → PC 굵은 빔 (화면은 PC → 사용자로 촘촘히, 입력은 반대로)
-      for (const p of L.pcs) {
-        if (!p.inUseBy) continue
-        const u = L.users.find((x) => x.id === p.inUseBy)
-        const legs = [curve(cx, cy, p.x, p.y, 0.1), ...(u ? [curve(u.x, u.y, cx, cy, -0.08)] : [])]
-        for (const c of legs) {
-          stroke(c, COLORS.remote, 6, 0.12)
-          stroke(c, COLORS.remote, 1.6, 0.8)
-        }
-        pulses(legs[0], now, COLORS.remote, 5, 900, 2.1, true, 7)
-        pulses(legs[0], now, '#ffffff', 2, 1400, 1.2, false, 4)
-        if (legs[1]) {
-          pulses(legs[1], now, COLORS.remote, 5, 900, 2.1, true, 7)
-          pulses(legs[1], now, '#ffffff', 2, 1400, 1.2, false, 4)
-        }
-      }
-      // PC 탐색(보기): 사용자 → PC 가는 점선
+      // PC 탐색(브라우저로 보는 중): 사용자 → PC, 흐르는 굵은 점선 + 느린 빛
       for (const p of L.pcs) {
         for (const vid of p.viewers) {
           if (vid === p.inUseBy) continue
           const u = L.users.find((x) => x.id === vid)
           if (!u) continue
-          const c = curve(u.x, u.y, p.x, p.y, 0.18)
-          ctx.save()
-          ctx.lineDashOffset = -now * 0.03
-          stroke(c, u.self ? COLORS.self : COLORS.user, 1, 0.22, [2, 7])
-          ctx.restore()
+          const col = u.self ? COLORS.self : COLORS.user
+          const c = curve(u.x, u.y, p.x - CARD_W / 2, p.y, 0.14)
+          stroke(c, col, 5, 0.1)
+          stroke(c, col, 1.8, 0.75, [8, 6], -now * 0.025)
+          pulses(c, now + p.y * 4, col, 1, 2800, 1.8, false, 6)
         }
       }
 
-      // 전송: 가져오기는 PC → 서버, 올리기는 서버 → PC, 압축은 소용돌이, 풀기는 퍼짐
+      // 원격조작: 사용자 → 서버 → PC (굵고 차분한 빔, 빛은 느리게)
+      for (const p of L.pcs) {
+        if (!p.inUseBy) continue
+        const u = L.users.find((x) => x.id === p.inUseBy)
+        const legs = [curve(server.x, server.y, p.x, p.y, 0.08)]
+        if (u) legs.unshift(curve(u.x, u.y, server.x, server.y, -0.06))
+        for (const c of legs) {
+          stroke(c, COLORS.remote, 8, 0.1)
+          stroke(c, COLORS.remote, 2.4, 0.85)
+          pulses(c, now, COLORS.remote, 2, 3000, 2.2, false, 7)
+        }
+      }
+
+      // 전송: 가져오기 PC → 서버, 올리기 서버 → PC (빛 입자), 압축·풀기는 카드 둘레 효과
       for (const t of T) {
         const p = L.pcs.find((x) => x.id === t.agentId)
         if (!p) continue
         const col = transferColor(t)
         if (t.kind === 'Fetch' || t.kind === 'Push') {
-          const c = curve(cx, cy, p.x, p.y, 0.1)
-          stroke(c, col, 5, 0.15)
-          stroke(c, col, 1.4, 0.85)
-          pulses(c, now, col, 6, 1100, 2.3, t.kind === 'Fetch', 8)
-          const u = t.startedByUserId ? L.users.find((x) => x.id === t.startedByUserId) : null
-          if (u) pulses(curve(u.x, u.y, cx, cy, -0.08), now, col, 3, 1500, 1.6, t.kind === 'Fetch', 5)
+          const c = curve(server.x, server.y, p.x, p.y, 0.08)
+          stroke(c, col, 6, 0.1)
+          stroke(c, col, 1.6, 0.8)
+          pulses(c, now, col, 3, 2000, 2.1, t.kind === 'Fetch', 7)
         } else {
-          // 압축: 안으로 빨려 드는 소용돌이 / 풀기: 밖으로 퍼지는 입자
           const inward = t.kind === 'Compress'
-          for (let k = 0; k < 14; k++) {
-            const ph = ((now / 1600 + k / 14) % 1 + 1) % 1
-            const rr = inward ? 34 * (1 - ph) + 6 : 6 + 34 * ph
-            const ang = k * 2.4 + now * (inward ? 0.004 : 0.0015) + ph * (inward ? 5 : 1.5)
-            glowDot(p.x + Math.cos(ang) * rr, p.y + Math.sin(ang) * rr * 0.8, 1.6, col, inward ? 0.25 + ph * 0.7 : 0.95 - ph * 0.8)
+          for (let k = 0; k < 12; k++) {
+            const ph = ((now / 1800 + k / 12) % 1 + 1) % 1
+            const rr = inward ? 30 * (1 - ph) + 22 : 22 + 30 * ph
+            const ang = k * 2.4 + now * 0.0012 + ph * (inward ? 3 : 1)
+            glowDot(p.x + Math.cos(ang) * rr * 1.5, p.y + Math.sin(ang) * rr * 0.75, 1.5, col, inward ? 0.25 + ph * 0.6 : 0.9 - ph * 0.8)
           }
-          ctx.save()
-          ctx.globalAlpha = 0.55
-          ctx.strokeStyle = col
-          ctx.lineWidth = 1.2
-          ctx.beginPath()
-          ctx.arc(p.x, p.y, 24, now * 0.004, now * 0.004 + Math.PI * 1.3)
-          ctx.stroke()
-          ctx.restore()
-        }
-        // 진행률 고리
-        if (typeof t.percent === 'number') {
-          ctx.save()
-          ctx.globalCompositeOperation = 'source-over'
-          ctx.strokeStyle = col
-          ctx.lineWidth = 2.5
-          ctx.beginPath()
-          ctx.arc(p.x, p.y, 17, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * t.percent) / 100)
-          ctx.stroke()
-          ctx.fillStyle = col
-          ctx.font = '600 10px "Segoe UI", sans-serif'
-          ctx.textAlign = 'left'
-          ctx.fillText(`${t.percent}%`, p.x + 22, p.y + 4)
-          ctx.restore()
         }
       }
 
-      // 섬광 (완료·실패·접속·원격 시작)
+      // 섬광
       const bursts = burstsRef.current
       for (let i = bursts.length - 1; i >= 0; i--) {
         const b = bursts[i]
         const age = (nowAbs - b.born) / (b.big ? 1400 : 1000)
-        if (age >= 1) {
+        const p = L.pcs.find((x) => x.id === b.id)
+        if (age >= 1 || !p) {
           bursts.splice(i, 1)
           continue
         }
-        const rad = (b.big ? 70 : 45) * age
+        const rad = (b.big ? 70 : 46) * age + 20
         ctx.save()
         ctx.globalAlpha = 1 - age
         ctx.strokeStyle = b.color
         ctx.lineWidth = 3 * (1 - age) + 0.5
         ctx.beginPath()
-        ctx.arc(b.x, b.y, rad, 0, Math.PI * 2)
-        ctx.stroke()
-        ctx.restore()
-        for (let k = 0; k < 10; k++) {
-          const a = (k / 10) * Math.PI * 2
-          glowDot(b.x + Math.cos(a) * rad * 0.9, b.y + Math.sin(a) * rad * 0.9, 1.4, b.color, 1 - age)
-        }
-      }
-
-      // 서버 코어
-      const pulse = 1 + 0.06 * Math.sin(now * 0.004)
-      glowDot(cx, cy, 16 * pulse, COLORS.server, 0.55)
-      ctx.globalCompositeOperation = 'source-over'
-      const core = ctx.createRadialGradient(cx - 6, cy - 6, 2, cx, cy, 26)
-      core.addColorStop(0, '#ffffff')
-      core.addColorStop(0.35, '#9be7ff')
-      core.addColorStop(1, '#1b4a8f')
-      ctx.fillStyle = core
-      ctx.beginPath()
-      ctx.arc(cx, cy, 24, 0, Math.PI * 2)
-      ctx.fill()
-      for (const [rad, sp, len] of [[36, 0.0016, 1.4], [46, -0.0011, 0.9], [56, 0.0007, 0.5]] as const) {
-        ctx.save()
-        ctx.strokeStyle = COLORS.server
-        ctx.globalAlpha = 0.6
-        ctx.lineWidth = 1.5
-        ctx.beginPath()
-        ctx.arc(cx, cy, rad, now * sp, now * sp + Math.PI * len)
-        ctx.stroke()
-        ctx.beginPath()
-        ctx.arc(cx, cy, rad, now * sp + Math.PI, now * sp + Math.PI + Math.PI * len * 0.5)
+        ctx.ellipse(p.x, p.y, rad * 1.3, rad * 0.8, 0, 0, Math.PI * 2)
         ctx.stroke()
         ctx.restore()
       }
 
-      // PC 노드
+      // PC 카드
       ctx.globalCompositeOperation = 'source-over'
       for (const p of L.pcs) {
         const col = pcColor(p)
-        ctx.globalCompositeOperation = 'lighter'
-        if (p.online) glowDot(p.x, p.y, p.inUseBy ? 9 + 2 * Math.sin(now * 0.008) : 6, col, p.inUseBy ? 0.75 : 0.45)
-        ctx.globalCompositeOperation = 'source-over'
-        // 모니터 모양
-        ctx.fillStyle = '#0c1222'
+        const x = p.x - CARD_W / 2
+        const y = p.y - CARD_H / 2
+        if (p.inUseBy) {
+          ctx.globalCompositeOperation = 'lighter'
+          glowDot(p.x, p.y, 16 + 2 * Math.sin(now * 0.003), COLORS.remote, 0.35)
+          ctx.globalCompositeOperation = 'source-over'
+        }
+        ctx.fillStyle = p.online ? '#111a33' : '#0d1222'
         ctx.strokeStyle = col
-        ctx.lineWidth = 1.5
+        ctx.globalAlpha = p.online ? 1 : 0.6
+        ctx.lineWidth = p.inUseBy ? 1.8 : 1
         ctx.beginPath()
-        ctx.roundRect(p.x - 10, p.y - 8, 20, 13, 2)
+        ctx.roundRect(x, y, CARD_W, CARD_H, 6)
         ctx.fill()
         ctx.stroke()
-        ctx.fillStyle = col
-        ctx.globalAlpha = p.online ? 0.35 + 0.15 * Math.sin(now * 0.003 + p.angle * 3) : 0.12
-        ctx.fillRect(p.x - 7.5, p.y - 5.5, 15, 8)
-        ctx.globalAlpha = 1
-        ctx.fillRect(p.x - 4, p.y + 6, 8, 1.5)
-        // 상태 표시등 (깜빡임)
-        const blink = p.online ? (p.inUseBy || p.status === 'testing' ? (Math.sin(now * 0.012) > 0 ? 1 : 0.25) : 1) : 0.4
-        ctx.globalAlpha = blink
+        // 상태 표시등 (원격·테스트 중은 깜빡임)
+        const blink = p.online && (p.inUseBy || p.status === 'testing') ? (Math.sin(now * 0.006) > 0 ? 1 : 0.3) : 1
+        ctx.globalAlpha = blink * (p.online ? 1 : 0.6)
+        if (p.online) {
+          ctx.globalCompositeOperation = 'lighter'
+          glowDot(x + 11, y + 12, 2.2, col, 0.8)
+          ctx.globalCompositeOperation = 'source-over'
+        }
         ctx.fillStyle = col
         ctx.beginPath()
-        ctx.arc(p.x + 12, p.y - 8, 2.6, 0, Math.PI * 2)
+        ctx.arc(x + 11, y + 12, 3, 0, Math.PI * 2)
         ctx.fill()
+        ctx.globalAlpha = p.online ? 1 : 0.6
+        ctx.font = '600 11px "Segoe UI", "Malgun Gothic", sans-serif'
+        ctx.textAlign = 'left'
+        ctx.fillStyle = p.online ? '#e4ecff' : '#7a8499'
+        const name = p.name.length > 11 ? p.name.slice(0, 10) + '…' : p.name
+        ctx.fillText(name, x + 20, y + 16)
+        // 둘째 줄: 상태
+        const tr = T.find((t) => t.agentId === p.id)
+        const sub = !p.online ? '오프라인'
+          : tr ? `${kindLabel(tr.kind)}${typeof tr.percent === 'number' ? ` ${tr.percent}%` : ''}`
+            : p.inUseBy ? `원격 · ${userName(p.inUseBy)}`
+              : p.status && p.status !== 'available' ? PC_STATUS_LABEL[p.status] : '대기'
+        ctx.font = '500 10px "Segoe UI", "Malgun Gothic", sans-serif'
+        ctx.fillStyle = tr ? transferColor(tr) : p.inUseBy ? COLORS.remote : '#8d9ab8'
+        ctx.fillText(sub.length > 13 ? sub.slice(0, 12) + '…' : sub, x + 9, y + 32)
+        // 진행 막대
+        if (tr) {
+          ctx.fillStyle = 'rgba(255,255,255,0.08)'
+          ctx.fillRect(x + 6, y + CARD_H - 4, CARD_W - 12, 2)
+          ctx.fillStyle = transferColor(tr)
+          const w = typeof tr.percent === 'number' ? ((CARD_W - 12) * tr.percent) / 100 : (CARD_W - 12) * 0.3
+          const off = typeof tr.percent === 'number' ? 0 : (((now / 1400) % 1) * (CARD_W - 12 - w))
+          ctx.fillRect(x + 6 + off, y + CARD_H - 4, w, 2)
+        }
         ctx.globalAlpha = 1
-        // 이름
-        ctx.font = '600 10.5px "Segoe UI", "Malgun Gothic", sans-serif'
-        ctx.textAlign = 'center'
-        ctx.fillStyle = p.online ? '#dce6ff' : '#6b7488'
-        const below = Math.sin(p.angle) > -0.2
-        ctx.fillText(p.name.length > 14 ? p.name.slice(0, 13) + '…' : p.name, p.x, below ? p.y + 22 : p.y - 16)
       }
-      // 그룹 이름
-      ctx.font = '700 11px "Segoe UI", "Malgun Gothic", sans-serif'
-      ctx.textAlign = 'center'
-      for (const g of L.labels) {
-        ctx.fillStyle = 'rgba(140, 170, 255, 0.55)'
-        ctx.fillText(g.name, g.x, g.y)
+
+      // 서버 (단순한 카드)
+      const sx = server.x - SERVER_W / 2
+      const sy = server.y - SERVER_H / 2
+      ctx.globalCompositeOperation = 'lighter'
+      glowDot(server.x, server.y, 18 + 2 * Math.sin(now * 0.002), COLORS.server, 0.3)
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.fillStyle = '#12224a'
+      ctx.strokeStyle = COLORS.server
+      ctx.lineWidth = 1.8
+      ctx.beginPath()
+      ctx.roundRect(sx, sy, SERVER_W, SERVER_H, 8)
+      ctx.fill()
+      ctx.stroke()
+      for (let k = 0; k < 3; k++) {
+        ctx.fillStyle = 'rgba(143, 211, 255, 0.25)'
+        ctx.fillRect(sx + 10, sy + 9 + k * 9, 30, 5)
+        ctx.fillStyle = k === Math.floor(now / 500) % 3 ? '#8fffd8' : '#3b6f8f'
+        ctx.fillRect(sx + 44, sy + 9 + k * 9, 4, 5)
       }
+      ctx.font = '800 12px "Segoe UI", sans-serif'
+      ctx.textAlign = 'left'
+      ctx.fillStyle = '#d8f1ff'
+      ctx.fillText('SERVER', sx + 52, sy + 22)
+      ctx.font = '500 9.5px "Segoe UI", sans-serif'
+      ctx.fillStyle = '#8fb3d6'
+      const host = serverHostName ?? ''
+      ctx.fillText(host.length > 9 ? host.slice(0, 8) + '…' : host, sx + 52, sy + 36)
 
       // 사용자
       for (const u of L.users) {
         const col = u.self ? COLORS.self : COLORS.user
-        ctx.globalCompositeOperation = 'lighter'
-        glowDot(u.x, u.y, 9, col, 0.4)
-        ctx.globalCompositeOperation = 'source-over'
-        ctx.fillStyle = '#120d24'
+        ctx.globalAlpha = u.active ? 1 : 0.75
+        ctx.fillStyle = '#151230'
         ctx.strokeStyle = col
         ctx.lineWidth = 2
         ctx.beginPath()
-        ctx.arc(u.x, u.y, 14, 0, Math.PI * 2)
+        ctx.arc(u.x, u.y, 15, 0, Math.PI * 2)
         ctx.fill()
         ctx.stroke()
         ctx.fillStyle = col
@@ -583,28 +594,71 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
         ctx.textBaseline = 'alphabetic'
         ctx.font = '600 10.5px "Segoe UI", "Malgun Gothic", sans-serif'
         ctx.fillStyle = '#e6dcff'
-        ctx.fillText(u.self ? `${u.name} (나)` : u.name, u.x, u.y + 28)
+        ctx.fillText(u.self ? `${u.name} (나)` : u.name, u.x, u.y + 29)
+        // 접속 표시등
+        ctx.fillStyle = u.active ? '#35e0b5' : '#6b7a99'
+        ctx.beginPath()
+        ctx.arc(u.x + 11, u.y - 11, 3.5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.globalAlpha = 1
       }
-
-      // 서버 이름
-      ctx.font = '700 11px "Segoe UI", sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillStyle = '#bfefff'
-      ctx.fillText('SERVER', cx, cy + 74)
 
       raf = requestAnimationFrame(frame)
     }
     raf = requestAnimationFrame(frame)
     return () => cancelAnimationFrame(raf)
-  }, [size])
+    // userName은 org에서 찾는다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [size, serverHostName, org.users])
 
-  // 마우스 올리면 자세히
-  const onMove = (e: React.MouseEvent) => {
+  // ── 끌어서 옮기기: 서버 · 그룹 패널(PC 포함) · 사용자
+  const hitTest = (x: number, y: number): string | null => {
+    const { server, panels, users: us } = layout
+    for (const u of us) if (Math.hypot(u.x - x, u.y - y) < 18) return `u:${u.id}`
+    if (Math.abs(server.x - x) < SERVER_W / 2 && Math.abs(server.y - y) < SERVER_H / 2) return 'server'
+    for (let i = panels.length - 1; i >= 0; i--) {
+      const p = panels[i]
+      if (x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h) return `g:${p.key}`
+    }
+    return null
+  }
+  const centerOf = (key: string) => {
+    if (key === 'server') return layout.server
+    if (key.startsWith('u:')) return layout.users.find((u) => `u:${u.id}` === key) ?? { x: 0, y: 0 }
+    const p = layout.panels.find((g) => `g:${g.key}` === key)
+    return p ? { x: p.x + p.w / 2, y: p.y + p.h / 2 } : { x: 0, y: 0 }
+  }
+  const local = (e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    const near = (px: number, py: number, d: number) => Math.hypot(px - x, py - y) < d
-    const pc = layout.pcs.find((p) => near(p.x, p.y, 16))
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+  const onDown = (e: React.MouseEvent) => {
+    const { x, y } = local(e)
+    const key = hitTest(x, y)
+    if (!key) return
+    const c = centerOf(key)
+    setDrag({ key, dx: x - c.x, dy: y - c.y })
+    setHover(null)
+  }
+  const onUp = () => {
+    if (!drag) return
+    setDrag(null)
+    try {
+      localStorage.setItem(POS_KEY, JSON.stringify(pos))
+    } catch {
+      // 무시
+    }
+  }
+
+  const onMove = (e: React.MouseEvent) => {
+    const { x, y } = local(e)
+    if (drag) {
+      const nx = Math.max(0.02, Math.min(0.98, (x - drag.dx) / areaW))
+      const ny = Math.max(0.03, Math.min(0.97, (y - drag.dy) / size.h))
+      setPos((p) => ({ ...p, [drag.key]: { x: nx, y: ny } }))
+      return
+    }
+    const pc = layout.pcs.find((p) => Math.abs(p.x - x) < CARD_W / 2 && Math.abs(p.y - y) < CARD_H / 2)
     if (pc) {
       const ts = activeTransfers.filter((t) => t.agentId === pc.id)
       setHover({
@@ -619,28 +673,53 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
       })
       return
     }
-    const u = layout.users.find((p) => near(p.x, p.y, 18))
+    const u = layout.users.find((p) => Math.hypot(p.x - x, p.y - y) < 18)
     if (u) {
       const remote = layout.pcs.filter((p) => p.inUseBy === u.id).map((p) => p.name)
-      setHover({ x, y, lines: [u.self ? `${u.name} (나)` : u.name, ...(remote.length ? [`원격조작: ${remote.join(', ')}`] : ['활동 중'])] })
+      const viewing = layout.pcs.filter((p) => p.viewers.includes(u.id)).map((p) => p.name)
+      setHover({
+        x, y,
+        lines: [u.self ? `${u.name} (나)` : u.name, ...(remote.length ? [`원격조작: ${remote.join(', ')}`] : []),
+          ...(viewing.length ? [`보는 중: ${viewing.join(', ')}`] : []), ...(!remote.length && !viewing.length ? ['대시보드 접속 중'] : [])],
+      })
       return
     }
-    if (near(layout.cx, layout.cy, 30)) {
+    if (Math.abs(layout.server.x - x) < SERVER_W / 2 && Math.abs(layout.server.y - y) < SERVER_H / 2) {
       setHover({ x, y, lines: ['관리 서버', serverHostName ?? '', connected ? '대시보드와 연결됨' : '연결 중…'] })
       return
     }
     setHover(null)
   }
 
+  const resetLayout = () => {
+    setPos({})
+    try {
+      localStorage.removeItem(POS_KEY)
+    } catch {
+      // 무시
+    }
+  }
+
   const online = agents.filter((a) => a.online).length
   const remoteCount = Object.keys(remoteUsage).length
-  const byKind = (k: Transfer['kind']) => activeTransfers.filter((t) => t.kind === k).length
+  const cursor = drag ? 'grabbing' : hover ? 'grab' : 'default'
 
   return (
     <div className="state-page" ref={wrapRef}>
-      <canvas ref={canvasRef} className="state-canvas" onMouseMove={onMove} onMouseLeave={() => setHover(null)} />
-      {hover && (
-        <div className="state-tip" style={{ left: Math.min(hover.x + 14, size.w - HUD_WIDTH - 230), top: hover.y + 14 }}>
+      <canvas
+        ref={canvasRef}
+        className="state-canvas"
+        style={{ cursor }}
+        onMouseDown={onDown}
+        onMouseMove={onMove}
+        onMouseUp={onUp}
+        onMouseLeave={() => {
+          onUp()
+          setHover(null)
+        }}
+      />
+      {hover && !drag && (
+        <div className="state-tip" style={{ left: Math.min(hover.x + 14, areaW - 240), top: hover.y + 14 }}>
           {hover.lines.filter(Boolean).map((l, i) => <div key={i} className={i === 0 ? 'state-tip-head' : ''}>{l}</div>)}
         </div>
       )}
@@ -648,7 +727,7 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
         <div className="state-hud-title">SYSTEM STATE <span className={`state-live${connected ? ' on' : ''}`}>{connected ? 'LIVE' : 'OFFLINE'}</span></div>
         <div className="state-stats">
           <div><b style={{ color: COLORS.online }}>{online}</b><span>/ {agents.length}</span><label>PC 온라인</label></div>
-          <div><b style={{ color: COLORS.user }}>{userIds.length}</b><label>활동 사용자</label></div>
+          <div><b style={{ color: COLORS.user }}>{layout.users.length}</b><label>접속 사용자</label></div>
           <div><b style={{ color: COLORS.remote }}>{remoteCount}</b><label>원격조작</label></div>
           <div><b style={{ color: COLORS.push }}>{activeTransfers.length}</b><label>진행 중 작업</label></div>
         </div>
@@ -691,7 +770,10 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
             <span key={label}><i style={{ background: color, boxShadow: `0 0 6px ${color}` }} />{label}</span>
           ))}
         </div>
-        <p className="state-note">{byKind('Compress') + byKind('Extract') > 0 ? '보라 소용돌이 = 압축, 초록 퍼짐 = 압축 풀기' : 'PC에 마우스를 올리면 자세한 상태'}</p>
+        <div className="state-foot">
+          <span>서버 · 그룹 · 사용자를 끌어서 옮길 수 있습니다</span>
+          <button type="button" className="link" onClick={resetLayout}>배치 초기화</button>
+        </div>
       </aside>
     </div>
   )

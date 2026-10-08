@@ -80,7 +80,8 @@ internal static class VirtualDisplay
 
     /// <summary>
     /// 모니터가 없는 PC면 가상 모니터를 준비한다: 설치(최초) → 켜기 → 데스크톱에 붙을 때까지 대기 → 주 모니터로.
-    /// 한 번 켠 가상 모니터는 끄지 않는다 (헤드리스 테스트 PC는 항상 화면이 있어야 썸네일·GUI 테스트가 된다).
+    /// 모니터가 없는 동안은 끄지 않는다 (헤드리스 테스트 PC는 항상 화면이 있어야 썸네일·GUI 테스트가 된다).
+    /// 물리 모니터가 다시 켜지면 ReleaseIfPhysicalPresent로 끈다 (멀티 모니터로 남지 않게).
     /// </summary>
     /// <returns>가상 모니터 어댑터 이름. 모니터가 있는 PC면 null</returns>
     public static string? EnsureForHeadless(Action<string>? log = null)
@@ -99,6 +100,23 @@ internal static class VirtualDisplay
             log?.Invoke("가상 모니터를 주 모니터로 만들지 못했습니다");
         return device;
     }
+
+    /// <summary>
+    /// 물리 모니터가 켜져 있는데 가상 모니터도 붙어 있으면(노트북 덮개를 다시 열었을 때, 모니터를 다시 꽂았을 때) 가상 모니터를 끈다.
+    /// 가상 모니터는 화면이 없을 때만 쓰고 멀티 모니터(확장 화면)로는 쓰지 않는다. 사용자 세션에서 불러야 한다 (화면 구성 확인)
+    /// </summary>
+    /// <returns>껐으면 true</returns>
+    public static bool ReleaseIfPhysicalPresent(Action<string>? log = null)
+    {
+        if (!NeedsRelease())
+            return false;
+        SetEnabled(false);
+        log?.Invoke("물리 모니터가 있어 가상 모니터를 껐습니다");
+        return true;
+    }
+
+    /// <summary>가상 모니터와 물리 모니터가 함께 켜져 있는지 (확장 화면 상태). 사용자 세션에서만 정확하다</summary>
+    public static bool NeedsRelease() => FindAdapterDeviceName() is not null && !IsHeadless();
 
     /// <summary>내장 파일을 풀고 드라이버를 설치한다. 이미 설치돼 있으면 설정만 갱신한다</summary>
     public static void EnsureInstalled(Action<string>? log = null)

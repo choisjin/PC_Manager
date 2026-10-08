@@ -5,6 +5,8 @@ public class PresenceRegistry
 {
     private readonly Lock _lock = new();
     private readonly Dictionary<string, Entry> _byConnection = new();
+    // 대시보드를 열어 둔 사용자 (탭과 상관없이): connectionId → userId
+    private readonly Dictionary<string, string> _users = new();
 
     private sealed record Entry(string UserId, HashSet<string> Agents);
 
@@ -13,6 +15,25 @@ public class PresenceRegistry
         lock (_lock)
         {
             _byConnection[connectionId] = new Entry(userId, agentIds.ToHashSet());
+            _users[connectionId] = userId;
+        }
+    }
+
+    /// <summary>이 접속의 사용자 (대시보드를 열면 알린다)</summary>
+    public void SetUser(string connectionId, string userId)
+    {
+        lock (_lock)
+        {
+            _users[connectionId] = userId;
+        }
+    }
+
+    /// <summary>지금 대시보드를 열어 둔 사용자 id (중복 없이)</summary>
+    public IReadOnlyList<string> OnlineUsers()
+    {
+        lock (_lock)
+        {
+            return _users.Values.Distinct().ToList();
         }
     }
 
@@ -21,6 +42,7 @@ public class PresenceRegistry
         lock (_lock)
         {
             _byConnection.Remove(connectionId);
+            _users.Remove(connectionId);
         }
     }
 

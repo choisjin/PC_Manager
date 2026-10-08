@@ -10,6 +10,7 @@ internal sealed class LauncherContext : ApplicationContext
     private readonly NotifyIcon _tray;
     private readonly LauncherForm _form;
     private readonly System.Windows.Forms.Timer _timer;
+    private readonly System.Windows.Forms.Timer _displayTimer;
     private readonly RegisteredWaitHandle _showWait;
     private bool _refreshing;
     private LocalStatus? _lastStatus;
@@ -51,7 +52,25 @@ internal sealed class LauncherContext : ApplicationContext
         _timer = new System.Windows.Forms.Timer { Interval = 2000 };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
+        // 가상 모니터가 물리 모니터와 함께 켜져 있으면(덮개를 다시 연 노트북 등) 서비스에 끄기를 요청한다 — 멀티 모니터로 쓰지 않게
+        _displayTimer = new System.Windows.Forms.Timer { Interval = 10_000 };
+        _displayTimer.Tick += async (_, _) => await CheckVirtualDisplayAsync();
+        _displayTimer.Start();
         _ = RefreshAsync(firstRun: showWindow);
+    }
+
+    private async Task CheckVirtualDisplayAsync()
+    {
+        try
+        {
+            if (!Remote.VirtualDisplay.NeedsRelease())
+                return;
+            await LocalControlClient.SendAsync(new LocalRequest(LocalControl.ReleaseVirtualDisplayCommand), StatusTimeout);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or TimeoutException or UnauthorizedAccessException)
+        {
+            // 다음 확인 때 다시
+        }
     }
 
     private async Task RefreshAsync(bool firstRun = false)
@@ -170,6 +189,7 @@ internal sealed class LauncherContext : ApplicationContext
         {
             _showWait.Unregister(null);
             _timer.Dispose();
+            _displayTimer.Dispose();
             _tray.Visible = false;
             _tray.Dispose();
             _form.Dispose();

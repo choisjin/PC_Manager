@@ -4719,3 +4719,18 @@ body.rv-open .pip { display: none; }
   font-size: 10.5px;
   color: #5f7099;
 }
+
+.state-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: #6f7fa6;
+}
+
+.state-foot .link {
+  flex: none;
+  color: #8fc4ff;
+}

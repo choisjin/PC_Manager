@@ -120,6 +120,9 @@ export function useDashboard() {
   const [shares, setShares] = useState<SharedFolder[]>([])
   const [org, setOrg] = useState<Org>({ projects: [], users: [], projectUsers: {}, agentProjects: {} })
   const [presence, setPresence] = useState<Record<string, string[]>>({})
+  // 대시보드를 열어 둔 사용자 (State 화면)
+  const [onlineUsers, setOnlineUsers] = useState<string[]>([])
+  const onlineUserRef = useRef<string | null>(null)
   const [pcStatuses, setPcStatuses] = useState<Record<string, PcStatus>>({})
   const [serverHostName, setServerHostName] = useState<string | null>(null)
   const [clientIp, setClientIp] = useState<string | null>(null)
@@ -193,6 +196,7 @@ export function useDashboard() {
     })
     connection.on('OrgChanged', (o: Org) => setOrg(o))
     connection.on('PresenceChanged', (viewers: Record<string, string[]>) => setPresence(viewers))
+    connection.on('OnlineUsersChanged', (ids: string[]) => setOnlineUsers(ids))
     connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
     connection.on('RemoteUsageChanged', (v: RemoteUsage) => setRemoteUsage(v.inUseBy))
     // 채팅: 서버는 내가 속한 방의 것만 보낸다
@@ -288,6 +292,7 @@ export function useDashboard() {
       // 재연결 후 프레즌스 복구
       if (presenceRef.current)
         connection.invoke('SetPresence', presenceRef.current.userId, presenceRef.current.agentIds).catch(() => {})
+      if (onlineUserRef.current) connection.invoke('SetUser', onlineUserRef.current).catch(() => {})
       for (const jobRunId of loadedJobIds) {
         api
           .job(jobRunId)
@@ -525,6 +530,12 @@ export function useDashboard() {
     }
   }, [])
 
+  /** 이 대시보드의 사용자를 서버에 알린다 (탭과 상관없이 접속 중으로 보이게) */
+  const announceUser = useCallback((userId: string | null) => {
+    onlineUserRef.current = userId
+    if (userId) connectionRef.current?.invoke('SetUser', userId).catch(() => {})
+  }, [])
+
   const announcePresence = useCallback((userId: string, agentIds: string[]) => {
     presenceRef.current = { userId, agentIds }
     connectionRef.current?.invoke('SetPresence', userId, agentIds).catch(() => {})
@@ -551,6 +562,8 @@ export function useDashboard() {
     orgActions,
     presence,
     announcePresence,
+    announceUser,
+    onlineUsers,
     pcStatuses,
     setPcStatus,
     serverHostName,

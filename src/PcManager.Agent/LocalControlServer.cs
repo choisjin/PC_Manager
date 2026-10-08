@@ -103,6 +103,21 @@ public class LocalControlServer(
             case LocalControl.StatusCommand:
                 return Ok();
 
+            case LocalControl.ReleaseVirtualDisplayCommand:
+                try
+                {
+                    if (Remote.VirtualDisplay.IsEnabled())
+                    {
+                        Remote.VirtualDisplay.SetEnabled(false);
+                        logger.LogInformation("물리 모니터가 있어 가상 모니터를 껐습니다 (멀티 모니터 방지)");
+                    }
+                    return Ok();
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    return Fail($"가상 모니터를 끄지 못했습니다: {ex.Message}");
+                }
+
             case LocalControl.ConnectCommand:
             {
                 var serverUrl = ServerInfoClient.NormalizeServerUrl(request.ServerUrl);
