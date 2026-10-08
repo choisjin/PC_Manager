@@ -305,6 +305,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
             remoteUsage={remoteUsage}
             selfUserId={selfUserId}
             userName={(id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자'}
+            onShowAll={() => setSelectedFolderId(null)}
           />
         ) : (
           <>

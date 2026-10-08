@@ -21,6 +21,8 @@ interface Props {
   remoteUsage: RemoteUsage['inUseBy']
   selfUserId: string | null
   userName: (userId: string) => string
+  /** 폴더 선택을 풀고 모든 그룹의 PC를 본다 */
+  onShowAll: () => void
 }
 
 /** "12분째 움직임 없음" 같은 문구 */
@@ -34,7 +36,7 @@ function idleText(seconds: number): string {
 }
 
 /** Remote 모드: 그룹 안 PC들의 화면 미리보기 카드. 클릭하면 원격조작 */
-export function RemoteGrid({ sections, groupName, displayName, thumbnails, watchThumbnails, pcStatuses, remoteUsage, selfUserId, userName }: Props) {
+export function RemoteGrid({ sections, groupName, displayName, thumbnails, watchThumbnails, pcStatuses, remoteUsage, selfUserId, userName, onShowAll }: Props) {
   const [remote, setRemote] = useState<Agent | null>(null)
   const pcLocks = usePcLocks()
   const agents = sections.flatMap((s) => s.agents)
@@ -73,6 +75,9 @@ export function RemoteGrid({ sections, groupName, displayName, thumbnails, watch
   return (
     <div className="remote-grid-wrap">
       <div className="remote-grid-head">
+        <button type="button" className={`remote-show-all${groupName ? '' : ' active'}`} disabled={!groupName} onClick={onShowAll} title="폴더 선택을 풀고 모든 그룹의 PC 보기">
+          전체 보기
+        </button>
         <span>
           <b>{groupName ?? '전체'}</b> <span className="muted small">· {agents.length}대 (온라인 {agents.filter((a) => a.online).length})</span>
           {!groupName && <span className="muted small"> · 왼쪽에서 폴더를 클릭하면 그 그룹만 표시</span>}

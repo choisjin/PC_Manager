@@ -4451,3 +4451,21 @@ body.rv-open .pip { display: none; }
   gap: 6px;
   margin-top: 4px;
 }
+
+/* Remote 모드 상단 '전체 보기' */
+.remote-show-all {
+  flex: none;
+  margin-right: 8px;
+  font-size: 12px;
+}
+
+.remote-show-all.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.remote-grid-head > .remote-show-all + span {
+  margin-right: auto;
+}
