@@ -332,6 +332,17 @@ export function ExplorerPane({
     setTabs((ts) => [...ts, { id, stack: [path], idx: 0 }])
     setActiveTabId(id)
   }
+  // 폴더(또는 압축 파일)를 새 탭에서 열기 — 활성 탭이 바뀌면 아래 효과가 그 경로를 불러온다
+  const openInNewTab = (target: string) => {
+    const id = newId()
+    setTabs((ts) => {
+      const idx = ts.findIndex((t) => t.id === activeTabId)
+      const next = ts.slice()
+      next.splice(idx + 1, 0, { id, stack: [target], idx: 0 })
+      return next
+    })
+    setActiveTabId(id)
+  }
   const closeTab = (id: string) => {
     setTabs((ts) => {
       if (ts.length <= 1) return ts
@@ -575,6 +586,14 @@ export function ExplorerPane({
         setError(toMessage(err))
       },
     )
+  }
+
+  /** 폴더처럼 들어가는 항목 (폴더, 압축 안이 아닐 때의 압축 파일) */
+  const opensAsFolder = (entry: FileEntry) => entry.isDirectory || (!inArchive && isArchiveFile(entry.name))
+  /** 더블클릭: Ctrl(⌘)이면 폴더를 새 탭에서 */
+  const doubleClickEntry = (e: React.MouseEvent, entry: FileEntry) => {
+    if ((e.ctrlKey || e.metaKey) && opensAsFolder(entry)) openInNewTab(entry.fullPath)
+    else openEntry(entry)
   }
 
   const openEntry = (entry: FileEntry) => {
@@ -891,12 +910,18 @@ export function ExplorerPane({
     return () => window.removeEventListener('keydown', handler)
   }, [active])
 
+  const folderOpenItems = (folderPath: string): MenuItem[] => [
+    { label: '열기', onClick: () => navigate(folderPath) },
+    { label: '새 탭에서 열기 (Ctrl+더블클릭)', onClick: () => openInNewTab(folderPath) },
+  ]
+
   // 압축 파일 안: 읽기 전용 메뉴 (보기, 압축 풀기, 가져오기, 복사)
   const buildArchiveMenu = (targets: FileEntry[]): MenuItem[] => {
     const archive = archivePath!
     const files = targets.filter((t) => !t.isDirectory)
     const archiveFolder = archive.slice(0, lastSep(archive)) || archive
     const items: MenuItem[] = []
+    if (targets.length === 1 && targets[0].isDirectory) items.push(...folderOpenItems(targets[0].fullPath), { separator: true })
     if (targets.length === 1 && !targets[0].isDirectory) {
       const kind = viewerKind(targets[0].name)
       if (selfAgentId) items.push({ label: '내 PC 프로그램으로 열기 (읽기 전용 복사본)', onClick: () => openLocal(targets[0]) })
@@ -923,6 +948,7 @@ export function ExplorerPane({
     const pasteTarget = folder ?? path
     const files = targets.filter((t) => !t.isDirectory)
     const items: MenuItem[] = []
+    if (targets.length === 1 && targets[0].isDirectory) items.push(...folderOpenItems(targets[0].fullPath), { separator: true })
     // 보기·편집 / 압축 파일 열기·풀기
     if (targets.length === 1 && !targets[0].isDirectory) {
       const t = targets[0]
@@ -936,6 +962,7 @@ export function ExplorerPane({
         const folderOf = t.fullPath.slice(0, lastSep(t.fullPath))
         const sub = `${folderOf}${pathSep(t.fullPath)}${archiveBaseName(t.name)}`
         items.push({ label: '압축 파일 열기 (폴더처럼 보기)', onClick: () => navigate(t.fullPath) })
+        items.push({ label: '압축 파일을 새 탭에서 열기 (Ctrl+더블클릭)', onClick: () => openInNewTab(t.fullPath) })
         items.push({ label: `압축 풀기 → '${archiveBaseName(t.name)}' 폴더에`, onClick: () => extract(t.fullPath, [], sub) })
         items.push({ label: '압축 풀기 → 여기에', onClick: () => extract(t.fullPath, [], folderOf) })
         items.push({ label: '압축 풀기 → 다른 폴더…', onClick: () => extractTo(t.fullPath, []) })
@@ -1019,10 +1046,9 @@ export function ExplorerPane({
   const openTreeMenu = (e: React.MouseEvent, entry: FileEntry, isDrive: boolean) => {
     e.preventDefault()
     e.stopPropagation()
-    const open: MenuItem = { label: '열기', onClick: () => navigate(entry.fullPath) }
     const items: MenuItem[] = isDrive
       ? [
-          open,
+          ...folderOpenItems(entry.fullPath),
           { separator: true },
           {
             label: clipboard ? `붙여넣기${clipboard.items.length > 1 ? ` (${clipboard.items.length})` : ''}` : '붙여넣기',
@@ -1034,7 +1060,7 @@ export function ExplorerPane({
           { separator: true },
           { label: '터미널 열기', onClick: () => setTerminal(true) },
         ]
-      : [open, { separator: true }, ...buildMenu([entry], entry.fullPath)]
+      : buildMenu([entry], entry.fullPath)
     setMenu({ x: e.clientX, y: e.clientY, targets: [], folder: null, items })
   }
 
@@ -1047,7 +1073,7 @@ export function ExplorerPane({
       targets: [],
       folder: null,
       items: [
-        { label: '열기', onClick: () => navigate(fp) },
+        ...folderOpenItems(fp),
         { label: '경로 복사', onClick: () => void copyText(fp) },
         { separator: true },
         { label: '즐겨찾기 제거', danger: true, onClick: () => onRemoveFavorite(fp) },
@@ -1280,7 +1306,7 @@ export function ExplorerPane({
                       draggable
                       onDragStart={(e) => startFileDrag(e, entry)}
                       onClick={(e) => selectClick(e, entry, index)}
-                      onDoubleClick={() => openEntry(entry)}
+                      onDoubleClick={(e) => doubleClickEntry(e, entry)}
                       onContextMenu={(e) => openRowMenu(e, entry, index)}
                       onDragOver={entry.isDirectory ? (e) => {
                         if (e.dataTransfer.types.includes(FILES_MIME)) {
@@ -1326,7 +1352,7 @@ export function ExplorerPane({
                     draggable
                     onDragStart={(e) => startFileDrag(e, entry)}
                     onClick={(e) => selectClick(e, entry, index)}
-                    onDoubleClick={() => openEntry(entry)}
+                    onDoubleClick={(e) => doubleClickEntry(e, entry)}
                     onContextMenu={(e) => openRowMenu(e, entry, index)}
                     onDragOver={entry.isDirectory ? (e) => {
                       if (e.dataTransfer.types.includes(FILES_MIME)) {
