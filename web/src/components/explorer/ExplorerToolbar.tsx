@@ -131,7 +131,7 @@ export function ExplorerToolbar({ controller }: Props) {
                       c.navigate(crumb.target)
                     }}
                   >
-                    {crumb.label}
+                    <span translate={crumb.target ? 'no' : undefined}>{crumb.label}</span>
                   </button>
                 </span>
               ))

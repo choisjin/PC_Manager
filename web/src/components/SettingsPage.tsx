@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { api, type Agent, type Org, type OrgUser, type PcGroups } from '../api'
 import { FEATURES } from '../perms'
+import { useLang } from '../i18n/useLang'
 import { AddAgentDialog } from './AddAgentDialog'
 import { EditFolderSection } from './EditFolderSection'
 import { displayName } from './explorer/pcGroups'
@@ -34,6 +35,7 @@ export function SettingsPage({ org, agents, pcGroups, selfAgentId, token, projec
 
   return (
     <div className="settings-page">
+      <GeneralSection />
       {noPerms && (
         <section className="panel settings-section">
           <p className="no-perms">아직 권한이 없습니다. 프로젝트 관리자에게 요청하세요.</p>
@@ -69,6 +71,30 @@ export function SettingsPage({ org, agents, pcGroups, selfAgentId, token, projec
         })()}
       />
     </div>
+  )
+}
+
+/** 일반 설정: 화면 언어 (이 브라우저에 저장) */
+function GeneralSection() {
+  const [lang, setLang] = useLang()
+  return (
+    <section className="panel settings-section">
+      <div className="settings-section-head">
+        <h2>일반 설정</h2>
+      </div>
+      <div className="settings-row">
+        <span className="settings-row-label">Language</span>
+        <span className="lang-seg" translate="no">
+          <button type="button" className={lang === 'ko' ? 'active' : ''} onClick={() => setLang('ko')}>
+            한국어
+          </button>
+          <button type="button" className={lang === 'en' ? 'active' : ''} onClick={() => setLang('en')}>
+            English
+          </button>
+        </span>
+        <span className="muted small">화면 언어는 이 브라우저에 저장됩니다.</span>
+      </div>
+    </section>
   )
 }
 
@@ -137,11 +163,11 @@ function PermissionSection({ org, token, projectId }: { org: Org; token: string;
                     const all = FEATURES.every((f) => mine.includes(f.id))
                     return (
                       <tr key={u.id}>
-                        <td className="perm-name" title={u.ldapId ?? undefined}>
+                        <td className="perm-name" translate="no" title={u.ldapId ?? undefined}>
                           <b>{u.name}</b>
                         </td>
-                        <td className="perm-name small">{u.title}</td>
-                        <td className="perm-name small" title={u.department ?? undefined}>
+                        <td className="perm-name small" translate="no">{u.title}</td>
+                        <td className="perm-name small" translate="no" title={u.department ?? undefined}>
                           {u.team}
                         </td>
                         <td className="perm-name small muted">{formatLogin(u.lastLogin)}</td>

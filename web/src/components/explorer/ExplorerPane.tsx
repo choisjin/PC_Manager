@@ -1125,7 +1125,7 @@ export function ExplorerPane({
             onMouseDown={() => setActiveTabId(t.id)}
           >
             <Icon name="folder" size={14} className="pane-tab-ico" />
-            <span className="ellipsis">{tabLabel(t.stack[t.idx])}</span>
+            <span className="ellipsis" translate="no">{tabLabel(t.stack[t.idx])}</span>
             {tabs.length > 1 && (
               <button
                 type="button"
@@ -1216,7 +1216,7 @@ export function ExplorerPane({
                 >
                   <span className="fav-grip" aria-hidden="true">⠿</span>
                   <button type="button" className="drive-name ellipsis fav-btn" title={fp} onClick={() => navigate(fp)}>
-                    <Icon name="star" size={13} /> {favName(fp)}
+                    <Icon name="star" size={13} /> <span translate="no">{favName(fp)}</span>
                   </button>
                   <button type="button" className="icon-mini" title="즐겨찾기 제거" onClick={() => onRemoveFavorite(fp)}>
                     ✕
@@ -1348,7 +1348,7 @@ export function ExplorerPane({
                     >
                       <td className="ellipsis">
                         <ShellIcon name={entry.name} folder={entry.isDirectory} agentId={selfAgentId} className="file-icon" />
-                        {entry.name}
+                        <span translate="no">{entry.name}</span>
                         {deep && <span className="search-loc muted small" title={entry.fullPath}>{entry.fullPath.slice(0, lastSep(entry.fullPath))}</span>}
                       </td>
                       {columns.modified && <td className="col-date">{entry.modifiedAt ? formatFileDate(entry.modifiedAt) : ''}</td>}
@@ -1397,7 +1397,7 @@ export function ExplorerPane({
                     ) : (
                       <ShellIcon name={entry.name} folder={entry.isDirectory} size={previews ? 64 : 44} agentId={selfAgentId} className="icon-tile-ico" />
                     )}
-                    <span className="icon-tile-name ellipsis-2">{entry.name}</span>
+                    <span className="icon-tile-name ellipsis-2" translate="no">{entry.name}</span>
                   </div>
                 )
               })}

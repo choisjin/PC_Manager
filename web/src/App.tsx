@@ -5,6 +5,7 @@ import { findSelfAgentId } from './selfAgent'
 import { FileExplorer } from './components/FileExplorer'
 import { useTransfers } from './components/explorer/useTransfers'
 import { LoginGate } from './components/LoginGate'
+import { GearIcon, UserBox } from './components/UserBox'
 import { SettingsPage } from './components/SettingsPage'
 import { StatePage } from './components/StatePage'
 import { TransfersPage } from './components/TransfersPage'
@@ -161,7 +162,7 @@ export default function App() {
     setAuth(result)
   }
   const logout = () => {
-    if (!auth || !window.confirm('로그아웃할까요? (사용자·프로젝트 변경)')) return
+    if (!auth) return
     void api.logout(auth.token, readKey(REMEMBER_KEY)).catch(() => {})
     writeKey(TOKEN_KEY, null)
     writeKey(REMEMBER_KEY, null)
@@ -236,7 +237,18 @@ export default function App() {
     <PermsContext.Provider value={perms}>
     <div className="app">
       <header className="topbar">
-        <h1>RemoteKit</h1>
+        <div className="brand">
+          <div className="brand-logo">R</div>
+          <div>
+            <h1 className="brand-title">
+              <span>RemoteKit</span>
+              <span className="brand-proj" title={project.name} translate="no">
+                <span className="brand-proj-name">{project.name}</span>
+              </span>
+            </h1>
+            <div className="brand-sub">PC Manager</div>
+          </div>
+        </div>
         <nav className="tabs" role="tablist">
           {pageAllowed('files') && (
             <button type="button" role="tab" aria-selected={visiblePage === 'files'} className={visiblePage === 'files' ? 'active' : ''} onClick={() => setPage('files')}>
@@ -254,20 +266,8 @@ export default function App() {
               {transfers.some((t) => t.state === 'Pending') && <span className="tab-badge">{transfers.filter((t) => t.state === 'Pending').length}</span>}
             </button>
           )}
-          <button type="button" role="tab" aria-selected={visiblePage === 'settings'} className={visiblePage === 'settings' ? 'active' : ''} onClick={() => setPage('settings')}>
-            Setting
-          </button>
         </nav>
         <span className="topbar-right">
-          <button
-            type="button"
-            className="identity-chip"
-            onClick={logout}
-            title={`${selfUser.name}${selfUser.title ? ` ${selfUser.title}` : ''}${selfUser.team ? ` · ${selfUser.team}` : ''}\n클릭: 로그아웃 (사용자·프로젝트 변경)`}
-          >
-            <span className="identity-project">{project.name}</span>
-            <span className="identity-user">· {selfUser.name}</span>
-          </button>
           <button
             type="button"
             className={`update-chip${updateAvailable ? ' available' : ''}`}
@@ -280,6 +280,17 @@ export default function App() {
             {connected ? '서버 연결됨' : '서버 연결 중…'}
           </span>
         </span>
+        {/* 설정: 톱니바퀴 */}
+        <button
+          type="button"
+          className={`gear-btn${visiblePage === 'settings' ? ' active' : ''}`}
+          title="설정"
+          aria-label="설정"
+          onClick={() => setPage(visiblePage === 'settings' ? (PAGE_ORDER.find((p) => p !== 'settings' && pageAllowed(p)) ?? 'settings') : 'settings')}
+        >
+          <GearIcon />
+        </button>
+        <UserBox user={selfUser} project={project} isAdmin={isAdmin} onLogout={logout} />
       </header>
 
       {showUpdate && (

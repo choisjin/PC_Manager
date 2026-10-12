@@ -241,7 +241,7 @@ export function ChatPanel({ rooms, messages, actions, org, selfUserId, activeRoo
                     <div className="chat-meta small muted">
                       {mine ? '나' : nameOf(m.userId)} · {timeText(m.at)}
                     </div>
-                    <div className="chat-text">{renderText(m.text, roomUsers)}</div>
+                    <div className="chat-text" translate="no">{renderText(m.text, roomUsers)}</div>
                     {mine && <div className="chat-read small muted">{left > 0 ? (room.kind === 'direct' ? '안 읽음' : `안 읽음 ${left}`) : '읽음'}</div>}
                   </div>
                 )

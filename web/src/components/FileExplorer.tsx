@@ -347,7 +347,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         >
           {panes.length === 0 && (
             <div className="workspace-empty">
-              왼쪽에서 PC를 <b>드래그</b>하거나 <b>＋</b>를 눌러 이 영역에 파일 탐색기를 엽니다.
+              왼쪽에서 PC를 드래그하거나 ＋를 눌러 이 영역에 파일 탐색기를 엽니다.
               <br />
               여러 PC를 나란히 열어 비교하거나 파일을 주고받을 수 있어요.
             </div>

@@ -190,7 +190,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         title="클릭하면 창 열기/닫기"
       >
         <span className={`dot ${agent.online ? 'on' : 'off'}`} />
-        <span className="ellipsis">{displayName(agent, groups)}</span>
+        <span className="ellipsis" translate="no">{displayName(agent, groups)}</span>
         {lock && (
           <span className={`pc-lock-badge${lock.unlocked ? ' open' : ''}`} title={lock.unlocked ? 'PIN 잠금 (이 브라우저에서 풀림)' : 'PIN 잠금 — 열 때 PIN 입력'}>
             {lock.unlocked ? '🔓' : '🔒'}
@@ -250,7 +250,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
               }}
             />
           ) : (
-            <span className="tree-folder-name ellipsis" onDoubleClick={() => manage && setEditing(node.folder.id)}>
+            <span className="tree-folder-name ellipsis" translate="no" onDoubleClick={() => manage && setEditing(node.folder.id)}>
               {node.folder.name}
             </span>
           )}
@@ -369,7 +369,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
               }}
             >
               <Icon name="drive" size={14} />
-              <span className="ellipsis">{s.name}</span>
+              <span className="ellipsis" translate="no">{s.name}</span>
               <button
                 type="button"
                 className="icon-mini"

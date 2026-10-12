@@ -167,7 +167,7 @@ export function TerminalModal({ agentId, machineName, path, watchRun, onClose }:
       <div className="terminal-body mono" ref={bodyRef} onClick={() => inputRef.current?.focus()}>
         {entries.length === 0 && <div className="term-hint">이 경로에서 실행할 명령을 입력하세요. ↑↓로 기록 탐색.</div>}
         {entries.map((entry) => (
-          <div key={entry.key} className="term-entry">
+          <div key={entry.key} className="term-entry" translate="no">
             <div className="term-command">
               <span className="term-prompt-text">{entry.shell === 'PowerShell' ? `PS ${path}>` : `${path}>`}</span> {entry.command}
             </div>
