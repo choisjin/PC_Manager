@@ -171,11 +171,16 @@ public class RemoteControlService(AgentSettingsStore settings, ILogger<RemoteCon
 
         try
         {
-            using var key = Registry.LocalMachine.CreateSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System");
+            using var key = Registry.LocalMachine.CreateSubKey(Install.SasPolicy.KeyPath);
             // 1: 서비스 허용, 3: 서비스 + 접근성 앱. 이미 허용돼 있으면 그대로 둔다
-            var value = key.GetValue("SoftwareSASGeneration") as int? ?? 0;
+            var original = key.GetValue(Install.SasPolicy.ValueName) as int?;
+            var value = original ?? 0;
             if ((value & 1) == 0)
-                key.SetValue("SoftwareSASGeneration", value | 1, RegistryValueKind.DWord);
+            {
+                // 에이전트를 지울 때 되돌리도록 원래 값을 기억
+                Install.SasPolicy.RememberOriginal(original);
+                key.SetValue(Install.SasPolicy.ValueName, value | 1, RegistryValueKind.DWord);
+            }
 
             SendSAS(false);
             logger.LogInformation("Ctrl+Alt+Del 전송");

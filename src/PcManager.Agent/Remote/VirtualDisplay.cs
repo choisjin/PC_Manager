@@ -192,6 +192,14 @@ internal static class VirtualDisplay
         RunNefcon("--uninstall-driver", "--inf-path", inf);
         try
         {
+            UntrustPublisher(Path.Combine(Directory, CatName));
+        }
+        catch (Exception ex) when (ex is System.Security.Cryptography.CryptographicException or IOException or UnauthorizedAccessException)
+        {
+            log?.Invoke($"가상 모니터 인증서 제거 실패 (무시): {ex.Message}");
+        }
+        try
+        {
             Registry.LocalMachine.DeleteSubKeyTree(RegistryKey, throwOnMissingSubKey: false);
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
@@ -233,6 +241,24 @@ internal static class VirtualDisplay
         sb.AppendLine("  </options>");
         sb.AppendLine("</vdd_settings>");
         File.WriteAllText(Path.Combine(Directory, SettingsName), sb.ToString(), new UTF8Encoding(false));
+    }
+
+    /// <summary>설치 때 '신뢰할 수 있는 게시자'에 넣은 드라이버 서명 인증서를 뺀다</summary>
+    private static void UntrustPublisher(string catalogPath)
+    {
+        if (!File.Exists(catalogPath))
+            return;
+        var certs = new X509Certificate2Collection();
+        certs.Import(File.ReadAllBytes(catalogPath));
+        using var store = new X509Store(StoreName.TrustedPublisher, StoreLocation.LocalMachine);
+        store.Open(OpenFlags.ReadWrite);
+        foreach (var cert in certs)
+        {
+            if (cert.Subject == cert.Issuer || cert.Extensions["2.5.29.19"] is X509BasicConstraintsExtension { CertificateAuthority: true })
+                continue;
+            foreach (var found in store.Certificates.Find(X509FindType.FindByThumbprint, cert.Thumbprint, false))
+                store.Remove(found);
+        }
     }
 
     private static void TrustPublisher(string catalogPath)

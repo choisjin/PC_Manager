@@ -88,7 +88,7 @@ internal static class ServiceInstaller
     {
         StopServiceIfRunning(log);
         KillOtherInstances(log);
-        // 원격조작이 설치했을 수 있는 가상 모니터 드라이버도 함께 제거 (best-effort)
+        // 원격조작이 설치했을 수 있는 가상 모니터 드라이버(인증서 포함)도 함께 제거 (best-effort)
         try
         {
             Remote.VirtualDisplay.Uninstall(log);
@@ -108,22 +108,93 @@ internal static class ServiceInstaller
             if (File.Exists(StartMenuShortcutPath))
                 File.Delete(StartMenuShortcutPath);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // 무시
         }
 
-        // 실행 파일은 지금 실행 중일 수 있어(Program Files에서 실행된 경우) 재부팅 후 정리하도록 남긴다
-        if (!string.Equals(Environment.ProcessPath, InstalledExePath, StringComparison.OrdinalIgnoreCase)
-            && Directory.Exists(InstallDir))
+        // Ctrl+Alt+Del 정책은 설정 폴더의 기록을 보고 되돌리므로 설정을 지우기 전에
+        SasPolicy.Restore(log);
+
+        // 프로그램 폴더 (Program Files에서 실행 중이면 지금은 못 지우므로 재부팅 때 지우도록 예약)
+        if (Directory.Exists(InstallDir))
         {
+            log($"프로그램 삭제: {InstallDir}");
             TryDeleteDirectory(InstallDir, log);
         }
+        DeleteIfEmpty(Path.GetDirectoryName(InstallDir)!);
 
-        if (removeData && Directory.Exists(AgentOptions.DefaultDataDirectory))
+        // 원격조작이 쓰던 공용 폴더·임시 파일
+        TryDeleteDirectory(Remote.RemoteSessionApp.ClipboardFolder, log);
+        foreach (var temp in SystemTempFolders())
         {
-            log("설정/데이터 삭제");
-            TryDeleteDirectory(AgentOptions.DefaultDataDirectory, log);
+            TryDeleteFile(Path.Combine(temp, "PcManagerRemote.log"));
+            TryDeleteDirectory(Path.Combine(temp, "PcManagerUpdate"), log);
+        }
+        foreach (var profile in UserProfiles())
+            TryDeleteDirectory(Path.Combine(profile, "AppData", "Local", "Temp", "PcManagerIcons"), log);
+
+        if (removeData)
+        {
+            if (Directory.Exists(AgentOptions.DefaultDataDirectory))
+            {
+                log("설정/데이터 삭제");
+                TryDeleteDirectory(AgentOptions.DefaultDataDirectory, log);
+            }
+            DeleteIfEmpty(Path.GetDirectoryName(AgentOptions.DefaultDataDirectory)!);
+            // 내 PC에서 열어 편집하던 파일의 작업 사본 (편집한 내용은 이미 원래 PC에 저장됨)
+            foreach (var profile in UserProfiles())
+                TryDeleteDirectory(Path.Combine(profile, "Documents", "PC Manager 편집"), log);
+        }
+    }
+
+    /// <summary>SYSTEM 계정(서비스·원격조작 프로세스)이 쓰는 임시 폴더</summary>
+    private static IEnumerable<string> SystemTempFolders()
+    {
+        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        yield return Path.Combine(windows, "Temp");
+        yield return Path.Combine(windows, "SystemTemp");
+    }
+
+    /// <summary>이 PC 사용자 프로필 폴더들 (C:\Users\*)</summary>
+    private static IEnumerable<string> UserProfiles()
+    {
+        var root = Path.GetDirectoryName(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+        if (root is null || !Directory.Exists(root))
+            return [];
+        try
+        {
+            return Directory.GetDirectories(root);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    private static void DeleteIfEmpty(string dir)
+    {
+        try
+        {
+            if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+                Directory.Delete(dir);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 무시
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 무시
         }
     }
 
@@ -169,7 +240,15 @@ internal static class ServiceInstaller
                     continue;
                 try
                 {
-                    process.Kill(entireProcessTree: true);
+                    try
+                    {
+                        process.Kill(entireProcessTree: true);
+                    }
+                    catch (InvalidOperationException) when (!process.HasExited)
+                    {
+                        // 이 제거 프로그램을 띄운 런처(부모)면 트리 전체 종료가 거부된다 → 그 프로세스만
+                        process.Kill();
+                    }
                     process.WaitForExit(5000);
                     killed++;
                 }
@@ -227,6 +306,8 @@ internal static class ServiceInstaller
 
     private static void TryDeleteDirectory(string path, Action<string> log)
     {
+        if (!Directory.Exists(path))
+            return;
         for (var attempt = 1; attempt <= 5; attempt++)
         {
             try
@@ -234,17 +315,56 @@ internal static class ServiceInstaller
                 Directory.Delete(path, recursive: true);
                 return;
             }
-            catch (IOException) when (attempt < 5)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
+                // 방금 끝낸 프로세스가 파일을 놓을 때까지 잠깐 기다린다
                 Thread.Sleep(1000);
             }
-            catch (UnauthorizedAccessException)
+        }
+
+        // 그래도 잠긴 파일(실행 중인 exe 등)은 재부팅 때 지우도록 예약한다
+        var pending = 0;
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
             {
-                log($"경고: 일부 파일을 삭제하지 못했습니다: {path}");
-                return;
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    if (MoveFileEx(file, null, MOVEFILE_DELAY_UNTIL_REBOOT))
+                        pending++;
+                }
+            }
+            // 폴더는 깊은 곳부터 (안의 파일이 먼저 지워져야 하므로 재부팅 예약도 같은 순서)
+            foreach (var dir in Directory.EnumerateDirectories(path, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length).Append(path))
+            {
+                try
+                {
+                    Directory.Delete(dir);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    MoveFileEx(dir, null, MOVEFILE_DELAY_UNTIL_REBOOT);
+                }
             }
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 아래 안내
+        }
+        if (Directory.Exists(path))
+            log(pending > 0
+                ? $"사용 중인 파일 {pending}개는 재부팅하면 삭제됩니다: {path}"
+                : $"경고: 일부 파일을 삭제하지 못했습니다: {path}");
     }
+
+    private const int MOVEFILE_DELAY_UNTIL_REBOOT = 0x4;
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern bool MoveFileEx(string existingFileName, string? newFileName, int flags);
 
     private static void Run(string fileName, string arguments, bool allowFailure = false)
     {
