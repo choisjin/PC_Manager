@@ -66,7 +66,7 @@ internal static class DisplayTopology
     {
         lock (Gate)
         {
-            if (_originalPaths is null || _originalModes is null)
+            if (_originalPaths is null || _originalModes is not { } originalModes)
                 return "원래 모니터 구성을 기억하지 못했습니다.";
 
             var paths = new List<DISPLAYCONFIG_PATH_INFO>();
@@ -74,11 +74,11 @@ internal static class DisplayTopology
             var remap = new Dictionary<uint, uint>();
             uint Remap(uint index, bool source)
             {
-                if (index == DISPLAYCONFIG_PATH_MODE_IDX_INVALID || index >= _originalModes.Length)
+                if (index == DISPLAYCONFIG_PATH_MODE_IDX_INVALID || index >= originalModes.Length)
                     return DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
                 if (remap.TryGetValue(index, out var mapped))
                     return mapped;
-                var mode = _originalModes[index];
+                var mode = originalModes[index];
                 if (source && mode.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
                 {
                     mode.positionX = 0;

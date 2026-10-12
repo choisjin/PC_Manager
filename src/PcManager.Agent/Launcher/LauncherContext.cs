@@ -12,6 +12,7 @@ internal sealed class LauncherContext : ApplicationContext
     private readonly System.Windows.Forms.Timer _timer;
     private readonly System.Windows.Forms.Timer _displayTimer;
     private readonly RegisteredWaitHandle _showWait;
+    private readonly KeyboardRelay _keyRelay;
     private bool _refreshing;
     private LocalStatus? _lastStatus;
 
@@ -32,6 +33,7 @@ internal sealed class LauncherContext : ApplicationContext
         menu.Items.Add("대시보드 열기", null, (_, _) => OpenDashboard());
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("에이전트 종료", null, (_, _) => _ = StopAgentAsync());
+        menu.Items.Add("에이전트 삭제…", null, (_, _) => UninstallAgent());
 
         _tray = new NotifyIcon
         {
@@ -56,7 +58,20 @@ internal sealed class LauncherContext : ApplicationContext
         _displayTimer = new System.Windows.Forms.Timer { Interval = 10_000 };
         _displayTimer.Tick += async (_, _) => await CheckVirtualDisplayAsync();
         _displayTimer.Start();
+        // 원격조작 전체 화면: Alt+Tab·Win 등을 이 PC에서 가로채 대시보드로 넘긴다 (HTTP 접속·iframe에서도)
+        _keyRelay = new KeyboardRelay(AllowedDashboardHosts);
         _ = RefreshAsync(firstRun: showWindow);
+    }
+
+    /// <summary>키 전달을 허용할 대시보드 호스트: 이 PC 에이전트가 연결된 서버 주소</summary>
+    private IEnumerable<string> AllowedDashboardHosts()
+    {
+        var status = _lastStatus;
+        foreach (var url in new[] { status?.ServerUrl, status?.DashboardUrl })
+        {
+            if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+                yield return uri.Host;
+        }
     }
 
     private async Task CheckVirtualDisplayAsync()
@@ -116,6 +131,22 @@ internal sealed class LauncherContext : ApplicationContext
             ExitThread();
         else if (response.Error is not null)
             _form.ShowError(response.Error);
+    }
+
+    /// <summary>에이전트를 종료하고 이 PC에서 삭제한다 (임시 복사본이 관리자 권한으로 제거). 시작되면 런처는 바로 끝낸다</summary>
+    private void UninstallAgent()
+    {
+        var answer = MessageBox.Show(
+            "이 PC에서 PC Manager 에이전트를 종료하고 삭제할까요?\n\n서비스·프로그램·설정(서버 주소)이 모두 지워집니다.\n관리자 권한 확인 창이 뜹니다.",
+            "PC Manager 에이전트 삭제", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes)
+            return;
+
+        var error = Install.SelfUninstall.Start();
+        if (error is null)
+            ExitThread(); // 제거 프로그램이 서비스·남은 프로세스를 끝내고 파일을 지운다
+        else if (error.Length > 0)
+            MessageBox.Show($"삭제를 시작하지 못했습니다: {error}", "PC Manager 에이전트 삭제", MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
 
     /// <summary>멈춘 에이전트 서비스를 다시 시작한다 (별도 프로세스가 관리자 승격).</summary>
@@ -192,6 +223,7 @@ internal sealed class LauncherContext : ApplicationContext
             _displayTimer.Dispose();
             _tray.Visible = false;
             _tray.Dispose();
+            _keyRelay.Dispose();
             _form.Dispose();
         }
         base.Dispose(disposing);

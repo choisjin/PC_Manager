@@ -18,6 +18,7 @@
   │    --service  : Windows Service (SYSTEM). 서버 연결, 명령/Job/파일 전송, 세션에 런처 실행
   │    --launcher : 트레이 런처 (로그인 사용자 세션). 연결/끊기/서버주소/업데이트/상태
   │    --install / --uninstall : 더블클릭 설치기 (UAC 승격, 서비스 등록)
+  │    트레이 [에이전트 삭제…] : 임시 폴더 복사본을 관리자 권한으로 실행(--uninstall --purge --cleanup-self) → 서비스·프로세스 종료, 설치 폴더·설정 삭제, 끝나면 복사본 폴더도 삭제
   │    --remote-session <url> : 원격조작 프로세스 (서비스가 콘솔 세션에 SYSTEM 권한으로 띄움, 보는 사람마다 1개)
   │    서비스 ↔ 런처는 named pipe로 통신 (LocalControl)
   └─ (예정) 세션 에이전트: 화면 캡처, 입력 주입, 입력 잠금, GUI 테스트 실행
@@ -54,6 +55,7 @@
 - 키 입력은 이벤트마다 수식 키 상태를 함께 보내고, 에이전트가 주입 직전에 원격 수식 키를 맞춘다 (Shift+숫자 등 유실/순서 보정)
 - 로컬에서 가로채는 특수 키(Ctrl+Alt+Del, Win, Alt+Tab…)는 아이콘 버튼으로 전송. 창 모드는 상단바, 전체 화면은 반투명 PiP
 - 전체 화면 + Keyboard Lock API(HTTPS 필요)면 Ctrl+Alt+Del을 뺀 특수 키를 직접 눌러도 원격으로 간다
+- 이 PC 에이전트 키 전달(`Launcher/KeyboardRelay`): Keyboard Lock을 못 쓰면(HTTP·iframe) 대시보드가 `ws://127.0.0.1:47651/keys`에 연결하고, 런처가 연결된 동안만 저수준 키보드 후크로 Win·Alt+Tab·Alt+F4·Alt+Space·Esc를 이 PC에서 막아 `{code, down}`으로 넘긴다(앞 창이 브라우저일 때만, Origin은 에이전트가 연결된 서버 호스트·localhost만). Esc 길게 누름 = 전체 화면 종료
 - HTTPS: 설치 스크립트가 자체 서명 인증서(SAN: 호스트명·IPv4·localhost)를 LocalMachine\My에 만들고 Kestrel HTTPS 포트(기본 5064)를 연다.
   신뢰는 자동: 서버는 시작 시(`Program.cs`), 에이전트는 등록 시(`ServerCertificateTrust`) `CertificateTrust.EnsureTrustedRoot`로 LocalMachine\Root에 넣는다.
   에이전트 없는 PC는 `/api/install/PcManager-인증서-설치.cmd`(자체 승격 배치)로 한 번 설치. 에이전트 통신 자체는 HTTP 그대로

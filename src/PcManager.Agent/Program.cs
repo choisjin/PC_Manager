@@ -7,7 +7,7 @@ internal static class Program
     /// <summary>
     /// 실행 모드 (인자로 구분, 기본은 설치 프로그램):
     ///   (없음)      더블클릭 설치 (필요하면 UAC로 관리자 승격)
-    ///   --uninstall 제거 (--purge: 설정/데이터까지)
+    ///   --uninstall 제거 (--purge: 설정/데이터까지, --cleanup-self: 끝나면 임시 복사본 폴더도 삭제)
     ///   --service   Windows 서비스 본체 (SCM이 실행)
     ///   --console   개발용 콘솔 서비스
     ///   --launcher  트레이 런처 (--tray: 창을 열지 않고 트레이만)
@@ -44,7 +44,13 @@ internal static class Program
             return Launcher.LauncherApp.Run(showWindow: !args.Contains("--tray"));
 
         if (args.Contains("--uninstall"))
-            return Install.SetupUI.Uninstall(removeData: args.Contains("--purge"));
+        {
+            var code = Install.SetupUI.Uninstall(removeData: args.Contains("--purge"));
+            // 런처 [에이전트 삭제]로 띄운 임시 복사본이면 자기 폴더도 정리
+            if (args.Contains(Install.SelfUninstall.CleanupArgument))
+                Install.SelfUninstall.CleanupSelf();
+            return code;
+        }
 
         // 런처에서 멈춘 서비스를 다시 시작 (관리자 승격)
         if (args.Contains("--start-service"))

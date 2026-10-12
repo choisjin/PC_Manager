@@ -152,7 +152,16 @@ const entryFile = (entry: FileSystemFileEntry) => new Promise<File>((resolve, re
 
 const keyboardLockAvailable = () => typeof window !== 'undefined' && window.isSecureContext && typeof keyboardApi()?.lock === 'function'
 
-type KeyLock = 'off' | 'locked' | 'unavailable'
+/** locked: 브라우저 키보드 잠금, agent: 이 PC 에이전트(트레이)가 키를 가로채 넘김 */
+type KeyLock = 'off' | 'locked' | 'agent' | 'unavailable'
+const initialKeyLock = (): KeyLock => (keyboardLockAvailable() ? 'off' : 'unavailable')
+
+/**
+ * 이 PC 에이전트 런처의 키 전달 (Launcher/KeyboardRelay.cs). 전체 화면 동안 연결해 두면 Alt+Tab·Win·Alt+F4·Esc를
+ * 이 PC에서 막고 {code, down}으로 보내 준다. 브라우저 키보드 잠금이 안 되는 HTTP 접속·다른 화면(iframe) 안에서도 된다
+ */
+const KEY_RELAY_URL = 'ws://127.0.0.1:47651/keys'
+const LOCK_HINT = '키보드 잠금: Alt+Tab·Win·Alt+F4가 원격으로 전달됩니다. 종료하려면 Esc를 길게 누르거나 ⛶ 버튼을 누르세요.'
 
 /** 원격 PC 화면 보기 + 마우스/키보드 조작 (H.264 스트리밍) */
 export function RemoteModal({ agentId: initialAgentId, machineName: initialName, userId, onClose }: Props) {
@@ -238,7 +247,9 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
   // 원격 PC 해상도를 이 PC 모니터 해상도에 맞춘다 (RDP처럼). 끄면 원격 원래 해상도
   const [matchResolution, setMatchResolution] = useState(true)
   const matchRef = useRef(true)
-  const [keyLock, setKeyLock] = useState<KeyLock>(() => (keyboardLockAvailable() ? 'off' : 'unavailable'))
+  const [keyLock, setKeyLock] = useState<KeyLock>(initialKeyLock)
+  const relayRef = useRef<WebSocket | null>(null)
+  const relayEscTimerRef = useRef(0)
   const [hint, setHint] = useState<string | null>(null)
 
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 })
@@ -297,7 +308,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
       if (!active) {
         keyboardApi()?.unlock?.()
         if (embedded()) void parentKeyboardLock('unlock')
-        setKeyLock((s) => (s === 'locked' ? 'off' : s))
+        closeKeyRelay()
+        setKeyLock((s) => (s === 'locked' || s === 'agent' ? initialKeyLock() : s))
       }
       stageRef.current?.focus()
     }
@@ -306,6 +318,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
       document.removeEventListener('fullscreenchange', onChange)
       keyboardApi()?.unlock?.()
       if (embedded()) void parentKeyboardLock('unlock')
+      closeKeyRelay()
       if (document.fullscreenElement) void document.exitFullscreen().catch(() => {})
     }
   }, [])
@@ -737,6 +750,73 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     focusStage()
   }
 
+  /** 에이전트가 넘겨 준 키 → 원격. 수식 키 상태는 지금 눌린 키로 계산한다 (Alt+Tab의 Alt가 풀리지 않게) */
+  const onRelayKey = (code: string, down: boolean) => {
+    // Esc를 길게 누르면 전체 화면 종료 (브라우저 키보드 잠금과 같게)
+    if (code === 'Escape') {
+      window.clearTimeout(relayEscTimerRef.current)
+      relayEscTimerRef.current = down ? window.setTimeout(() => void document.exitFullscreen().catch(() => {}), 1200) : 0
+    }
+    if (viewOnlyRef.current) return
+    if (down) pressedRef.current.add(code)
+    else pressedRef.current.delete(code)
+    const held = pressedRef.current
+    send({
+      t: down ? 'kd' : 'ku',
+      code,
+      shift: held.has('ShiftLeft') || held.has('ShiftRight'),
+      ctrl: held.has('ControlLeft') || held.has('ControlRight'),
+      alt: held.has('AltLeft') || held.has('AltRight'),
+      meta: held.has('MetaLeft') || held.has('MetaRight'),
+    })
+  }
+
+  /** 이 PC 에이전트의 키 전달에 연결한다. 에이전트가 없거나(설치 안 됨·옛 버전) 거절하면 false */
+  const connectKeyRelay = () =>
+    new Promise<boolean>((resolve) => {
+      let ws: WebSocket
+      try {
+        ws = new WebSocket(KEY_RELAY_URL)
+      } catch {
+        resolve(false)
+        return
+      }
+      const timer = window.setTimeout(() => {
+        ws.onclose = null
+        ws.close()
+        resolve(false)
+      }, 1500)
+      ws.onopen = () => {
+        window.clearTimeout(timer)
+        relayRef.current = ws
+        resolve(true)
+      }
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(String(e.data)) as { code?: unknown; down?: unknown }
+          if (typeof msg.code === 'string') onRelayKey(msg.code, msg.down === true)
+        } catch {
+          // 무시
+        }
+      }
+      ws.onclose = () => {
+        window.clearTimeout(timer)
+        if (relayRef.current === ws) {
+          relayRef.current = null
+          setKeyLock((s) => (s === 'agent' ? initialKeyLock() : s))
+        }
+        resolve(false)
+      }
+    })
+
+  const closeKeyRelay = () => {
+    window.clearTimeout(relayEscTimerRef.current)
+    relayEscTimerRef.current = 0
+    const ws = relayRef.current
+    relayRef.current = null
+    ws?.close()
+  }
+
   const toggleFullscreen = async () => {
     // 모달 <dialog>는 이미 최상위 레이어라 전체 화면 요청이 무시된다 → 화면 영역(stage)을 전체 화면으로
     const stage = stageRef.current
@@ -754,48 +834,51 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     }
 
     // 전체 화면에서만 키보드 잠금이 가능: Alt+Tab, Win, Alt+F4, Ctrl+W 등이 로컬 대신 원격으로 간다
-    // 다른 화면(NPMS 포털 등) 안의 iframe이면 HTTPS여도 브라우저가 키보드 잠금을 허용하지 않는다 (최상위 창만)
-    // → 바깥 화면이 대신 잠가 주면 그것으로 (바깥도 HTTPS여야 함)
+    // 1) HTTPS 최상위 창: 브라우저 키보드 잠금
     const inFrame = embedded()
+    if (!inFrame && keyboardLockAvailable()) {
+      try {
+        await keyboardApi()!.lock!()
+        setKeyLock('locked')
+        showHint(LOCK_HINT)
+        stage.focus()
+        return
+      } catch {
+        // 아래 에이전트로
+      }
+    }
+
+    // 2) 이 PC 에이전트(트레이)가 키를 가로채 넘긴다: HTTP 접속·다른 화면(iframe) 안에서도 된다
+    if (await connectKeyRelay()) {
+      setKeyLock('agent')
+      showHint('키보드 잠금(이 PC 에이전트): Alt+Tab·Win·Alt+F4·Esc가 원격으로 전달됩니다. 종료하려면 Esc를 길게 누르거나 ⛶ 버튼을 누르세요.')
+      stage.focus()
+      return
+    }
+
+    // 3) 다른 화면(NPMS 포털 등) 안의 iframe: 바깥 화면이 대신 잠가 주면 그것으로 (바깥도 HTTPS여야 함)
     if (inFrame) {
       const result = await parentKeyboardLock('lock')
       if (result.ok) {
         setKeyLock('locked')
-        showHint('키보드 잠금: Alt+Tab·Win·Alt+F4가 원격으로 전달됩니다. 종료하려면 Esc를 길게 누르거나 ⛶ 버튼을 누르세요.')
-        stage.focus()
-        return
-      }
-      if (result.error) {
-        showHint(`키보드 잠금 실패(바깥 화면): ${result.error}. 새 창으로 열면 됩니다. 지금은 위 아이콘으로 보낼 수 있습니다.`)
+        showHint(LOCK_HINT)
         stage.focus()
         return
       }
     }
-    if (keyLock === 'unavailable' || inFrame) {
-      // HTTP 접속: 브라우저가 Keyboard Lock API를 노출하지 않는다 → HTTPS 주소를 안내
-      let https: string | null = null
-      try {
-        https = (await api.installInfo()).httpsUrl
-      } catch {
-        // 안내만 생략
-      }
-      showHint(
-        inFrame
-          ? `다른 화면 안에 열린 대시보드에서는 Alt+Tab·Win 키를 직접 보낼 수 없습니다. 새 창으로 여세요: ${https ?? location.origin}  (상단 '새 창에서 열기'). 지금은 위 아이콘으로 보낼 수 있습니다.`
-          : https
-          ? `Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: ${https}  (인증서 경고가 뜨면 Setting › 'PC 추가 · 인증서'의 인증서 설치 도구를 한 번 실행). 지금은 위 아이콘으로 보낼 수 있습니다.`
-          : 'Alt+Tab·Win 키를 직접 누르려면 HTTPS(또는 localhost)로 접속해야 합니다. 지금은 위 아이콘으로 보낼 수 있습니다.',
-      )
-    } else {
-      try {
-        await keyboardApi()!.lock!()
-        setKeyLock('locked')
-        showHint('키보드 잠금: Alt+Tab·Win·Alt+F4가 원격으로 전달됩니다. 종료하려면 Esc를 길게 누르거나 ⛶ 버튼을 누르세요.')
-      } catch (err) {
-        setKeyLock('off')
-        showHint(`키보드 잠금 실패: ${err instanceof Error ? err.message : String(err)}`)
-      }
+
+    // 4) 안내: 이 PC에 에이전트를 설치하거나 HTTPS로 접속
+    let https: string | null = null
+    try {
+      https = (await api.installInfo()).httpsUrl
+    } catch {
+      // 안내만 생략
     }
+    showHint(
+      https
+        ? `Alt+Tab·Win 키를 직접 보내려면 이 PC에 에이전트를 설치·실행하거나 HTTPS로 접속하세요: ${https}. 지금은 위 아이콘으로 보낼 수 있습니다.`
+        : 'Alt+Tab·Win 키를 직접 보내려면 이 PC에 에이전트를 설치·실행하세요. 지금은 위 아이콘으로 보낼 수 있습니다.',
+    )
     stage.focus()
   }
 
@@ -914,7 +997,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
           <b>{machineName}</b>
           <span className="muted small">{statusText}</span>
           {secureDesktop && <span className="remote-badge">보안 데스크톱</span>}
-          {keyLock === 'locked' && <span className="remote-badge ok">키보드 잠금</span>}
+          {(keyLock === 'locked' || keyLock === 'agent') && <span className="remote-badge ok">키보드 잠금</span>}
           {pasting ? (
             <span className="remote-badge">{pasting}</span>
           ) : (
@@ -964,7 +1047,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
             className="icon"
             title={
               keyLock === 'unavailable'
-                ? '전체 화면 (Alt+Tab·Win 키 전달은 HTTPS 접속에서만 가능)'
+                ? '전체 화면 + 키보드 잠금 (이 PC 에이전트 또는 HTTPS 접속 필요)'
                 : '전체 화면 + 키보드 잠금 (Alt+Tab·Win·Alt+F4를 원격으로 전달)'
             }
             onClick={() => void toggleFullscreen()}
