@@ -317,7 +317,7 @@ const EXACT: Record<string, string> = {
   "대 · 온라인": "PCs · online",
   "대 선택됨": "selected",
   "대)": "PCs)",
-  "대기": "Waiting",
+  "대기": "Idle",
   "대상": "Targets",
   "대상 PC가 없습니다.": "No target PCs.",
   "대상 PC가 오프라인입니다.": "The target PC is offline.",

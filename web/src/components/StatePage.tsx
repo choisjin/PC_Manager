@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { type Agent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type RemoteUsage, type StateLayout, type Transfer } from '../api'
 import { buildTree, displayName, type FolderNode } from './explorer/pcGroups'
 import { kindLabel } from './explorer/useTransfers'
+import { tr as translate } from '../i18n/engine'
 
 interface Props {
   agents: Agent[]
@@ -27,6 +28,8 @@ interface PcNode {
   id: string
   name: string
   group: string
+  /** 속한 그룹 패널 key */
+  panelKey: string
   online: boolean
   status: PcStatus['status'] | null
   inUseBy: string | null
@@ -194,6 +197,7 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
           id: agent.id,
           name: displayName(agent, pcGroups),
           group: g.name,
+          panelKey: g.key,
           online: agent.online,
           status: pcStatuses[agent.id]?.status ?? null,
           inUseBy: remoteUsage[agent.id]?.userId ?? null,
@@ -214,6 +218,8 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
 
   const modelRef = useRef({ layout, activeTransfers })
   modelRef.current = { layout, activeTransfers }
+  // 마우스를 올린 사용자: 그 사람의 선·표시만 또렷하게, 나머지는 흐리게
+  const focusRef = useRef<string | null>(null)
 
   // 이벤트: 전송 완료·실패, 원격조작 시작·종료, PC 접속·끊김 → 섬광 + 기록
   const prevRef = useRef<{ transfers: Map<string, Transfer['state']>; remote: Record<string, string>; online: Map<string, boolean> } | null>(null)
@@ -398,7 +404,7 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
         ctx.textAlign = 'left'
         ctx.textBaseline = 'middle'
         ctx.fillStyle = p.color
-        ctx.fillText(p.name, p.x + 10, p.y + (HEAD_H - 6) / 2)
+        ctx.fillText(p.key === 'ungrouped' ? translate(p.name) : p.name, p.x + 10, p.y + (HEAD_H - 6) / 2)
         ctx.textAlign = 'right'
         ctx.font = '600 10.5px "Segoe UI", sans-serif'
         ctx.fillStyle = '#9fb0d6'
@@ -417,25 +423,59 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
         if (p.online > 0) pulses(c, now + p.x * 3, p.color, 1, 3200, 2, false, 6)
       }
       // 사용자 ↔ 서버
+      const focus = focusRef.current
+      const dim = (userId: string | null) => (focus && userId !== focus ? 0.22 : 1)
       for (const u of L.users) {
         const c = curve(u.x, u.y, server.x - SERVER_W / 2, server.y, -0.06)
         const col = u.self ? COLORS.self : COLORS.user
-        stroke(c, col, 1.5, u.active ? 0.5 : 0.25)
-        if (u.active) pulses(c, now + u.y * 5, col, 1, 3600, 1.5, false, 5)
+        stroke(c, col, 1.5, (u.active ? 0.5 : 0.25) * dim(u.id))
+        if (u.active && dim(u.id) === 1) pulses(c, now + u.y * 5, col, 1, 3600, 1.5, false, 5)
       }
 
-      // PC 탐색(브라우저로 보는 중): 사용자 → PC, 흐르는 굵은 점선 + 느린 빛
+      // PC 탐색(브라우저로 보는 중): 평소에는 선을 긋지 않고 PC 카드 오른쪽 위 사용자 표시로만 보인다 (사람·PC가 많아도 깔끔하게).
+      // 사용자에 마우스를 올리면 그 사람 → 보고 있는 그룹 패널로 한 줄씩 (PC가 많아도 그룹마다 한 줄)
+      const viewLinks = new Map<string, { u: UserNode; panel: GroupPanel; count: number }>()
       for (const p of L.pcs) {
         for (const vid of p.viewers) {
           if (vid === p.inUseBy) continue
           const u = L.users.find((x) => x.id === vid)
-          if (!u) continue
-          const col = u.self ? COLORS.self : COLORS.user
-          const c = curve(u.x, u.y, p.x - CARD_W / 2, p.y, 0.14)
-          stroke(c, col, 5, 0.1)
-          stroke(c, col, 1.8, 0.75, [8, 6], -now * 0.025)
-          pulses(c, now + p.y * 4, col, 1, 2800, 1.8, false, 6)
+          const panel = L.panels.find((g) => g.key === p.panelKey)
+          if (!u || !panel) continue
+          const key = `${u.id}|${panel.key}`
+          const link = viewLinks.get(key)
+          if (link) link.count++
+          else viewLinks.set(key, { u, panel, count: 1 })
         }
+      }
+      // 한 패널에 여러 사람이 들어오면 닿는 자리를 조금씩 벌린다
+      const perPanel = new Map<string, UserNode[]>()
+      for (const { u, panel } of viewLinks.values()) perPanel.set(panel.key, [...(perPanel.get(panel.key) ?? []), u])
+      for (const { u, panel } of viewLinks.values()) {
+        if (u.id !== focus) continue
+        const col = u.self ? COLORS.self : COLORS.user
+        const a = 1
+        const e = edge(panel.x, panel.y, panel.w, panel.h, u.x, u.y)
+        const list = (perPanel.get(panel.key) ?? []).sort((x, y) => x.y - y.y)
+        const shift = (list.indexOf(u) - (list.length - 1) / 2) * 12
+        const side = Math.abs(e.x - panel.x) < 1 || Math.abs(e.x - (panel.x + panel.w)) < 1
+        const bx = side ? e.x : Math.max(panel.x + 8, Math.min(panel.x + panel.w - 8, e.x + shift))
+        const by = side ? Math.max(panel.y + 8, Math.min(panel.y + panel.h - 8, e.y + shift)) : e.y
+        const c = curve(u.x, u.y, bx, by, 0.1)
+        stroke(c, col, 5, 0.08 * a)
+        stroke(c, col, 1.6, 0.7 * a, [8, 6], -now * 0.025)
+        if (a === 1) pulses(c, now + panel.y * 4, col, 1, 2800, 1.7, false, 6)
+        // 패널에 닿는 점 (접속 단자)
+        ctx.save()
+        ctx.globalCompositeOperation = 'source-over'
+        ctx.globalAlpha = a
+        ctx.fillStyle = '#0b1124'
+        ctx.strokeStyle = col
+        ctx.lineWidth = 1.6
+        ctx.beginPath()
+        ctx.arc(bx, by, 4, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.restore()
       }
 
       // 원격조작: 사용자 → 서버 → PC (굵고 차분한 빔, 빛은 느리게)
@@ -444,10 +484,11 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
         const u = L.users.find((x) => x.id === p.inUseBy)
         const legs = [curve(server.x, server.y, p.x, p.y, 0.08)]
         if (u) legs.unshift(curve(u.x, u.y, server.x, server.y, -0.06))
+        const a = dim(p.inUseBy)
         for (const c of legs) {
-          stroke(c, COLORS.remote, 8, 0.1)
-          stroke(c, COLORS.remote, 2.4, 0.85)
-          pulses(c, now, COLORS.remote, 2, 3000, 2.2, false, 7)
+          stroke(c, COLORS.remote, 8, 0.1 * a)
+          stroke(c, COLORS.remote, 2.4, 0.85 * a)
+          if (a === 1) pulses(c, now, COLORS.remote, 2, 3000, 2.2, false, 7)
         }
       }
 
@@ -504,6 +545,18 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
           glowDot(p.x, p.y, 16 + 2 * Math.sin(now * 0.003), COLORS.remote, 0.35)
           ctx.globalCompositeOperation = 'source-over'
         }
+        // 마우스를 올린 사용자가 보고 있는 PC: 그 사람 색으로 테두리
+        if (focus && p.viewers.includes(focus) && p.inUseBy !== focus) {
+          const fu = L.users.find((x) => x.id === focus)
+          ctx.save()
+          ctx.strokeStyle = fu?.self ? COLORS.self : COLORS.user
+          ctx.lineWidth = 2
+          ctx.globalAlpha = 0.9
+          ctx.beginPath()
+          ctx.roundRect(x - 3, y - 3, CARD_W + 6, CARD_H + 6, 8)
+          ctx.stroke()
+          ctx.restore()
+        }
         ctx.fillStyle = p.online ? '#111a33' : '#0d1222'
         ctx.strokeStyle = col
         ctx.globalAlpha = p.online ? 1 : 0.6
@@ -538,7 +591,8 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
               : p.status && p.status !== 'available' ? PC_STATUS_LABEL[p.status] : '대기'
         ctx.font = '500 10px "Segoe UI", "Malgun Gothic", sans-serif'
         ctx.fillStyle = tr ? transferColor(tr) : p.inUseBy ? COLORS.remote : '#8d9ab8'
-        ctx.fillText(sub.length > 13 ? sub.slice(0, 12) + '…' : sub, x + 9, y + 32)
+        const subText = translate(sub)
+        ctx.fillText(subText.length > 15 ? subText.slice(0, 14) + '…' : subText, x + 9, y + 32)
         // 진행 막대
         if (tr) {
           ctx.fillStyle = 'rgba(255,255,255,0.08)'
@@ -549,6 +603,38 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
           ctx.fillRect(x + 6 + off, y + CARD_H - 4, w, 2)
         }
         ctx.globalAlpha = 1
+        const watchers = p.viewers.filter((v) => v !== p.inUseBy)
+        if (watchers.length) {
+          const shown = watchers.slice(0, 3)
+          shown.forEach((vid, k) => {
+            const u = L.users.find((x) => x.id === vid)
+            const col = u?.self ? COLORS.self : COLORS.user
+            const cx = x + CARD_W - 7 - (shown.length - 1 - k) * 9
+            const cy = y + 1
+            ctx.globalAlpha = dim(vid)
+            ctx.fillStyle = col
+            ctx.strokeStyle = '#0b1124'
+            ctx.lineWidth = 1.5
+            ctx.beginPath()
+            ctx.arc(cx, cy, 6, 0, Math.PI * 2)
+            ctx.fill()
+            ctx.stroke()
+            ctx.fillStyle = '#151230'
+            ctx.font = '700 8px "Malgun Gothic", sans-serif'
+            ctx.textAlign = 'center'
+            ctx.textBaseline = 'middle'
+            ctx.fillText((u?.name ?? '?').slice(0, 1), cx, cy + 0.5)
+            ctx.textBaseline = 'alphabetic'
+          })
+          if (watchers.length > shown.length) {
+            ctx.globalAlpha = 1
+            ctx.fillStyle = '#c9b8ff'
+            ctx.font = '700 9px "Segoe UI", sans-serif'
+            ctx.textAlign = 'right'
+            ctx.fillText(`+${watchers.length - shown.length}`, x + CARD_W - 7 - shown.length * 9, y + 4)
+          }
+          ctx.globalAlpha = 1
+        }
       }
 
       // 서버 (단순한 카드)
@@ -582,7 +668,7 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
       // 사용자
       for (const u of L.users) {
         const col = u.self ? COLORS.self : COLORS.user
-        ctx.globalAlpha = u.active ? 1 : 0.75
+        ctx.globalAlpha = (u.active ? 1 : 0.75) * (focus && u.id !== focus ? 0.45 : 1)
         ctx.fillStyle = '#151230'
         ctx.strokeStyle = col
         ctx.lineWidth = 2
@@ -598,7 +684,7 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
         ctx.textBaseline = 'alphabetic'
         ctx.font = '600 10.5px "Segoe UI", "Malgun Gothic", sans-serif'
         ctx.fillStyle = '#e6dcff'
-        ctx.fillText(u.self ? `${u.name} (나)` : u.name, u.x, u.y + 29)
+        ctx.fillText(u.self ? translate(`${u.name} (나)`) : u.name, u.x, u.y + 29)
         // 접속 표시등
         ctx.fillStyle = u.active ? '#35e0b5' : '#6b7a99'
         ctx.beginPath()
@@ -670,6 +756,7 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
     }
     const pc = layout.pcs.find((p) => Math.abs(p.x - x) < CARD_W / 2 && Math.abs(p.y - y) < CARD_H / 2)
     if (pc) {
+      focusRef.current = null
       const ts = activeTransfers.filter((t) => t.agentId === pc.id)
       setHover({
         x, y,
@@ -684,6 +771,7 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
       return
     }
     const u = layout.users.find((p) => Math.hypot(p.x - x, p.y - y) < 18)
+    focusRef.current = u?.id ?? null
     if (u) {
       const remote = layout.pcs.filter((p) => p.inUseBy === u.id).map((p) => p.name)
       const viewing = layout.pcs.filter((p) => p.viewers.includes(u.id)).map((p) => p.name)
@@ -725,6 +813,7 @@ export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence,
         onMouseLeave={() => {
           onUp()
           setHover(null)
+          focusRef.current = null
         }}
       />
       {/* 움직임 / 고정 (모든 사용자 공유) */}
