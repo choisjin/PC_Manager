@@ -427,6 +427,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
             if (msg.note === 'resolution-changed') showHint(`원격 해상도를 ${msg.width}×${msg.height}(으)로 맞췄습니다.`)
             else if (msg.note === 'resolution-failed') showHint(`해상도 맞춤 실패: ${msg.message ?? '지원하지 않는 모드'}`)
             else if (msg.note === 'headless') showHint('원격 PC에 모니터가 없어 가상 모니터를 준비합니다… (처음이면 드라이버 설치로 몇 초 걸립니다)')
+            else if (msg.note === 'single-monitor') showHint('원격조작 중에는 고른 모니터 하나만 켭니다. 끝나면 원래 모니터 구성으로 돌아갑니다.')
+            else if (msg.note === 'single-monitor-failed') showHint(`모니터 하나만 켜지 못했습니다: ${msg.message ?? ''}`)
             else if (msg.note === 'virtual-monitor') showHint('모니터가 없어 가상 모니터를 켰습니다. 물리 모니터가 다시 켜지면 자동으로 꺼집니다 (멀티 모니터로 쓰지 않음).')
             else if (msg.note === 'virtual-released') showHint('물리 모니터가 켜져 가상 모니터를 껐습니다.')
             else if (msg.note === 'reattaching') {

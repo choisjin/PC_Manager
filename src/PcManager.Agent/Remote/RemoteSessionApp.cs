@@ -131,6 +131,8 @@ internal static class RemoteSessionApp
 
         // 캡처 스레드가 정하고 입력 스레드가 읽는 값
         private volatile int _monitorIndex = -1; // -1: 주 모니터
+        // 모니터가 여러 대면 원래 구성의 모니터 목록. 원격조작 중에는 이 중 고른 하나만 켠다 (null: 한 대라 바꿀 필요 없음)
+        private List<DisplayTopology.Monitor>? _layout;
         private volatile bool _keyFrameRequested = true;
         private volatile int _bitrate = 6_000_000;
         // 대시보드(보는 쪽) 화면 영역 크기. 스트림을 이 크기에 맞춰 줄인다. 0이면 아직 모름 → 원본 기준
@@ -159,6 +161,14 @@ internal static class RemoteSessionApp
         public async Task RunAsync()
         {
             var ct = _cts.Token;
+            try
+            {
+                _layout = DisplayTopology.Remember();
+            }
+            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+            {
+                _layout = null;
+            }
             await SendJsonAsync(new { type = "hello", monitors = DescribeMonitors(), desktop = DesktopSwitcher.CurrentName, clipDir = ClipboardFolder }, ct);
             _ = Task.Run(CleanupClipboardFolder);
 
@@ -436,6 +446,8 @@ internal static class RemoteSessionApp
             var captureStarted = TimeSpan.Zero;
             // 마지막으로 디스플레이 모드 맞춤을 시도한 (모니터, 대시보드 해상도, 켜짐). 바뀌면 다시 시도한다
             var appliedMatch = (Monitor: int.MinValue, Width: 0, Height: 0, On: false);
+            // 하나만 켠 모니터 (원래 구성 목록 기준 번호). int.MinValue: 아직 안 바꿈
+            var appliedSingle = int.MinValue;
             // 모니터가 없는 PC: 가상 모니터를 켜서 화면을 만든다 (한 번 켜면 유지)
 
             try
@@ -478,6 +490,25 @@ internal static class RemoteSessionApp
                     var desktopChanged = DesktopSwitcher.SyncThreadToInputDesktop();
                     if (desktopChanged && currentMonitor != int.MinValue)
                         _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName }, ct);
+
+                    // 모니터가 여러 대면 고른 모니터 하나만 켠다 (RDP 단일 모니터처럼). 다른 모니터를 고르면 그 모니터로 바꾼다
+                    if (_layout is { } layout && SelectedLayoutIndex(layout) is var wantSingle && wantSingle != appliedSingle)
+                    {
+                        appliedSingle = wantSingle;
+                        var error = DisplayTopology.UseOnly(layout[wantSingle]);
+                        _ = SendJsonAsync(error is null
+                            ? new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "single-monitor", message = (string?)null }
+                            : new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "single-monitor-failed", message = (string?)error }, ct);
+                        if (error is null)
+                        {
+                            // 구성이 바뀌는 동안 잠깐 기다렸다가 캡처·해상도 맞춤을 새로
+                            Thread.Sleep(800);
+                            capturer?.Dispose();
+                            capturer = null;
+                            appliedMatch = (int.MinValue, 0, 0, false);
+                            currentMonitor = int.MinValue;
+                        }
+                    }
 
                     // 대시보드 PC 해상도에 맞춰 원격 디스플레이 모드를 바꾼다 (RDP처럼). 바뀌면 캡처 장치를 다시 만든다
                     var wantMatch = (Monitor: _monitorIndex, Width: _screenWidth, Height: _screenHeight, On: _matchResolution);
@@ -626,7 +657,15 @@ internal static class RemoteSessionApp
             {
                 capturer?.Dispose();
                 encoder?.Dispose();
-                // 바꿨던 해상도는 되돌린다
+                // 바꿨던 모니터 구성·해상도는 되돌린다
+                try
+                {
+                    DisplayTopology.Restore();
+                }
+                catch (Exception ex)
+                {
+                    Trace.WriteLine($"모니터 구성 복원 실패: {ex.Message}");
+                }
                 try
                 {
                     DisplayModes.RestoreAll();
@@ -661,11 +700,8 @@ internal static class RemoteSessionApp
 
         private bool ApplyDisplayMode(int monitorIndex, int screenWidth, int screenHeight, bool on, CancellationToken ct)
         {
-            var displays = DisplayModes.Enumerate();
-            if (displays.Count == 0)
+            if (FindDisplay(monitorIndex) is not { } display)
                 return false;
-            var display = monitorIndex >= 0 && monitorIndex < displays.Count ? displays[monitorIndex]
-                : displays.FirstOrDefault(d => d.Primary, displays[0]);
             var before = display.Bounds.Size;
 
             try
@@ -732,17 +768,53 @@ internal static class RemoteSessionApp
             }
         }
 
-        private static Rectangle ResolveMonitor(int index)
+        private Rectangle ResolveMonitor(int index) =>
+            FindDisplay(index)?.Bounds ?? throw new InvalidOperationException("연결된 모니터가 없습니다.");
+
+        /// <summary>원래 구성 목록에서 고른 번호 (-1이거나 범위 밖이면 주 모니터)</summary>
+        private int SelectedLayoutIndex(List<DisplayTopology.Monitor> layout)
+        {
+            var index = _monitorIndex;
+            if (index >= 0 && index < layout.Count)
+                return index;
+            var primary = layout.FindIndex(m => m.Primary);
+            return primary >= 0 ? primary : 0;
+        }
+
+        /// <summary>
+        /// 캡처·해상도 맞춤 대상 모니터. 여러 대를 하나만 켰으면 고른 모니터(장치 이름), 아니면 번호(-1: 주 모니터)
+        /// </summary>
+        private DisplayInfo? FindDisplay(int index)
         {
             var displays = DisplayModes.Enumerate();
             if (displays.Count == 0)
-                throw new InvalidOperationException("연결된 모니터가 없습니다.");
-            if (index >= 0 && index < displays.Count)
-                return displays[index].Bounds;
-            return displays.FirstOrDefault(d => d.Primary, displays[0]).Bounds;
+                return null;
+            if (_layout is { } layout)
+            {
+                var name = layout[SelectedLayoutIndex(layout)].DeviceName;
+                var match = displays.FindIndex(d => d.DeviceName == name);
+                if (match >= 0)
+                    return displays[match];
+            }
+            else if (index >= 0 && index < displays.Count)
+            {
+                return displays[index];
+            }
+            return displays.FirstOrDefault(d => d.Primary, displays[0]);
         }
 
-        private static object[] DescribeMonitors() => [.. DisplayModes.Enumerate().Select((d, i) => new
+        private object[] DescribeMonitors() => _layout is { } layout
+            ? [.. layout.Select((m, i) => new
+            {
+                index = i,
+                name = m.DeviceName.TrimStart('\\', '.'),
+                primary = m.Primary,
+                x = m.Bounds.X,
+                y = m.Bounds.Y,
+                width = m.Bounds.Width,
+                height = m.Bounds.Height,
+            })]
+            : [.. DisplayModes.Enumerate().Select((d, i) => new
         {
             index = i,
             name = d.DeviceName.TrimStart('\\', '.'),
