@@ -892,6 +892,12 @@ export function ExplorerPane({
         e.preventDefault()
         navigate(listing.parentPath)
       }
+    } else if (ctrl && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+      // 탭 좌우 이동 (끝에서 반대쪽 끝으로). Ctrl+Tab·Ctrl+숫자는 브라우저가 가져가 쓸 수 없다
+      if (tabs.length <= 1) return
+      e.preventDefault()
+      const idx = tabs.findIndex((t) => t.id === activeTabId)
+      setActiveTabId(tabs[(idx + (key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length].id)
     } else if (key === 'Escape') {
       setSelected(new Set())
     } else if (key === 'ArrowDown' || key === 'ArrowUp') {
