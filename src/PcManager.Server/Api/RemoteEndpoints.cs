@@ -102,7 +102,9 @@ public static class RemoteEndpoints
             var fromViewer = relay.PumpFromViewerAsync(viewer, relayCts.Token);
 
             // 에이전트 → 브라우저: 원격조작 프로세스가 끝나도(로그인으로 세션이 바뀌는 등) 브라우저가 열려 있으면
-            // 새 세션에 다시 띄워 같은 연결에 잇는다 (RDP처럼 로그인 후에도 이어짐)
+            // 새 세션에 다시 띄워 같은 연결에 잇는다 (RDP처럼 로그인 후에도 이어짐).
+            // RDP 접속으로 끝난 경우는 다시 잇지 않고 그 사유로 닫는다
+            var endReason = "원격조작이 종료되었습니다.";
             var fromAgents = Task.Run(async () =>
             {
                 while (true)
@@ -124,6 +126,12 @@ public static class RemoteEndpoints
                         if (!registry.TryGetConnection(agentId, out var conn))
                             continue;
                         (next, error) = await StartSessionAsync(agentId, conn, sessions, agentHub, relayCts.Token);
+                        if (error == AgentRemotePaths.RdpTookOver)
+                        {
+                            endReason = error;
+                            logger.LogInformation("RDP 접속으로 원격조작 종료: {AgentId}", agentId);
+                            return;
+                        }
                     }
                     if (next is null)
                         return;
@@ -136,7 +144,7 @@ public static class RemoteEndpoints
             {
                 await Task.WhenAny(fromViewer, fromAgents);
                 await ReleaseUsageAsync();
-                await CloseAsync(viewer, WebSocketCloseStatus.NormalClosure, "원격조작이 종료되었습니다.");
+                await CloseAsync(viewer, WebSocketCloseStatus.NormalClosure, endReason);
                 await relay.CloseCurrentAsync();
                 relayCts.CancelAfter(TimeSpan.FromSeconds(3));
                 // 에이전트 쪽이 응답하지 않아도 정리가 끝나도록 (취소가 안 먹는 경우 소켓을 끊는다)

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -15,6 +16,74 @@ public class RemoteControlService(AgentSettingsStore settings, ILogger<RemoteCon
 {
     public const string SessionArgument = "--remote-session";
     public const string ThumbnailArgument = "--thumb";
+
+    // 원격조작 프로세스가 끝난 직후 서버가 다시 띄우는 요청은 같은 원격조작이 이어지는 것으로 본다
+    // (서버는 끝나고 1.5초 뒤 처음 다시 시도한다)
+    private static readonly TimeSpan ReattachWindow = TimeSpan.FromSeconds(10);
+
+    // 원격조작 프로세스: 세션 ID → (프로세스 ID, 마지막으로 살아 있던 시각). 썸네일은 넣지 않는다
+    private readonly ConcurrentDictionary<int, (int Pid, DateTime SeenAt)> _controlled = new();
+
+    /// <summary>원격조작 프로세스가 하나라도 살아 있는지</summary>
+    public bool IsControlling()
+    {
+        foreach (var (session, entry) in _controlled)
+        {
+            if (IsAlive(entry.Pid))
+            {
+                _controlled[session] = (entry.Pid, DateTime.UtcNow);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// RDP로 접속해 들어오면 나중에 연결한 RDP가 이긴다: 원격조작 프로세스를 끝낸다.
+    /// 서버가 다시 띄우려 하면 Start가 RdpTookOver로 거절해 원격조작 창이 그 사유로 닫힌다
+    /// </summary>
+    public void EndForRdp()
+    {
+        foreach (var (session, entry) in _controlled)
+        {
+            try
+            {
+                using var process = Process.GetProcessById(entry.Pid);
+                process.Kill();
+                logger.LogInformation("RDP 접속 → 원격조작 종료: 세션 {SessionId}, PID {Pid}", session, entry.Pid);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
+            {
+                // 이미 끝남
+            }
+            _controlled[session] = (entry.Pid, DateTime.UtcNow);
+        }
+    }
+
+    /// <summary>방금까지 원격조작 중이었는지 (끝난 원격조작을 서버가 다시 띄우는 중인지)</summary>
+    private bool WasJustControlling()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var (_, entry) in _controlled)
+        {
+            if (IsAlive(entry.Pid) || now - entry.SeenAt < ReattachWindow)
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsAlive(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception)
+        {
+            return false;
+        }
+    }
 
     /// <returns>오류 메시지. 성공하면 null</returns>
     /// <param name="thumbnail">true면 썸네일 모드. 세션 선택·RDP 전환 없이 콘솔(또는 활성) 세션 화면만 작게 보낸다</param>
@@ -49,17 +118,26 @@ public class RemoteControlService(AgentSettingsStore settings, ILogger<RemoteCon
                 if (sessionIdToUse is not { } target)
                     return "화면이 있는 세션을 찾지 못했습니다.";
 
-                // 원격조작을 RDP보다 우선한다: 대상 세션이 RDP로 연결돼 있으면 물리 콘솔로 옮긴다
-                // (RDP 클라이언트 연결은 끊기고, 세션은 앱 상태를 유지한 채 콘솔에 표시돼 여기서 캡처된다)
+                // 나중에 연결한 쪽이 이긴다. 새로 원격조작을 열면 RDP를 끊고: 대상 세션이 RDP로 연결돼 있으면 물리 콘솔로 옮긴다
+                // (RDP 클라이언트 연결은 끊기고, 세션은 앱 상태를 유지한 채 콘솔에 표시돼 여기서 캡처된다).
+                // 원격조작 중에 RDP가 들어와 원격조작이 끝난 뒤 서버가 다시 띄우는 요청이면 RDP를 두고 원격조작을 끝낸다.
                 // 썸네일은 보기만 하므로 RDP를 끊지 않는다
                 if (!thumbnail && SessionProcess.IsRemoteSession(target))
                 {
+                    if (WasJustControlling())
+                    {
+                        _controlled.Clear();
+                        logger.LogInformation("세션 {SessionId}에 RDP 접속 → 원격조작을 다시 띄우지 않음", target);
+                        return AgentRemotePaths.RdpTookOver;
+                    }
                     var moved = SessionProcess.ConnectSessionToConsole(target);
                     logger.LogInformation("세션 {SessionId}이(가) RDP 연결 중 → 콘솔로 전환 {Result}", target, moved ? "성공" : "실패");
                 }
 
                 var extra = thumbnail ? $" {ThumbnailArgument}" : "";
                 var pid = SessionProcess.StartAsSystemInSession(target, exePath, $"{SessionArgument} \"{url}\"{extra}");
+                if (!thumbnail)
+                    _controlled[target] = (pid, DateTime.UtcNow);
                 logger.LogInformation("{Mode} 시작: 세션 {SessionId}, PID {Pid}", thumbnail ? "썸네일" : "원격조작", target, pid);
             }
             else

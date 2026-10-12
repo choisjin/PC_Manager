@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using PcManager.Agent.Remote;
 
 namespace PcManager.Agent.Service;
 
@@ -6,8 +7,10 @@ namespace PcManager.Agent.Service;
 /// 원격 데스크톱(RDP) 창을 닫아 세션이 끊기면, 그 세션을 바로 물리 콘솔로 옮긴다 (tscon 세션 /dest:console).
 /// 그러면 PC 화면이 로그인(잠금) 화면이 아니라 로그인한 바탕화면 그대로 남아 화면을 쓰는 테스트·원격조작·썸네일이 계속 된다.
 /// 콘솔에 이미 다른 사용자가 로그인해 있으면 건드리지 않는다. 로그아웃(세션 종료)한 경우는 옮길 세션이 없어 로그인 화면이 남는다.
+/// 원격조작과 RDP는 나중에 연결한 쪽이 이긴다: 원격조작 중에 RDP로 들어오면 원격조작을 끝낸다
+/// (반대로 원격조작을 새로 열면 RDP가 끊긴다 — RemoteControlService).
 /// </summary>
-public class ConsoleSessionKeeper(ILogger<ConsoleSessionKeeper> logger) : BackgroundService
+public class ConsoleSessionKeeper(RemoteControlService remote, ILogger<ConsoleSessionKeeper> logger) : BackgroundService
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(2);
     // 옮기지 못한 세션은 잠시 뒤에 다시 시도한다 (같은 실패 로그가 쌓이지 않게)
@@ -24,6 +27,7 @@ public class ConsoleSessionKeeper(ILogger<ConsoleSessionKeeper> logger) : Backgr
         {
             try
             {
+                EndRemoteIfRdpJoined();
                 TryKeepDesktop(failedAt);
             }
             catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
@@ -32,6 +36,15 @@ public class ConsoleSessionKeeper(ILogger<ConsoleSessionKeeper> logger) : Backgr
             }
             await Task.Delay(CheckInterval, stoppingToken);
         }
+    }
+
+    /// <summary>원격조작 중에 RDP로 접속한 세션이 생기면 원격조작을 끝낸다</summary>
+    private void EndRemoteIfRdpJoined()
+    {
+        if (!remote.IsControlling())
+            return;
+        if (SessionProcess.GetActiveSessionIds().Any(SessionProcess.IsRemoteSession))
+            remote.EndForRdp();
     }
 
     private void TryKeepDesktop(Dictionary<int, DateTime> failedAt)

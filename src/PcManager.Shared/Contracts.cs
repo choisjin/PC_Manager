@@ -152,6 +152,11 @@ public static class AgentRemotePaths
 {
     /// <summary>에이전트의 원격조작 프로세스가 접속한다 (에이전트 토큰 필요)</summary>
     public static string Session(string sessionId) => $"/api/agent/remote/{sessionId}";
+
+    /// <summary>
+    /// 원격조작 중에 RDP로 접속해 원격조작이 끝났을 때 에이전트가 돌려주는 오류. 서버는 이 오류면 다시 연결하지 않고 이 사유로 끝낸다
+    /// </summary>
+    public const string RdpTookOver = "RDP 접속으로 원격조작이 종료되었습니다.";
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter<TransferKind>))]

@@ -1034,6 +1034,7 @@ const EXACT: Record<string, string> = {
   "화면(X11 데스크톱 세션)을 찾지 못했습니다. Wayland 세션이면 PC 목록에서 이 PC를 우클릭 › 'Xorg로 전환 후 재시작'을 누르세요.": "Couldn't find a display (X11 desktop session). If it's a Wayland session, right-click this PC in the PC list › 'Switch to Xorg and restart'.",
   "화면을 기다리는 중": "Waiting for screen",
   "화면이 있는 세션을 찾지 못했습니다.": "Couldn't find a session with a display.",
+  "RDP 접속으로 원격조작이 종료되었습니다.": "Remote control ended because someone connected over RDP.",
   "화질": "Quality",
   "확인": "OK",
   "확인 안 됨": "Not checked",
