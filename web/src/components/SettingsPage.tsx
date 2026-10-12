@@ -1,180 +1,51 @@
 import { useState } from 'react'
-import type { Agent, Org, PcGroups } from '../api'
-import type { OrgActions } from '../useDashboard'
+import { api, type Agent, type Org, type OrgUser, type PcGroups } from '../api'
+import { FEATURES } from '../perms'
 import { AddAgentDialog } from './AddAgentDialog'
 import { EditFolderSection } from './EditFolderSection'
 import { displayName } from './explorer/pcGroups'
 
 interface Props {
   org: Org
-  actions: OrgActions
   agents: Agent[]
   pcGroups: PcGroups
   /** 대시보드를 연 PC의 에이전트 (편집 폴더 관리) */
   selfAgentId: string | null
+  /** 로그인 세션 (관리자 API에 쓴다) */
+  token: string
+  projectId: string
+  isAdmin: boolean
+  /** 관리자가 아니고 쓸 수 있는 기능이 하나도 없음 */
+  noPerms: boolean
 }
 
-/** Setting 페이지: 프로젝트·사용자 관리, 사용자×프로젝트 매트릭스, 프로젝트별 구성 요약 */
-export function SettingsPage({ org, actions, agents, pcGroups, selfAgentId }: Props) {
-  const [projectName, setProjectName] = useState('')
-  const [userName, setUserName] = useState('')
-  const [addingPc, setAddingPc] = useState(false)
+const toMessage = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-  const inProject = (projectId: string, userId: string) => (org.projectUsers[projectId] ?? []).includes(userId)
-  const toggle = (projectId: string, userId: string) => {
-    const cur = org.projectUsers[projectId] ?? []
-    void actions.setProjectUsers(projectId, inProject(projectId, userId) ? cur.filter((id) => id !== userId) : [...cur, userId])
-  }
-  const usersOf = (projectId: string) => (org.projectUsers[projectId] ?? []).map((id) => org.users.find((u) => u.id === id)?.name ?? '?')
-  const agentsOf = (projectId: string) => agents.filter((a) => org.agentProjects[a.id] === projectId)
-  const foldersOf = (projectId: string) =>
-    pcGroups.folders.filter((f) => org.folderProjects?.[f.id] === projectId).map((f) => f.name)
-  const projectsOfUser = (userId: string) => org.projects.filter((p) => inProject(p.id, userId)).map((p) => p.name)
+const formatLogin = (iso?: string | null) => {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** Setting 페이지: (관리자) 인원 권한 · 프로젝트 구성 · 관리자 비밀번호, (모두) PC 추가·인증서 · 편집 폴더 */
+export function SettingsPage({ org, agents, pcGroups, selfAgentId, token, projectId, isAdmin, noPerms }: Props) {
+  const [addingPc, setAddingPc] = useState(false)
 
   return (
     <div className="settings-page">
-      {/* 1. 프로젝트 관리 */}
-      <section className="panel settings-section">
-        <div className="settings-section-head">
-          <h2>프로젝트</h2>
-          <form
-            className="settings-add"
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (projectName.trim()) {
-                void actions.createProject(projectName.trim())
-                setProjectName('')
-              }
-            }}
-          >
-            <input placeholder="새 프로젝트 이름" value={projectName} onChange={(e) => setProjectName(e.target.value)} />
-            <button type="submit" className="small-btn">추가</button>
-          </form>
-        </div>
-        {org.projects.length === 0 && <p className="muted small">프로젝트가 없습니다. 위에서 추가하세요.</p>}
-        <div className="project-cards">
-          {org.projects.map((p) => {
-            const members = usersOf(p.id)
-            const pcs = agentsOf(p.id)
-            const folders = foldersOf(p.id)
-            return (
-              <div key={p.id} className="project-card">
-                <div className="project-card-head">
-                  <b className="ellipsis">{p.name}</b>
-                  <span className="project-card-actions">
-                    <button
-                      type="button"
-                      className="icon-mini"
-                      title="이름 바꾸기"
-                      onClick={() => {
-                        const name = window.prompt('프로젝트 이름', p.name)
-                        if (name && name.trim() && name !== p.name) void actions.renameProject(p.id, name.trim())
-                      }}
-                    >
-                      ✎
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-mini"
-                      title="삭제"
-                      onClick={() => {
-                        if (window.confirm(`'${p.name}' 프로젝트를 삭제할까요? (사용자·PC·폴더 배정이 해제됩니다)`)) void actions.deleteProject(p.id)
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </span>
-                </div>
-                <div className="project-card-row">
-                  <span className="project-card-label">사용자 {members.length}</span>
-                  <span className="chips">{members.length ? members.map((m) => <span key={m} className="chip">{m}</span>) : <span className="muted small">없음 (모두 접근 가능)</span>}</span>
-                </div>
-                <div className="project-card-row">
-                  <span className="project-card-label">PC {pcs.length}</span>
-                  <span className="chips">{pcs.length ? pcs.map((a) => <span key={a.id} className={`chip${a.online ? '' : ' off'}`}>{displayName(a, pcGroups)}</span>) : <span className="muted small">없음</span>}</span>
-                </div>
-                {folders.length > 0 && (
-                  <div className="project-card-row">
-                    <span className="project-card-label">폴더 {folders.length}</span>
-                    <span className="chips">{folders.map((f) => <span key={f} className="chip folder">📂 {f}</span>)}</span>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      </section>
-
-      {/* 2. 사용자 × 프로젝트 매트릭스 */}
-      <section className="panel settings-section">
-        <div className="settings-section-head">
-          <h2>사용자 · 프로젝트 배정</h2>
-          <form
-            className="settings-add"
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (userName.trim()) {
-                void actions.createUser(userName.trim())
-                setUserName('')
-              }
-            }}
-          >
-            <input placeholder="새 사용자 이름" value={userName} onChange={(e) => setUserName(e.target.value)} />
-            <button type="submit" className="small-btn">추가</button>
-          </form>
-        </div>
-        {org.users.length === 0 ? (
-          <p className="muted small">사용자가 없습니다. 위에서 추가하세요.</p>
-        ) : (
-          <div className="matrix-wrap">
-            <table className="matrix">
-              <thead>
-                <tr>
-                  <th className="matrix-user">사용자</th>
-                  {org.projects.map((p) => (
-                    <th key={p.id} className="matrix-proj" title={p.name}>
-                      <span className="ellipsis">{p.name}</span>
-                    </th>
-                  ))}
-                  <th className="matrix-summary">소속</th>
-                  <th className="matrix-del" />
-                </tr>
-              </thead>
-              <tbody>
-                {org.users.map((u) => (
-                  <tr key={u.id}>
-                    <td className="matrix-user">
-                      <b>{u.name}</b>
-                    </td>
-                    {org.projects.map((p) => (
-                      <td key={p.id} className="matrix-cell">
-                        <input type="checkbox" checked={inProject(p.id, u.id)} onChange={() => toggle(p.id, u.id)} aria-label={`${u.name} → ${p.name}`} />
-                      </td>
-                    ))}
-                    <td className="matrix-summary small muted">{projectsOfUser(u.id).join(', ') || '—'}</td>
-                    <td className="matrix-del">
-                      <button
-                        type="button"
-                        className="icon-mini"
-                        title="사용자 삭제"
-                        onClick={() => {
-                          if (window.confirm(`'${u.name}' 사용자를 삭제할까요?`)) void actions.deleteUser(u.id)
-                        }}
-                      >
-                        ✕
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {org.projects.length === 0 && <p className="muted small">프로젝트를 만들면 여기서 체크로 배정할 수 있습니다.</p>}
-          </div>
-        )}
-        <p className="muted small">
-          체크하면 그 프로젝트에 배정됩니다. 프로젝트에 배정된 PC·폴더는 그 프로젝트 사용자에게만 보입니다. PC·폴더 배정은 PC Manager 화면에서 우클릭으로 합니다.
-        </p>
-      </section>
+      {noPerms && (
+        <section className="panel settings-section">
+          <p className="no-perms">아직 권한이 없습니다. 프로젝트 관리자에게 요청하세요.</p>
+        </section>
+      )}
+      {isAdmin && (
+        <>
+          <PermissionSection org={org} token={token} projectId={projectId} />
+          <ProjectSection org={org} agents={agents} pcGroups={pcGroups} projectId={projectId} />
+          <AdminPasswordSection token={token} />
+        </>
+      )}
       {/* PC 추가 · 인증서 */}
       <section className="panel settings-section">
         <div className="settings-section-head">
@@ -198,5 +69,189 @@ export function SettingsPage({ org, actions, agents, pcGroups, selfAgentId }: Pr
         })()}
       />
     </div>
+  )
+}
+
+/**
+ * 인원 권한 (APMS 방식): LG 계정으로 로그인한 사람 × 기능 체크박스. 체크하면 바로 저장.
+ * 이 프로젝트에 처음 로그인하면 전체 기능이고 '미분류'로 보인다 → 관리자가 조정하면 '권한 설정됨'.
+ */
+function PermissionSection({ org, token, projectId }: { org: Org; token: string; projectId: string }) {
+  const [filter, setFilter] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const perms = org.projectPerms?.[projectId] ?? {}
+  const reviewed = new Set(org.permReviewed?.[projectId] ?? [])
+  const q = filter.trim().toLowerCase()
+  const users = org.users
+    .filter((u) => u.role !== 'admin')
+    .filter((u) => !q || [u.name, u.ldapId, u.title, u.team].some((v) => v?.toLowerCase().includes(q)))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+  const groups: { title: string; users: OrgUser[] }[] = [
+    { title: '미분류 — 처음 로그인해 전체 기능을 받은 사람 (조정하면 아래로)', users: users.filter((u) => u.id in perms && !reviewed.has(u.id)) },
+    { title: '권한 설정됨', users: users.filter((u) => u.id in perms && reviewed.has(u.id)) },
+    { title: '이 프로젝트에 로그인한 적 없음', users: users.filter((u) => !(u.id in perms)) },
+  ]
+
+  const save = (userId: string, next: string[]) => {
+    setError(null)
+    api.setUserPerms(token, userId, next).catch((err) => setError(toMessage(err)))
+  }
+
+  return (
+    <section className="panel settings-section">
+      <div className="settings-section-head">
+        <h2>인원 권한</h2>
+        <input className="perm-filter" placeholder="이름·ID·팀 검색" value={filter} onChange={(e) => setFilter(e.target.value)} />
+      </div>
+      {error && <div className="output-error">{error}</div>}
+      {users.length === 0 ? (
+        <p className="muted small">{q ? '검색 결과가 없습니다.' : '아직 LG 계정으로 로그인한 사람이 없습니다.'}</p>
+      ) : (
+        <div className="matrix-wrap">
+          <table className="matrix perm-table">
+            <thead>
+              <tr>
+                <th className="perm-name">이름</th>
+                <th className="perm-name">직급</th>
+                <th className="perm-name">팀</th>
+                <th className="perm-name">마지막 로그인</th>
+                <th>전체</th>
+                {FEATURES.map((f) => (
+                  <th key={f.id} title={f.hint}>
+                    {f.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            {groups
+              .filter((g) => g.users.length > 0)
+              .map((g) => (
+                <tbody key={g.title}>
+                  <tr className="perm-group">
+                    <td colSpan={5 + FEATURES.length}>
+                      {g.title} ({g.users.length})
+                    </td>
+                  </tr>
+                  {g.users.map((u) => {
+                    const mine = perms[u.id] ?? []
+                    const all = FEATURES.every((f) => mine.includes(f.id))
+                    return (
+                      <tr key={u.id}>
+                        <td className="perm-name" title={u.ldapId ?? undefined}>
+                          <b>{u.name}</b>
+                        </td>
+                        <td className="perm-name small">{u.title}</td>
+                        <td className="perm-name small" title={u.department ?? undefined}>
+                          {u.team}
+                        </td>
+                        <td className="perm-name small muted">{formatLogin(u.lastLogin)}</td>
+                        <td>
+                          <input type="checkbox" checked={all} aria-label={`${u.name} 전체`} onChange={() => save(u.id, all ? [] : FEATURES.map((f) => f.id))} />
+                        </td>
+                        {FEATURES.map((f) => (
+                          <td key={f.id}>
+                            <input
+                              type="checkbox"
+                              checked={mine.includes(f.id)}
+                              aria-label={`${u.name} ${f.label}`}
+                              onChange={() => save(u.id, mine.includes(f.id) ? mine.filter((x) => x !== f.id) : [...mine, f.id])}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              ))}
+          </table>
+        </div>
+      )}
+      <p className="muted small">
+        LG 계정으로 이 프로젝트에 처음 로그인하면 모든 기능을 받습니다. 체크를 바꾸면 바로 저장되고, 그 사람 화면에도 곧바로 반영됩니다. 모두 끄면 그 사람은 로그인해도 쓸 수 있는 기능이 없습니다.
+      </p>
+    </section>
+  )
+}
+
+/** 지금 프로젝트 구성: 멤버 · PC · 폴더 (배정은 PC Manager 화면에서 우클릭) */
+function ProjectSection({ org, agents, pcGroups, projectId }: { org: Org; agents: Agent[]; pcGroups: PcGroups; projectId: string }) {
+  const project = org.projects.find((p) => p.id === projectId)
+  const members = (org.projectUsers[projectId] ?? [])
+    .map((id) => org.users.find((u) => u.id === id))
+    .filter((u): u is OrgUser => !!u && u.role !== 'admin')
+    .map((u) => u.name)
+  const pcs = agents.filter((a) => org.agentProjects[a.id] === projectId)
+  const folders = pcGroups.folders.filter((f) => org.folderProjects?.[f.id] === projectId).map((f) => f.name)
+  return (
+    <section className="panel settings-section">
+      <div className="settings-section-head">
+        <h2>프로젝트 구성{project ? ` — ${project.name}` : ''}</h2>
+      </div>
+      <div className="project-card">
+        <div className="project-card-row">
+          <span className="project-card-label">멤버 {members.length}</span>
+          <span className="chips">{members.length ? members.map((m) => <span key={m} className="chip">{m}</span>) : <span className="muted small">없음</span>}</span>
+        </div>
+        <div className="project-card-row">
+          <span className="project-card-label">PC {pcs.length}</span>
+          <span className="chips">
+            {pcs.length ? pcs.map((a) => <span key={a.id} className={`chip${a.online ? '' : ' off'}`}>{displayName(a, pcGroups)}</span>) : <span className="muted small">없음</span>}
+          </span>
+        </div>
+        {folders.length > 0 && (
+          <div className="project-card-row">
+            <span className="project-card-label">폴더 {folders.length}</span>
+            <span className="chips">{folders.map((f) => <span key={f} className="chip folder">📂 {f}</span>)}</span>
+          </div>
+        )}
+      </div>
+      <p className="muted small">
+        프로젝트에 배정된 PC·폴더는 그 프로젝트로 로그인한 사람에게만 보입니다 (배정 없는 PC는 모두에게). 배정은 PC Manager 화면에서 PC·폴더를 우클릭해서 합니다.
+        프로젝트 등록·이름 수정·삭제는 로그인 화면의 [관리]에서 합니다.
+      </p>
+    </section>
+  )
+}
+
+/** 이 프로젝트 관리자(admin) 비밀번호 변경 */
+function AdminPasswordSection({ token }: { token: string }) {
+  const [oldPw, setOldPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirmPw, setConfirmPw] = useState('')
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (newPw !== confirmPw) {
+      setMessage({ ok: false, text: '새 비밀번호가 서로 다릅니다.' })
+      return
+    }
+    api.changeAdminPassword(token, oldPw, newPw).then(
+      () => {
+        setOldPw('')
+        setNewPw('')
+        setConfirmPw('')
+        setMessage({ ok: true, text: '비밀번호를 바꿨습니다. 다른 브라우저의 관리자 자동 로그인은 해제됩니다.' })
+      },
+      (err) => setMessage({ ok: false, text: toMessage(err) }),
+    )
+  }
+
+  return (
+    <section className="panel settings-section">
+      <div className="settings-section-head">
+        <h2>관리자 비밀번호</h2>
+      </div>
+      <form className="admin-password-form" onSubmit={submit}>
+        <input type="password" placeholder="현재 비밀번호" autoComplete="current-password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} />
+        <input type="password" placeholder="새 비밀번호 (4자 이상)" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+        <input type="password" placeholder="새 비밀번호 확인" autoComplete="new-password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} />
+        <button type="submit" className="small-btn" disabled={!oldPw || !newPw}>
+          변경
+        </button>
+      </form>
+      {message && <p className={message.ok ? 'muted small' : 'output-error'}>{message.text}</p>}
+      <p className="muted small">처음 비밀번호는 admin입니다. 로그인 화면에서 계정 ID에 admin을 넣으면 이 프로젝트 관리자로 들어옵니다.</p>
+    </section>
   )
 }

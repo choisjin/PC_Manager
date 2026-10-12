@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { setCurrentUser } from './api'
+import { api, type LoginResult, type OrgUser, type Project, setCurrentUser } from './api'
+import { FEATURES, type Feature, PermsContext } from './perms'
 import { findSelfAgentId } from './selfAgent'
 import { FileExplorer } from './components/FileExplorer'
 import { useTransfers } from './components/explorer/useTransfers'
-import { type Identity, SelectGate } from './components/SelectGate'
-import { SettingsModal } from './components/SettingsModal'
+import { LoginGate } from './components/LoginGate'
 import { SettingsPage } from './components/SettingsPage'
 import { StatePage } from './components/StatePage'
 import { TransfersPage } from './components/TransfersPage'
@@ -26,7 +26,36 @@ function cmpVersion(a: string, b: string) {
   return 0
 }
 
-const IDENTITY_KEY = 'pcm.identity'
+const IDENTITY_KEY = 'pcm.identity' // 예전 이름 선택 로그인 (지운다)
+const TOKEN_KEY = 'pcm.session'
+const REMEMBER_KEY = 'pcm.remember'
+
+interface Auth {
+  token: string
+  user: OrgUser
+  project: Project
+  perms: string[]
+}
+
+const readKey = (key: string) => {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+const writeKey = (key: string, value: string | null) => {
+  try {
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  } catch {
+    // 무시
+  }
+}
+
+/** 탭 → 그 탭에 필요한 기능 (Setting은 모두: 편집 폴더 같은 내 PC 설정이 있다) */
+const PAGE_FEATURE: Record<Page, Feature | null> = { files: 'files', state: 'state', transfers: 'history', settings: null }
+const PAGE_ORDER: Page[] = ['files', 'state', 'transfers', 'settings']
 const SELF_PC_KEY = 'pcm.selfPc'
 
 /** 에이전트 런처가 연 대시보드면 주소에 ?pc=<이 PC 이름>이 붙는다. 기억해 두고 주소에서는 지운다 */
@@ -41,15 +70,6 @@ function loadSelfPc(): string | null {
       return fromUrl
     }
     return localStorage.getItem(SELF_PC_KEY)
-  } catch {
-    return null
-  }
-}
-
-function loadIdentity(): Identity | null {
-  try {
-    const raw = localStorage.getItem(IDENTITY_KEY)
-    return raw ? (JSON.parse(raw) as Identity) : null
   } catch {
     return null
   }
@@ -97,11 +117,70 @@ export default function App() {
     subscribeTransfers,
   } = dashboard
 
-  const [identity, setIdentity] = useState<Identity | null>(() => loadIdentity())
+  const [auth, setAuth] = useState<Auth | null>(null)
+  const [authChecked, setAuthChecked] = useState(false)
   const [showUpdate, setShowUpdate] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
-  const [showGate, setShowGate] = useState(false)
   const [page, setPage] = useState<Page>('files')
+
+  // 처음 열 때: 남은 세션 → 자동 로그인 토큰 → 로그인 화면
+  useEffect(() => {
+    writeKey(IDENTITY_KEY, null)
+    let cancelled = false
+    void (async () => {
+      const token = readKey(TOKEN_KEY)
+      if (token) {
+        try {
+          const me = await api.me(token)
+          if (!cancelled) setAuth({ token, ...me })
+          return
+        } catch {
+          writeKey(TOKEN_KEY, null)
+        }
+      }
+      const remember = readKey(REMEMBER_KEY)
+      if (remember) {
+        try {
+          const result = await api.autoLogin(remember)
+          writeKey(TOKEN_KEY, result.token)
+          if (!cancelled) setAuth(result)
+        } catch {
+          // 만료·폐기면 로그인 화면에서 다시 (서버가 잠깐 꺼졌을 수도 있어 토큰은 남겨 둔다)
+        }
+      }
+    })().finally(() => {
+      if (!cancelled) setAuthChecked(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const login = (result: LoginResult) => {
+    writeKey(TOKEN_KEY, result.token)
+    if (result.remember) writeKey(REMEMBER_KEY, result.remember)
+    setAuth(result)
+  }
+  const logout = () => {
+    if (!auth || !window.confirm('로그아웃할까요? (사용자·프로젝트 변경)')) return
+    void api.logout(auth.token, readKey(REMEMBER_KEY)).catch(() => {})
+    writeKey(TOKEN_KEY, null)
+    writeKey(REMEMBER_KEY, null)
+    setAuth(null)
+  }
+
+  const userId = auth?.user.id ?? null
+  const isAdmin = auth?.user.role === 'admin'
+  // 쓸 수 있는 기능: 관리자가 인원 권한을 바꾸면 org 방송으로 바로 반영
+  const perms = useMemo<ReadonlySet<string>>(() => {
+    if (!auth) return new Set()
+    if (isAdmin) return new Set(FEATURES.map((f) => f.id))
+    return new Set(org.projectPerms?.[auth.project.id]?.[auth.user.id] ?? auth.perms)
+  }, [auth, isAdmin, org.projectPerms])
+  const pageAllowed = (p: Page) => {
+    const feature = PAGE_FEATURE[p]
+    return feature === null || perms.has(feature)
+  }
+  const visiblePage: Page = pageAllowed(page) ? page : (PAGE_ORDER.find(pageAllowed) ?? 'settings')
   const [selfPc] = useState(loadSelfPc)
   // 대시보드를 연 PC의 에이전트 (온라인일 때만): Setting의 편집 폴더 관리에 쓴다
   const selfAgentOnlineId = useMemo(() => {
@@ -115,13 +194,13 @@ export default function App() {
   // 전송 요청 헤더에 현재 사용자 id를 실어 "누가 실행했는지" 기록
   // 공유 폴더는 사용자별이라 사용자가 바뀌면 그 사용자의 목록으로 다시 불러온다
   useEffect(() => {
-    setCurrentUser(identity?.userId ?? null)
+    setCurrentUser(userId)
     reloadShares()
     // 채팅: 이 사용자의 방만 받는다
-    joinChat(identity?.userId ?? null)
+    joinChat(userId)
     // 접속 중인 사용자로 알린다 (State 화면)
-    announceUser(identity?.userId ?? null)
-  }, [identity?.userId, reloadShares, joinChat, announceUser])
+    announceUser(userId)
+  }, [userId, reloadShares, joinChat, announceUser])
 
   // id → 이름 해석 (PC/공유, 사용자)
   const nameById = useMemo(() => {
@@ -145,52 +224,49 @@ export default function App() {
     : 0
   const updateAvailable = (updateStatus?.updateAvailable ?? false) || outdatedAgentCount > 0
 
-  const confirmIdentity = (next: Identity) => {
-    setIdentity(next)
-    try {
-      localStorage.setItem(IDENTITY_KEY, JSON.stringify(next))
-    } catch {
-      // 무시
-    }
-    setShowGate(false)
+  if (!auth) {
+    if (!authChecked) return <div className="gate muted">확인 중…</div>
+    return <LoginGate org={org} onLogin={login} />
   }
 
-  const project = identity?.projectId ? org.projects.find((p) => p.id === identity.projectId) : null
-  const selfUser = identity?.userId ? org.users.find((u) => u.id === identity.userId) : null
-
-  // 아직 신원을 고르지 않았거나, 변경 요청 시 게이트 표시
-  if (!identity || showGate) {
-    return (
-      <>
-        <SelectGate org={org} onConfirm={confirmIdentity} onOpenSettings={() => setShowSettings(true)} />
-        {showSettings && <SettingsModal org={org} actions={orgActions} onClose={() => setShowSettings(false)} />}
-      </>
-    )
-  }
+  const project = org.projects.find((p) => p.id === auth.project.id) ?? auth.project
+  const selfUser = org.users.find((u) => u.id === auth.user.id) ?? auth.user
 
   return (
+    <PermsContext.Provider value={perms}>
     <div className="app">
       <header className="topbar">
         <h1>RemoteKit</h1>
         <nav className="tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={page === 'files'} className={page === 'files' ? 'active' : ''} onClick={() => setPage('files')}>
-            PC Manager
-          </button>
-          <button type="button" role="tab" aria-selected={page === 'state'} className={page === 'state' ? 'active' : ''} onClick={() => setPage('state')}>
-            State
-          </button>
-          <button type="button" role="tab" aria-selected={page === 'transfers'} className={page === 'transfers' ? 'active' : ''} onClick={() => setPage('transfers')}>
-            History
-            {transfers.some((t) => t.state === 'Pending') && <span className="tab-badge">{transfers.filter((t) => t.state === 'Pending').length}</span>}
-          </button>
-          <button type="button" role="tab" aria-selected={page === 'settings'} className={page === 'settings' ? 'active' : ''} onClick={() => setPage('settings')}>
+          {pageAllowed('files') && (
+            <button type="button" role="tab" aria-selected={visiblePage === 'files'} className={visiblePage === 'files' ? 'active' : ''} onClick={() => setPage('files')}>
+              PC Manager
+            </button>
+          )}
+          {pageAllowed('state') && (
+            <button type="button" role="tab" aria-selected={visiblePage === 'state'} className={visiblePage === 'state' ? 'active' : ''} onClick={() => setPage('state')}>
+              State
+            </button>
+          )}
+          {pageAllowed('transfers') && (
+            <button type="button" role="tab" aria-selected={visiblePage === 'transfers'} className={visiblePage === 'transfers' ? 'active' : ''} onClick={() => setPage('transfers')}>
+              History
+              {transfers.some((t) => t.state === 'Pending') && <span className="tab-badge">{transfers.filter((t) => t.state === 'Pending').length}</span>}
+            </button>
+          )}
+          <button type="button" role="tab" aria-selected={visiblePage === 'settings'} className={visiblePage === 'settings' ? 'active' : ''} onClick={() => setPage('settings')}>
             Setting
           </button>
         </nav>
         <span className="topbar-right">
-          <button type="button" className="identity-chip" onClick={() => setShowGate(true)} title="프로젝트·사용자 변경">
-            <span className="identity-project">{project?.name ?? '전체 보기'}</span>
-            {selfUser && <span className="identity-user">· {selfUser.name}</span>}
+          <button
+            type="button"
+            className="identity-chip"
+            onClick={logout}
+            title={`${selfUser.name}${selfUser.title ? ` ${selfUser.title}` : ''}${selfUser.team ? ` · ${selfUser.team}` : ''}\n클릭: 로그아웃 (사용자·프로젝트 변경)`}
+          >
+            <span className="identity-project">{project.name}</span>
+            <span className="identity-user">· {selfUser.name}</span>
           </button>
           <button
             type="button"
@@ -211,7 +287,7 @@ export default function App() {
       )}
 
       <main className="layout full">
-        {page === 'files' ? (
+        {visiblePage === 'files' ? (
           <FileExplorer
             agents={agents}
             pcGroups={pcGroups}
@@ -227,8 +303,8 @@ export default function App() {
             org={org}
             setAgentProject={orgActions.setAgentProject}
             presence={presence}
-            filterProjectId={identity.projectId}
-            selfUserId={identity.userId}
+            filterProjectId={auth.project.id}
+            selfUserId={auth.user.id}
             pcStatuses={pcStatuses}
             setPcStatus={setPcStatus}
             remoteUsage={remoteUsage}
@@ -242,7 +318,7 @@ export default function App() {
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}
           />
-        ) : page === 'state' ? (
+        ) : visiblePage === 'state' ? (
           <StatePage
             agents={agents}
             pcGroups={pcGroups}
@@ -252,14 +328,23 @@ export default function App() {
             transfers={transfers}
             org={org}
             serverHostName={serverHostName}
-            selfUserId={identity.userId}
+            selfUserId={auth.user.id}
             onlineUsers={onlineUsers}
             layout={stateLayout}
             saveLayout={saveStateLayout}
             connected={connected}
           />
-        ) : page === 'settings' ? (
-          <SettingsPage org={org} actions={orgActions} agents={agents} pcGroups={pcGroups} selfAgentId={selfAgentOnlineId} />
+        ) : visiblePage === 'settings' ? (
+          <SettingsPage
+            org={org}
+            agents={agents}
+            pcGroups={pcGroups}
+            selfAgentId={selfAgentOnlineId}
+            token={auth.token}
+            projectId={auth.project.id}
+            isAdmin={isAdmin}
+            noPerms={!isAdmin && perms.size === 0}
+          />
         ) : (
           <TransfersPage transfers={transfers} artifactByTransfer={artifactByTransfer} machineName={machineName} userName={userName} />
         )}
@@ -277,7 +362,7 @@ export default function App() {
         machineName={machineName}
         userName={userName}
         org={org}
-        selfUserId={identity.userId}
+        selfUserId={auth.user.id}
         chatRooms={chatRooms}
         chatMessages={chatMessages}
         chatActions={chatActions}
@@ -285,5 +370,6 @@ export default function App() {
         subscribeNotes={subscribeNotes}
       />
     </div>
+    </PermsContext.Provider>
   )
 }

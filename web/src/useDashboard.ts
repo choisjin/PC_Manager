@@ -33,12 +33,6 @@ import { pcLockStore } from './pcLocks'
 export type NoteEvent = { note?: Note; removedId?: string; reconnected?: boolean }
 
 export interface OrgActions {
-  createProject: (name: string) => Promise<void>
-  renameProject: (id: string, name: string) => Promise<void>
-  deleteProject: (id: string) => Promise<void>
-  setProjectUsers: (id: string, userIds: string[]) => Promise<void>
-  createUser: (name: string) => Promise<void>
-  deleteUser: (id: string) => Promise<void>
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
   setFolderProject: (folderId: string, projectId: string | null) => Promise<void>
 }
@@ -443,14 +437,8 @@ export function useDashboard() {
     api.shares().then((s: SharedFolders) => setShares(s.shares)).catch(() => {})
   }, [])
 
-  // 프로젝트/사용자 관리 (서버가 OrgChanged로 다시 알려주지만 응답으로도 즉시 반영)
+  // PC·폴더 프로젝트 배정 (서버가 OrgChanged로 다시 알려주지만 응답으로도 즉시 반영)
   const orgActions: OrgActions = {
-    createProject: (name: string) => api.createProject(name).then(setOrg),
-    renameProject: (id: string, name: string) => api.renameProject(id, name).then(setOrg),
-    deleteProject: (id: string) => api.deleteProject(id).then(setOrg),
-    setProjectUsers: (id: string, userIds: string[]) => api.setProjectUsers(id, userIds).then(setOrg),
-    createUser: (name: string) => api.createUser(name).then(setOrg),
-    deleteUser: (id: string) => api.deleteUser(id).then(setOrg),
     setAgentProject: (agentId: string, projectId: string | null) => api.setAgentProject(agentId, projectId).then(setOrg),
     setFolderProject: (folderId: string, projectId: string | null) => api.setFolderProject(folderId, projectId).then(setOrg),
   }

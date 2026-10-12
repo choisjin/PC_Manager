@@ -36,6 +36,7 @@ import { fileTypeLabel, lastSep, pathSep, type PaneController, sortEntries, type
 import { SplitCompressModal } from './SplitCompressModal'
 import { RemoteModal } from './RemoteModal'
 import { openResultSetup } from '../results/resultSessions'
+import { useCan } from '../../perms'
 import { TerminalModal } from './TerminalModal'
 
 export interface Pane {
@@ -138,6 +139,7 @@ export function ExplorerPane({
   onReorderDrop,
   onResize,
 }: Props) {
+  const can = useCan()
   const [tabs, setTabs] = useState<FolderTab[]>(() => [{ id: newId(), stack: [''], idx: 0 }])
   const [activeTabId, setActiveTabId] = useState(() => tabs[0].id)
   const [listing, setListing] = useState<DirectoryListing | null>(null)
@@ -550,7 +552,7 @@ export function ExplorerPane({
   const viewerKind = (name: string): ViewerKind | null =>
     isTextFile(name) ? 'text' : isImageFile(name) ? 'image' : isPdfFile(name) ? 'pdf' : null
   const openViewer = (entry: FileEntry, kind: ViewerKind) =>
-    setViewing({ path: entry.fullPath, name: entry.name, kind, readOnly: inArchive })
+    setViewing({ path: entry.fullPath, name: entry.name, kind, readOnly: inArchive || !can('fileWrite') })
 
   /** 압축 풀기 (같은 PC). entries가 비면 압축 파일 전체 */
   const extract = (archive: string, entries: FileEntry[], destination: string) => {
@@ -602,9 +604,10 @@ export function ExplorerPane({
     // 압축 파일은 폴더처럼 들어간다 (압축 안의 압축은 풀어서 열어야 함)
     else if (!inArchive && isArchiveFile(entry.name)) navigate(entry.fullPath)
     // 기본: 내 PC 프로그램으로 열기 (내 PC에 에이전트가 있을 때)
-    else if (selfAgentId) openLocal(entry)
+    else if (selfAgentId && can('download')) openLocal(entry)
     else if (isVideoFile(entry.name)) setPlaying({ path: entry.fullPath, name: entry.name })
     else if (kind) openViewer(entry, kind)
+    else if (!can('download')) setNotice(`'${entry.name}'을(를) 열 권한(가져오기)이 없습니다.`)
     else {
       // 파일 더블클릭 = 가져오기(다운로드 폴더로). 실행 파일이면 실행 안내.
       fetchFiles([entry])
@@ -615,7 +618,7 @@ export function ExplorerPane({
   }
 
   const paste = async (targetFolder: string) => {
-    if (!clipboard || !targetFolder) return
+    if (!clipboard || !targetFolder || !can('fileWrite')) return
     if (inArchive) {
       setError('압축 파일 안에는 붙여넣을 수 없습니다.')
       return
@@ -668,6 +671,10 @@ export function ExplorerPane({
       return
     }
     if (!targetFolder || !payload.items?.length) return
+    if (!can('fileWrite')) {
+      setError('파일을 옮길 권한(파일 변경)이 없습니다.')
+      return
+    }
     setError(null)
     const errors: string[] = []
     for (const item of payload.items) {
@@ -859,7 +866,7 @@ export function ExplorerPane({
         setClip(sel, 'copy')
       }
     } else if (ctrl && (key === 'x' || key === 'X')) {
-      if (sel.length) {
+      if (sel.length && can('fileWrite')) {
         e.preventDefault()
         setClip(sel, 'cut')
       }
@@ -872,12 +879,12 @@ export function ExplorerPane({
       e.preventDefault()
       ;(document.querySelector('.win-search input') as HTMLInputElement | null)?.focus()
     } else if (key === 'Delete') {
-      if (sel.length) {
+      if (sel.length && can('fileWrite')) {
         e.preventDefault()
         void remove(sel)
       }
     } else if (key === 'F2') {
-      if (sel.length === 1) {
+      if (sel.length === 1 && can('fileWrite')) {
         e.preventDefault()
         void rename(sel[0])
       }
@@ -885,7 +892,7 @@ export function ExplorerPane({
       if (sel.length) {
         e.preventDefault()
         if (sel.length === 1) openEntry(sel[0])
-        else fetchFiles(sel)
+        else if (can('download')) fetchFiles(sel)
       }
     } else if (key === 'Backspace') {
       if (listing?.parentPath != null) {
@@ -930,14 +937,16 @@ export function ExplorerPane({
     if (targets.length === 1 && targets[0].isDirectory) items.push(...folderOpenItems(targets[0].fullPath), { separator: true })
     if (targets.length === 1 && !targets[0].isDirectory) {
       const kind = viewerKind(targets[0].name)
-      if (selfAgentId) items.push({ label: '내 PC 프로그램으로 열기 (읽기 전용 복사본)', onClick: () => openLocal(targets[0]) })
+      if (selfAgentId && can('download')) items.push({ label: '내 PC 프로그램으로 열기 (읽기 전용 복사본)', onClick: () => openLocal(targets[0]) })
       if (kind) items.push({ label: '내려받지 않고 보기', onClick: () => openViewer(targets[0], kind) })
       if (isVideoFile(targets[0].name)) items.push({ label: '내려받지 않고 재생', onClick: () => setPlaying({ path: targets[0].fullPath, name: targets[0].name }) })
     }
     const what = targets.length ? `선택 ${targets.length}개` : '전체'
-    items.push({ label: `압축 풀기: ${what} → 압축 파일이 있는 폴더`, onClick: () => extract(archive, targets, archiveFolder) })
-    items.push({ label: `압축 풀기: ${what} → 다른 폴더…`, onClick: () => extractTo(archive, targets) })
-    if (files.length > 0) items.push({ label: `내 PC로 가져오기${files.length > 1 ? ` (${files.length})` : ''}`, onClick: () => fetchFiles(files) })
+    if (can('fileWrite')) {
+      items.push({ label: `압축 풀기: ${what} → 압축 파일이 있는 폴더`, onClick: () => extract(archive, targets, archiveFolder) })
+      items.push({ label: `압축 풀기: ${what} → 다른 폴더…`, onClick: () => extractTo(archive, targets) })
+    }
+    if (files.length > 0 && can('download')) items.push({ label: `내 PC로 가져오기${files.length > 1 ? ` (${files.length})` : ''}`, onClick: () => fetchFiles(files) })
     if (targets.length > 0) {
       items.push({ separator: true })
       items.push({
@@ -959,38 +968,41 @@ export function ExplorerPane({
     if (targets.length === 1 && !targets[0].isDirectory) {
       const t = targets[0]
       const kind = viewerKind(t.name)
-      if (selfAgentId && !isArchiveFile(t.name))
+      if (selfAgentId && !isArchiveFile(t.name) && can('download'))
         items.push({ label: '내 PC 프로그램으로 열기 (저장하면 이 PC에 저장)', onClick: () => openLocal(t) })
-      if (kind) items.push({ label: kind === 'text' ? '내려받지 않고 편집' : '내려받지 않고 보기', onClick: () => openViewer(t, kind) })
-      else if (t.size <= 5 * 1024 * 1024 && !isArchiveFile(t.name) && !isVideoFile(t.name))
+      if (kind) items.push({ label: kind === 'text' && can('fileWrite') ? '내려받지 않고 편집' : '내려받지 않고 보기', onClick: () => openViewer(t, kind) })
+      else if (t.size <= 5 * 1024 * 1024 && !isArchiveFile(t.name) && !isVideoFile(t.name) && can('fileWrite'))
         items.push({ label: '내려받지 않고 텍스트로 편집', onClick: () => openViewer(t, 'text') })
       if (isArchiveFile(t.name)) {
         const folderOf = t.fullPath.slice(0, lastSep(t.fullPath))
         const sub = `${folderOf}${pathSep(t.fullPath)}${archiveBaseName(t.name)}`
         items.push({ label: '압축 파일 열기 (폴더처럼 보기)', onClick: () => navigate(t.fullPath) })
         items.push({ label: '압축 파일을 새 탭에서 열기 (Ctrl+더블클릭)', onClick: () => openInNewTab(t.fullPath) })
-        items.push({ label: `압축 풀기 → '${archiveBaseName(t.name)}' 폴더에`, onClick: () => extract(t.fullPath, [], sub) })
-        items.push({ label: '압축 풀기 → 여기에', onClick: () => extract(t.fullPath, [], folderOf) })
-        items.push({ label: '압축 풀기 → 다른 폴더…', onClick: () => extractTo(t.fullPath, []) })
+        if (can('fileWrite')) {
+          items.push({ label: `압축 풀기 → '${archiveBaseName(t.name)}' 폴더에`, onClick: () => extract(t.fullPath, [], sub) })
+          items.push({ label: '압축 풀기 → 여기에', onClick: () => extract(t.fullPath, [], folderOf) })
+          items.push({ label: '압축 풀기 → 다른 폴더…', onClick: () => extractTo(t.fullPath, []) })
+        }
       }
       if (items.length) items.push({ separator: true })
     }
     if (targets.length > 0) {
       items.push({ label: `복사${targets.length > 1 ? ` (${targets.length})` : ''}`, onClick: () => setClip(targets, 'copy') })
-      items.push({ label: `잘라내기${targets.length > 1 ? ` (${targets.length})` : ''}`, onClick: () => setClip(targets, 'cut') })
+      if (can('fileWrite')) items.push({ label: `잘라내기${targets.length > 1 ? ` (${targets.length})` : ''}`, onClick: () => setClip(targets, 'cut') })
     }
-    items.push({
-      label: clipboard ? `붙여넣기${folder ? ' (폴더 안)' : ''}${clipboard.items.length > 1 ? ` (${clipboard.items.length})` : ''}` : '붙여넣기',
-      disabled: !clipboard || !pasteTarget,
-      onClick: () => void paste(pasteTarget),
-    })
-    if (files.length > 0) {
+    if (can('fileWrite'))
+      items.push({
+        label: clipboard ? `붙여넣기${folder ? ' (폴더 안)' : ''}${clipboard.items.length > 1 ? ` (${clipboard.items.length})` : ''}` : '붙여넣기',
+        disabled: !clipboard || !pasteTarget,
+        onClick: () => void paste(pasteTarget),
+      })
+    if (files.length > 0 && can('download')) {
       items.push({ label: `가져오기${files.length > 1 ? ` (${files.length})` : ''}`, onClick: () => fetchFiles(files) })
     }
-    if (targets.length === 1 && !targets[0].isDirectory) {
+    if (targets.length === 1 && !targets[0].isDirectory && can('download')) {
       items.push({ label: '다운로드 링크', onClick: () => void createDownloadLink(targets[0]) })
     }
-    if (targets.length > 0) {
+    if (targets.length > 0 && can('fileWrite')) {
       // 압축 ▸ 형식 (여러 개면 합쳐서) · 각각 압축 · 분할 압축
       const many = targets.length > 1
       items.push({
@@ -1019,14 +1031,14 @@ export function ExplorerPane({
         onClick: () => favPaths.forEach(onAddFavorite),
       })
     }
-    if (targets.length > 0) {
+    if (targets.length > 0 && can('fileWrite')) {
       items.push({ separator: true })
       if (targets.length === 1) items.push({ label: '이름 바꾸기', onClick: () => void rename(targets[0]) })
       items.push({ label: `삭제${targets.length > 1 ? ` (${targets.length})` : ''}`, danger: true, onClick: () => void remove(targets) })
     }
-    items.push({ separator: true })
-    items.push({ label: '새 폴더', disabled: !path, onClick: () => void createFolder() })
-    items.push({ label: '터미널 열기', onClick: () => setTerminal(true) })
+    if (can('fileWrite') || can('terminal')) items.push({ separator: true })
+    if (can('fileWrite')) items.push({ label: '새 폴더', disabled: !path, onClick: () => void createFolder() })
+    if (can('terminal')) items.push({ label: '터미널 열기', onClick: () => setTerminal(true) })
     return items
   }
 
@@ -1056,15 +1068,16 @@ export function ExplorerPane({
       ? [
           ...folderOpenItems(entry.fullPath),
           { separator: true },
-          {
-            label: clipboard ? `붙여넣기${clipboard.items.length > 1 ? ` (${clipboard.items.length})` : ''}` : '붙여넣기',
-            disabled: !clipboard,
-            onClick: () => void paste(entry.fullPath),
-          },
+          ...(can('fileWrite')
+            ? [{
+                label: clipboard ? `붙여넣기${clipboard.items.length > 1 ? ` (${clipboard.items.length})` : ''}` : '붙여넣기',
+                disabled: !clipboard,
+                onClick: () => void paste(entry.fullPath),
+              }]
+            : []),
           { label: '즐겨찾기에 추가', onClick: () => onAddFavorite(entry.fullPath) },
           { label: '경로 복사', onClick: () => void copyText(entry.fullPath) },
-          { separator: true },
-          { label: '터미널 열기', onClick: () => setTerminal(true) },
+          ...(can('terminal') ? [{ separator: true }, { label: '터미널 열기', onClick: () => setTerminal(true) }] : []),
         ]
       : buildMenu([entry], entry.fullPath)
     setMenu({ x: e.clientX, y: e.clientY, targets: [], folder: null, items })

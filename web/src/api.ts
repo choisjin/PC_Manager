@@ -284,22 +284,46 @@ export interface SharedFolders {
 export interface Project {
   id: string
   name: string
+  createdAt?: string | null
 }
 
 export interface OrgUser {
   id: string
   name: string
+  /** 'admin' = 프로젝트 관리자 (그 프로젝트만), 그 외 = LG 계정 사용자 */
+  role?: string | null
+  /** 관리자 계정이 묶인 프로젝트 */
+  projectId?: string | null
+  ldapId?: string | null
+  title?: string | null
+  team?: string | null
+  department?: string | null
+  email?: string | null
+  lastLogin?: string | null
 }
 
 export interface Org {
   projects: Project[]
   users: OrgUser[]
-  /** projectId → 할당된 userId 목록 */
+  /** projectId → 멤버 userId (관리자 + 그 프로젝트 기능이 하나라도 있는 사용자) */
   projectUsers: Record<string, string[]>
   /** agentId → projectId (없으면 미배정) */
   agentProjects: Record<string, string>
   /** PC 목록 폴더 id → projectId. 배정된 폴더는 그 프로젝트 사용자에게만 보인다 */
   folderProjects?: Record<string, string>
+  /** projectId → (userId → 쓸 수 있는 기능 id) */
+  projectPerms?: Record<string, Record<string, string[]>>
+  /** projectId → 관리자가 권한을 조정한 userId (조정 전 = 미분류) */
+  permReviewed?: Record<string, string[]>
+}
+
+/** 로그인 결과 (remember: 자동 로그인 토큰, 체크했을 때만) */
+export interface LoginResult {
+  token: string
+  user: OrgUser
+  project: Project
+  perms: string[]
+  remember?: string | null
 }
 
 /** 사용자가 수동으로 지정하는 PC 상태 */
@@ -614,12 +638,35 @@ export const api = {
     }),
 
   org: () => request<Org>('/api/org'),
-  createProject: (name: string) => request<Org>('/api/projects', { method: 'POST', body: JSON.stringify({ name }) }),
-  renameProject: (id: string, name: string) => request<Org>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
-  deleteProject: (id: string) => request<Org>(`/api/projects/${id}`, { method: 'DELETE' }),
-  setProjectUsers: (id: string, userIds: string[]) => request<Org>(`/api/projects/${id}/users`, { method: 'PUT', body: JSON.stringify({ userIds }) }),
-  createUser: (name: string) => request<Org>('/api/users', { method: 'POST', body: JSON.stringify({ name }) }),
-  deleteUser: (id: string) => request<Org>(`/api/users/${id}`, { method: 'DELETE' }),
+  login: (projectId: string, username: string, password: string, remember: boolean) =>
+    request<LoginResult>('/api/auth/login', { method: 'POST', body: JSON.stringify({ projectId, username, password, remember }) }),
+  autoLogin: (token: string) => request<LoginResult>('/api/auth/auto-login', { method: 'POST', body: JSON.stringify({ token }) }),
+  me: (token: string) =>
+    request<Omit<LoginResult, 'token' | 'remember'>>('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } }),
+  logout: (token: string | null, remember: string | null) =>
+    request<void>('/api/auth/logout', {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: JSON.stringify({ remember }),
+    }),
+  changeAdminPassword: (token: string, oldPassword: string, newPassword: string) =>
+    request<void>('/api/auth/admin-password', {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ old: oldPassword, new: newPassword }),
+    }),
+  setUserPerms: (token: string, userId: string, perms: string[]) =>
+    request<Org>(`/api/auth/perms/${encodeURIComponent(userId)}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ perms }),
+    }),
+  /** 로그인 화면 [관리]: 등록은 이름만, 이름 수정·삭제는 그 프로젝트 관리자 비밀번호 */
+  createProject: (name: string) => request<Org>('/api/auth/projects', { method: 'POST', body: JSON.stringify({ name }) }),
+  renameProject: (id: string, name: string, password: string) =>
+    request<Org>(`/api/auth/projects/${id}/rename`, { method: 'PUT', body: JSON.stringify({ name, password }) }),
+  deleteProject: (id: string, password: string) =>
+    request<Org>(`/api/auth/projects/${id}/purge`, { method: 'POST', body: JSON.stringify({ password }) }),
   setAgentProject: (agentId: string, projectId: string | null) =>
     request<Org>(`/api/agents/${agentId}/project`, { method: 'PUT', body: JSON.stringify({ projectId }) }),
   setFolderProject: (folderId: string, projectId: string | null) =>

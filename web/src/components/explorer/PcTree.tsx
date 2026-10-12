@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type Agent, isLinuxAgent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type SharedFolder } from '../../api'
 import { ensureUnlocked, pcLockStore, usePcLocks } from '../../pcLocks'
+import { useCan } from '../../perms'
 import { askPin } from '../../pinPrompt'
 import { AddShareModal } from './AddShareModal'
 import { ContextMenu, type MenuItem } from './ContextMenu'
@@ -42,6 +43,9 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
   const pcLocks = usePcLocks()
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
+  const can = useCan()
+  // PC 관리 권한: 상태·별칭·PIN·PC 목록 폴더·프로젝트 배정·목록에서 삭제
+  const manage = can('pcManage')
   const [editing, setEditing] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null) // folderId 또는 'root'
   // 끌기가 어디서 끝나든 놓기 표시를 끈다
@@ -121,14 +125,14 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
   const handleDropAgent = (e: React.DragEvent, folderId: string | null) => {
     const agentId = e.dataTransfer.getData(AGENT_MIME)
     setDropTarget(null)
-    if (agentId) {
+    if (agentId && manage) {
       e.preventDefault()
       saveGroups(assignAgent(groups, agentId, folderId))
     }
   }
 
   const allowAgentDrop = (e: React.DragEvent, key: string) => {
-    if (e.dataTransfer.types.includes(AGENT_MIME)) {
+    if (manage && e.dataTransfer.types.includes(AGENT_MIME)) {
       e.preventDefault()
       setDropTarget(key)
     }
@@ -219,7 +223,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
           onClick={() => onSelectFolder(selectedFolderId === node.folder.id ? null : node.folder.id)}
           onContextMenu={(e) => {
             e.preventDefault()
-            setFolderMenu({ x: e.clientX, y: e.clientY, folderId: node.folder.id, name: node.folder.name })
+            if (manage) setFolderMenu({ x: e.clientX, y: e.clientY, folderId: node.folder.id, name: node.folder.name })
           }}
           onDragOver={(e) => allowAgentDrop(e, node.folder.id)}
           onDragLeave={() => setDropTarget((t) => (t === node.folder.id ? null : t))}
@@ -246,11 +250,12 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
               }}
             />
           ) : (
-            <span className="tree-folder-name ellipsis" onDoubleClick={() => setEditing(node.folder.id)}>
+            <span className="tree-folder-name ellipsis" onDoubleClick={() => manage && setEditing(node.folder.id)}>
               {node.folder.name}
             </span>
           )}
           {folderProjName && !filterProjectId && <span className="proj-badge">{folderProjName}</span>}
+          {manage && (
           <span className="tree-folder-actions">
             <button type="button" className="icon-mini" title="하위 폴더" onClick={() => createFolder(node.folder.id)}>
               ＋
@@ -267,6 +272,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
               ✕
             </button>
           </span>
+          )}
         </div>
         {isOpen && (
           <ul className="tree-children">
@@ -289,17 +295,21 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
             <button type="button" role="radio" aria-checked={mode === 'browser'} className={mode === 'browser' ? 'active' : ''} onClick={() => onModeChange('browser')}>
               Browser
             </button>
-            <button type="button" role="radio" aria-checked={mode === 'remote'} className={mode === 'remote' ? 'active' : ''} onClick={() => onModeChange('remote')}>
-              Remote
-            </button>
+            {can('remote') && (
+              <button type="button" role="radio" aria-checked={mode === 'remote'} className={mode === 'remote' ? 'active' : ''} onClick={() => onModeChange('remote')}>
+                Remote
+              </button>
+            )}
           </span>
         </div>
         <div className="tree-head-row">
           <span className="muted small">{onlineCount}/{agents.length}</span>
           <span className="head-actions">
-            <button type="button" className="small-btn" title="폴더 추가" onClick={() => createFolder(null)}>
-              + 폴더
-            </button>
+            {manage && (
+              <button type="button" className="small-btn" title="폴더 추가" onClick={() => createFolder(null)}>
+                + 폴더
+              </button>
+            )}
             <button type="button" className="small-btn" title="공유 폴더 등록" onClick={() => setShowAddShare(true)}>
               + 서버
             </button>
@@ -466,6 +476,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
                     },
                   },
                 ]
+            if (!manage) return [{ label: '열기', onClick: () => onOpenAgent(a.id) }]
             return [
               { label: '열기', onClick: () => onOpenAgent(a.id) },
               ...(remoteBy

@@ -1,6 +1,7 @@
 import { findSelfAgentId } from '../selfAgent'
 import { ensureUnlocked } from '../pcLocks'
 import { useEffect, useMemo, useState } from 'react'
+import { useCan } from '../perms'
 import type { Agent, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder, Thumbnail } from '../api'
 import { RemoteGrid, type RemoteSection } from './RemoteGrid'
 import { RemoteContext, type RemoteContextValue } from './remote/RemoteContext'
@@ -116,7 +117,9 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
     setAgentFavorites(agentId, (favorites.favorites[agentId] ?? []).filter((p) => p !== path))
   const [collapsed, setCollapsed] = useState(() => loadLocal(COLLAPSE_KEY, false))
   // Browser(파일 탐색기) ↔ Remote(PC 화면 미리보기) 모드
-  const [mode, setMode] = useState<'browser' | 'remote'>(() => loadLocal<'browser' | 'remote'>(MODE_KEY, 'browser'))
+  const [savedMode, setMode] = useState<'browser' | 'remote'>(() => loadLocal<'browser' | 'remote'>(MODE_KEY, 'browser'))
+  // 원격조작 권한이 없으면 Remote 모드(PC 화면 미리보기 → 원격)는 쓰지 않는다
+  const mode = useCan()('remote') ? savedMode : 'browser'
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
   const switchMode = (next: 'browser' | 'remote') => {
     setMode(next)

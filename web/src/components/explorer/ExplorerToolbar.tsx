@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useCan } from '../../perms'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { Icon } from './Icon'
 import { buildCrumbs, type PaneController, type SortKey } from './paneController'
@@ -29,6 +30,7 @@ export function ExplorerToolbar({ controller }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controller?.paneId, controller?.path])
 
+  const can = useCan()
   const c = controller
   const disabled = !c || !c.online
   // 압축 파일 안은 읽기 전용
@@ -165,25 +167,47 @@ export function ExplorerToolbar({ controller }: Props) {
 
       {/* 2행: 명령 바 */}
       <div className="win-row win-cmd-row">
-        <button type="button" className="win-cmd" disabled={readOnly || !c?.path} onClick={() => c?.newFolder()}>
-          <Icon name="new-folder" /> 새로 만들기
-        </button>
-        <span className="win-sep" />
-        <button type="button" className="win-cmd icon-only" title="잘라내기" disabled={readOnly || noSel} onClick={() => c?.cut()}><Icon name="cut" /></button>
+        {can('fileWrite') && (
+          <>
+            <button type="button" className="win-cmd" disabled={readOnly || !c?.path} onClick={() => c?.newFolder()}>
+              <Icon name="new-folder" /> 새로 만들기
+            </button>
+            <span className="win-sep" />
+            <button type="button" className="win-cmd icon-only" title="잘라내기" disabled={readOnly || noSel} onClick={() => c?.cut()}><Icon name="cut" /></button>
+          </>
+        )}
         <button type="button" className="win-cmd icon-only" title="복사" disabled={disabled || noSel} onClick={() => c?.copy()}><Icon name="copy" /></button>
-        <button type="button" className="win-cmd icon-only" title="붙여넣기" disabled={readOnly || !c?.canPaste} onClick={() => c?.paste()}><Icon name="paste" /></button>
-        <button type="button" className="win-cmd icon-only" title="이름 바꾸기" disabled={readOnly || !one} onClick={() => c?.rename()}><Icon name="rename" /></button>
-        <button type="button" className="win-cmd icon-only" title="가져오기(다운로드)" disabled={disabled || noSel} onClick={() => c?.fetchSelected()}><Icon name="download" /></button>
-        <button type="button" className="win-cmd icon-only" title="공유 — 다운로드 링크 만들기·복사 (파일 1개)" disabled={disabled || !c?.canShare} onClick={() => c?.shareSelected()}><Icon name="share" /></button>
-        <button type="button" className="win-cmd icon-only" title="삭제" disabled={readOnly || noSel} onClick={() => c?.remove()}><Icon name="delete" /></button>
+        {can('fileWrite') && (
+          <>
+            <button type="button" className="win-cmd icon-only" title="붙여넣기" disabled={readOnly || !c?.canPaste} onClick={() => c?.paste()}><Icon name="paste" /></button>
+            <button type="button" className="win-cmd icon-only" title="이름 바꾸기" disabled={readOnly || !one} onClick={() => c?.rename()}><Icon name="rename" /></button>
+          </>
+        )}
+        {can('download') && (
+          <>
+            <button type="button" className="win-cmd icon-only" title="가져오기(다운로드)" disabled={disabled || noSel} onClick={() => c?.fetchSelected()}><Icon name="download" /></button>
+            <button type="button" className="win-cmd icon-only" title="공유 — 다운로드 링크 만들기·복사 (파일 1개)" disabled={disabled || !c?.canShare} onClick={() => c?.shareSelected()}><Icon name="share" /></button>
+          </>
+        )}
+        {can('fileWrite') && (
+          <button type="button" className="win-cmd icon-only" title="삭제" disabled={readOnly || noSel} onClick={() => c?.remove()}><Icon name="delete" /></button>
+        )}
         <span className="win-sep" />
         <button type="button" className="win-cmd" disabled={!c} onClick={sortMenu}><Icon name="sort" /> 정렬</button>
         <button type="button" className="win-cmd" disabled={!c} onClick={viewMenu}><Icon name={c?.view === 'icons' ? 'view-grid' : 'view-details'} /> 보기</button>
         <span className="win-spacer" />
-        <button type="button" className="win-cmd icon-only" title="원격조작" disabled={disabled} onClick={() => c?.openRemote()}><Icon name="remote" /></button>
-        <button type="button" className="win-cmd icon-only" title="결과 확인 — Result·영상·이미지를 시각으로 맞춰 보기 (스텝 → 영상 이동, 자르기)" disabled={disabled} onClick={() => c?.openResults()}><Icon name="result-review" /></button>
-        <button type="button" className="win-cmd icon-only" title="터미널 열기" disabled={disabled} onClick={() => c?.openTerminal()}><Icon name="terminal" /></button>
-        <button type="button" className="win-cmd icon-only" title="올리기(업로드)" disabled={readOnly || !c?.path} onClick={() => c?.upload()}><Icon name="upload" /></button>
+        {can('remote') && (
+          <button type="button" className="win-cmd icon-only" title="원격조작" disabled={disabled} onClick={() => c?.openRemote()}><Icon name="remote" /></button>
+        )}
+        {can('results') && (
+          <button type="button" className="win-cmd icon-only" title="결과 확인 — Result·영상·이미지를 시각으로 맞춰 보기 (스텝 → 영상 이동, 자르기)" disabled={disabled} onClick={() => c?.openResults()}><Icon name="result-review" /></button>
+        )}
+        {can('terminal') && (
+          <button type="button" className="win-cmd icon-only" title="터미널 열기" disabled={disabled} onClick={() => c?.openTerminal()}><Icon name="terminal" /></button>
+        )}
+        {can('fileWrite') && (
+          <button type="button" className="win-cmd icon-only" title="올리기(업로드)" disabled={readOnly || !c?.path} onClick={() => c?.upload()}><Icon name="upload" /></button>
+        )}
       </div>
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}

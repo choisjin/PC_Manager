@@ -79,6 +79,8 @@ builder.Services.AddSingleton<StateLayoutStore>();
 builder.Services.AddSingleton<SharedFolderStore>();
 builder.Services.AddSingleton<LocalShareFiles>();
 builder.Services.AddSingleton<OrgStore>();
+builder.Services.AddSingleton<AuthStore>();
+builder.Services.AddSingleton<LdapAuthenticator>();
 builder.Services.AddSingleton<PresenceRegistry>();
 builder.Services.AddSingleton<DownloadLinkStore>();
 builder.Services.AddSingleton<PcStatusStore>();

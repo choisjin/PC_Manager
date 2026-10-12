@@ -2291,6 +2291,124 @@ tr.video {
   margin-top: 10px;
 }
 
+/* 로그인 화면 (APMS 방식) */
+.login-card {
+  width: min(400px, 100%);
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.login-field > span {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.login-field input,
+.login-field select {
+  padding: 5px 7px;
+  font-size: 13px;
+}
+
+.login-options {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.login-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+
+.login-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.login-actions button.primary {
+  min-width: 96px;
+}
+
+.login-manage {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.login-manage .settings-add {
+  margin-top: 6px;
+}
+
+.login-manage-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.login-manage-row > span {
+  flex: 1;
+}
+
+/* 인원 권한 표 */
+.perm-table th,
+.perm-table td {
+  text-align: center;
+}
+
+.perm-table th.perm-name,
+.perm-table td.perm-name {
+  text-align: left;
+}
+
+.perm-group td {
+  padding-top: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: left;
+}
+
+.settings-page > .settings-section {
+  flex: none;
+}
+
+.settings-section-head input.perm-filter {
+  flex: none;
+  width: 180px;
+}
+
+.admin-password-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.admin-password-form input {
+  width: 170px;
+}
+
+.no-perms {
+  margin: auto;
+  padding: 24px;
+  text-align: center;
+}
+
 /* 헤더의 신원 칩 + 설정 톱니 */
 .identity-chip {
   display: inline-flex;
