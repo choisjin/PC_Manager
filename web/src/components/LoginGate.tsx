@@ -27,6 +27,8 @@ const toMessage = (err: unknown) => (err instanceof Error ? err.message : String
 interface Props {
   org: Org
   onLogin: (result: LoginResult) => void
+  /** 로그인 화면 위에 보일 안내 (예: APMS 자동 로그인 실패 이유) */
+  notice?: string | null
 }
 
 /**
@@ -34,7 +36,7 @@ interface Props {
  * 'admin' = 그 프로젝트 관리자 (기본 비밀번호 admin), 그 외 = LG 계정(사내 LDAP).
  * [관리]: 프로젝트 등록(이름만) · 이름 수정 · 삭제 (수정·삭제는 그 프로젝트 관리자 비밀번호)
  */
-export function LoginGate({ org, onLogin }: Props) {
+export function LoginGate({ org, onLogin, notice }: Props) {
   const [projectId, setProjectId] = useState(() => read(LAST_PROJECT_KEY) ?? '')
   const [username, setUsername] = useState(() => read(SAVED_ID_KEY) ?? '')
   const [password, setPassword] = useState('')
@@ -129,6 +131,7 @@ export function LoginGate({ org, onLogin }: Props) {
         {!managing ? (
           <form onSubmit={(e) => void submit(e)}>
             <p className="pl-sub">프로젝트를 고르고 LG 계정으로 로그인하세요.</p>
+            {notice && <p className="pl-error">{notice}</p>}
             <label className="pl-field">
               <span>프로젝트</span>
               <select value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={org.projects.length === 0} translate="no">

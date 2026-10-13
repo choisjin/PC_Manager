@@ -641,6 +641,9 @@ export const api = {
   login: (projectId: string, username: string, password: string, remember: boolean) =>
     request<LoginResult>('/api/auth/login', { method: 'POST', body: JSON.stringify({ projectId, username, password, remember }) }),
   autoLogin: (token: string) => request<LoginResult>('/api/auth/auto-login', { method: 'POST', body: JSON.stringify({ token }) }),
+  /** APMS 안에 넣은 대시보드: APMS 포털이 준 1회용 표로 같은 계정 로그인 */
+  apmsSso: (ticket: string, apmsOrigin: string) =>
+    request<LoginResult>('/api/auth/apms-sso', { method: 'POST', body: JSON.stringify({ ticket, apmsOrigin }) }),
   me: (token: string) =>
     request<Omit<LoginResult, 'token' | 'remember'>>('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } }),
   logout: (token: string | null, remember: string | null) =>

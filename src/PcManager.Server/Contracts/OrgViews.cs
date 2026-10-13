@@ -49,6 +49,9 @@ public record LoginRequest(string? ProjectId, string? Username, string? Password
 
 public record TokenRequest(string? Token);
 
+/// <summary>APMS 자동 로그인: APMS 포털이 준 1회용 표 + 대시보드를 연 APMS 주소(origin)</summary>
+public record ApmsSsoRequest(string? Ticket, string? ApmsOrigin);
+
 public record LogoutRequest(string? Remember);
 
 public record ChangePasswordRequest(string? Old, string? New);

@@ -90,6 +90,7 @@
 ### 원격지 / 보안
 - Wake-on-LAN은 망을 넘지 못함 → 같은 망의 켜진 에이전트가 매직 패킷 대리 전송
 - 대시보드 로그인: APMS 방식 (프로젝트 + LG 계정 LDAP / 프로젝트 관리자 `admin`). `OrgStore`(org.json: 사용자·프로젝트별 기능 권한) + `AuthStore`(auth.json: 관리자 비밀번호 PBKDF2 해시, 자동 로그인 토큰 해시, 세션은 메모리) + `LdapAuthenticator`
+- APMS 안에 넣은 대시보드 자동 로그인: 주소의 `?apmsTicket=…&apmsOrigin=…` → `POST /api/auth/apms-sso` → 서버가 APMS `/api/pcm/sso-verify`로 1회용 표 확인(`Server:ApmsUrl`, 비우면 같은 PC의 APMS만) → 이름이 같은 프로젝트에 APMS 관리자 = 프로젝트 관리자, 사내 계정 = 같은 LG 계정(LDAP과 같은 접근 제어)
 - 기능 권한은 화면에서만 적용, 서버 API는 무인증(사용자 id는 `X-User-Id` 헤더). 인터넷 노출 시 API 인증, 등록 토큰, TLS, 감사 로그 필요 (5단계)
 
 ## 개발 단계

@@ -35,8 +35,13 @@ public partial class LdapAuthenticator(IConfiguration config, ILogger<LdapAuthen
         var auth = Bind(username, password);
         if (!auth.Success || auth.Profile is null)
             return auth;
-        var profile = auth.Profile;
+        return CheckAccess(username, auth.Profile);
+    }
 
+    /// <summary>차단/사용자/팀 접근 제어 (LDAP 로그인 · APMS 자동 로그인 공통)</summary>
+    public Result CheckAccess(string username, OrgStore.LdapProfile profile)
+    {
+        var auth = new Result(true, "접근 허용", profile);
         if (!string.Equals(config["LDAP_ACCESS_CONTROL_ENABLED"] ?? "true", "true", StringComparison.OrdinalIgnoreCase))
             return auth;
         var uid = username.ToLowerInvariant();

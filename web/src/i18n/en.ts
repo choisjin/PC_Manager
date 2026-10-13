@@ -1054,9 +1054,17 @@ const EXACT: Record<string, string> = {
   "🔒 이 브라우저에서 다시 잠그기": "🔒 Lock again in this browser",
   "🔒 이 폴더는 권한이 필요합니다. 사용자 이름과 비밀번호를 입력하세요.": "🔒 This folder requires permission. Enter a user name and password.",
   "🔓 PIN 입력해서 풀기…": "🔓 Unlock with PIN…",
+  "자동 로그인 정보가 올바르지 않습니다.": "The auto sign-in information is invalid.",
+  "이 APMS 주소는 자동 로그인을 허용하지 않습니다. (서버 설정 Server:ApmsUrl 에 APMS 주소를 넣으세요)": "This APMS address isn't allowed for auto sign-in. (Set the APMS address in the server setting Server:ApmsUrl)",
+  "APMS 자동 로그인이 만료되었습니다. APMS 화면을 새로 고치세요.": "APMS auto sign-in has expired. Refresh the APMS page.",
+  "APMS 포털에 로그인 확인을 하지 못했습니다.": "Couldn't verify the sign-in with the APMS portal.",
+  "프로젝트 관리자 계정을 찾을 수 없습니다.": "Couldn't find the project admin account.",
+  "사내 계정으로 로그인한 APMS 사용자만 자동 로그인할 수 있습니다.": "Only APMS users signed in with a company account can sign in automatically.",
 }
 
 const TEMPLATES: [string, string][] = [
+  ["APMS 계정으로 자동 로그인하지 못했습니다: {0}", "Couldn't sign in automatically with the APMS account: {0}"],
+  ["RemoteKit 에 '{0}' 프로젝트가 없습니다. [관리]에서 같은 이름으로 등록하거나 직접 로그인하세요.", "RemoteKit has no '{0}' project. Register it with the same name in [Manage], or sign in directly."],
   ["Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: {0} (인증서 경고가 뜨면 Setting › 'PC 추가 · 인증서'의 인증서 설치 도구를 한 번 실행). 지금은 위 아이콘으로 보낼 수 있습니다.", "To press Alt+Tab·Win keys directly, connect over HTTPS: {0} (if a certificate warning appears, run the certificate installer from Setting › 'Add PC · Certificate' once). For now, you can send them with the icons above."],
   ["다른 화면 안에 열린 대시보드에서는 Alt+Tab·Win 키를 직접 보낼 수 없습니다. 새 창으로 여세요: {0} (상단 '새 창에서 열기'). 지금은 위 아이콘으로 보낼 수 있습니다.", "A dashboard embedded in another page can't send Alt+Tab or Win keys directly. Open it in a new window: {0} ('Open in new window' at the top). For now, use the icons above."],
   ["파일 {0}개 복사됨 — 다른 PC 원격 화면에서 Ctrl+V, 또는 이 창을 벗어나 내 PC에서 Ctrl+V로 붙여넣습니다.", "{0} files copied — paste with Ctrl+V on another PC's remote screen, or leave this window and press Ctrl+V on your PC."],

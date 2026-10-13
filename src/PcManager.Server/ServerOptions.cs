@@ -36,6 +36,12 @@ public class ServerOptions
     /// <summary>에이전트·대시보드 PC에 내려줄 공개 인증서(.cer). 비우면 설치형 위치(ProgramData)</summary>
     public string? CertificateFile { get; set; }
 
+    /// <summary>
+    /// APMS 포털 주소 (예: https://10.176.144.50:5000). APMS 안에 넣은 대시보드의 자동 로그인 표를 이 포털에 확인한다.
+    /// 비우면 같은 PC 에서 도는 APMS 만 믿는다 (대시보드를 연 APMS 주소의 호스트가 이 PC 일 때, 127.0.0.1 로 확인)
+    /// </summary>
+    public string? ApmsUrl { get; set; }
+
     /// <summary>--port로 띄운 포터블 실행 (설정 파일이 아니라 실행 인자로 정해짐). 서버 자가 업데이트는 하지 않는다</summary>
     public bool Portable { get; set; }
 

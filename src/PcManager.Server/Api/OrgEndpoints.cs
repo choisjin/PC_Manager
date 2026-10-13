@@ -1,4 +1,9 @@
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Options;
 using PcManager.Server.Contracts;
 using PcManager.Server.Hubs;
 using PcManager.Server.Services;
@@ -10,7 +15,7 @@ namespace PcManager.Server.Api;
 /// 'admin' = 그 프로젝트 관리자 (기본 비밀번호 admin), 그 외 ID = LG 계정(LDAP).
 /// 권한은 화면에서만 적용한다 (다른 API는 로그인을 검사하지 않음).
 /// </summary>
-public static class OrgEndpoints
+public static partial class OrgEndpoints
 {
     private const int MinPasswordLength = 4;
 
@@ -77,6 +82,65 @@ public static class OrgEndpoints
                 return Error(401, "자동 로그인 정보가 더 이상 유효하지 않습니다. 다시 로그인하세요.");
             }
             return Results.Ok(Issue(auth, view, user, project, remember: false));
+        });
+
+        // APMS 안에 넣은 대시보드: APMS 로그인을 그대로 이어받는다.
+        // APMS 포털이 준 1회용 표를 그 포털(/api/pcm/sso-verify)에 확인 → APMS 프로젝트 이름과 같은 프로젝트에
+        // APMS 관리자는 그 프로젝트 관리자로, 사내 계정 사용자는 같은 LG 계정으로 로그인 (접근 제어는 LDAP 로그인과 같게)
+        api.MapPost("/auth/apms-sso", async (ApmsSsoRequest req, OrgStore store, AuthStore auth, LdapAuthenticator ldap,
+            IOptions<ServerOptions> options, ILoggerFactory loggers) =>
+        {
+            var ticket = (req.Ticket ?? "").Trim();
+            if (!TicketRegex().IsMatch(ticket))
+                return Error(400, "자동 로그인 정보가 올바르지 않습니다.");
+            var verifyBase = ApmsVerifyBase(options.Value.ApmsUrl, req.ApmsOrigin);
+            if (verifyBase is null)
+                return Error(403, "이 APMS 주소는 자동 로그인을 허용하지 않습니다. (서버 설정 Server:ApmsUrl 에 APMS 주소를 넣으세요)");
+
+            JsonElement info;
+            try
+            {
+                using var resp = await ApmsHttp.GetAsync($"{verifyBase}/api/pcm/sso-verify?ticket={Uri.EscapeDataString(ticket)}");
+                if (!resp.IsSuccessStatusCode)
+                    return Error(401, "APMS 자동 로그인이 만료되었습니다. APMS 화면을 새로 고치세요.");
+                using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+                info = doc.RootElement.GetProperty("user").Clone();
+            }
+            catch (Exception ex)
+            {
+                loggers.CreateLogger("ApmsSso").LogWarning("APMS 확인 실패 {Base}: {Message}", verifyBase, ex.Message);
+                return Error(502, "APMS 포털에 로그인 확인을 하지 못했습니다.");
+            }
+
+            string? Str(JsonElement e, string name) =>
+                e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+                    ? (string.IsNullOrWhiteSpace(v.GetString()) ? null : v.GetString()!.Trim()) : null;
+            var wsName = info.TryGetProperty("workspace", out var ws) ? Str(ws, "name") : null;
+            var view = store.Load();
+            var project = view.Projects.FirstOrDefault(p => string.Equals(p.Name.Trim(), wsName, StringComparison.OrdinalIgnoreCase))
+                ?? (view.Projects.Count == 1 ? view.Projects[0] : null);
+            if (project is null)
+                return Error(404, $"RemoteKit 에 '{wsName}' 프로젝트가 없습니다. [관리]에서 같은 이름으로 등록하거나 직접 로그인하세요.");
+
+            var isAdmin = info.TryGetProperty("admin", out var a) && a.ValueKind == JsonValueKind.True;
+            if (isAdmin)
+            {
+                var admin = view.Users.FirstOrDefault(u => u.Id == OrgStore.AdminId(project.Id));
+                if (admin is null)
+                    return Error(404, "프로젝트 관리자 계정을 찾을 수 없습니다.");
+                return Results.Ok(Issue(auth, view, admin, project, remember: false));
+            }
+
+            var ldapId = Str(info, "ldapId") ?? "";
+            if (!LdapAuthenticator.ValidId(ldapId))
+                return Error(400, "사내 계정으로 로그인한 APMS 사용자만 자동 로그인할 수 있습니다.");
+            var profile = new OrgStore.LdapProfile(ldapId, Str(info, "name") ?? ldapId, Str(info, "title"), Str(info, "team"),
+                Str(info, "department"), Str(info, "email"));
+            var access = ldap.CheckAccess(ldapId, profile);
+            if (!access.Success)
+                return Error(403, access.Reason);
+            var user = store.UpsertLdapUser(project.Id, profile);
+            return Results.Ok(Issue(auth, store.Load(), user, project, remember: false));
         });
 
         api.MapPost("/auth/logout", (HttpContext context, LogoutRequest? req, AuthStore auth) =>
@@ -158,6 +222,52 @@ public static class OrgEndpoints
         // PC 목록 폴더에 프로젝트 배정 (그 프로젝트 사용자에게만 보임)
         api.MapPut("/folders/{folderId}/project", (string folderId, AssignAgentProjectRequest req, OrgStore store, IHubContext<DashboardHub, IDashboardClient> hub) =>
             Run(hub, () => store.SetFolderProject(folderId, req.ProjectId)));
+    }
+
+    // APMS 확인 요청: APMS 는 자체 서명 인증서를 쓰므로 인증서 검사를 하지 않는다 (확인하는 값은 1회용 표뿐)
+    private static readonly HttpClient ApmsHttp = new(new HttpClientHandler
+    {
+        ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
+    })
+    { Timeout = TimeSpan.FromSeconds(5) };
+
+    [GeneratedRegex(@"^[A-Za-z0-9_\-]{20,100}$")]
+    private static partial Regex TicketRegex();
+
+    /// <summary>
+    /// 표를 확인할 APMS 주소. 설정(ApmsUrl)이 있으면 그 주소만. 없으면 대시보드를 연 APMS 주소의 호스트가
+    /// 이 PC(루프백 · 이 PC 의 IP · PC 이름)일 때만 같은 포트의 127.0.0.1 로 확인한다.
+    /// </summary>
+    private static string? ApmsVerifyBase(string? configured, string? origin)
+    {
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured.Trim().TrimEnd('/');
+        if (!Uri.TryCreate(origin ?? "", UriKind.Absolute, out var o) || (o.Scheme != "http" && o.Scheme != "https"))
+            return null;
+        if (!IsThisMachine(o.Host))
+            return null;
+        return $"{o.Scheme}://127.0.0.1:{o.Port}";
+    }
+
+    private static bool IsThisMachine(string host)
+    {
+        if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(host, Environment.MachineName, StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!IPAddress.TryParse(host.Trim('[', ']'), out var ip))
+            return false;
+        if (IPAddress.IsLoopback(ip))
+            return true;
+        try
+        {
+            return NetworkInterface.GetAllNetworkInterfaces()
+                .SelectMany(n => n.GetIPProperties().UnicastAddresses)
+                .Any(u => u.Address.Equals(ip));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static LoginResult Issue(AuthStore auth, OrgView view, OrgUser user, Project project, bool remember) => new(

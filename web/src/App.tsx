@@ -123,11 +123,31 @@ export default function App() {
   const [showUpdate, setShowUpdate] = useState(false)
   const [page, setPage] = useState<Page>('files')
 
-  // 처음 열 때: 남은 세션 → 자동 로그인 토큰 → 로그인 화면
+  const [ssoError, setSsoError] = useState<string | null>(null)
+
+  // 처음 열 때: APMS 자동 로그인 표 → 남은 세션 → 자동 로그인 토큰 → 로그인 화면
   useEffect(() => {
     writeKey(IDENTITY_KEY, null)
     let cancelled = false
     void (async () => {
+      // APMS 가 주소에 붙여 준 1회용 표 (?apmsTicket=…&apmsOrigin=…): 주소에서 지우고 같은 계정으로 로그인
+      const params = new URLSearchParams(window.location.search)
+      const ticket = params.get('apmsTicket')
+      if (ticket) {
+        const apmsOrigin = params.get('apmsOrigin') ?? ''
+        params.delete('apmsTicket')
+        params.delete('apmsOrigin')
+        const rest = params.toString()
+        window.history.replaceState(null, '', window.location.pathname + (rest ? '?' + rest : '') + window.location.hash)
+        try {
+          const result = await api.apmsSso(ticket, apmsOrigin)
+          writeKey(TOKEN_KEY, result.token)
+          if (!cancelled) setAuth(result)
+          return
+        } catch (err) {
+          if (!cancelled) setSsoError('APMS 계정으로 자동 로그인하지 못했습니다: ' + (err instanceof Error ? err.message : String(err)))
+        }
+      }
       const token = readKey(TOKEN_KEY)
       if (token) {
         try {
@@ -227,7 +247,7 @@ export default function App() {
 
   if (!auth) {
     if (!authChecked) return <div className="gate muted">확인 중…</div>
-    return <LoginGate org={org} onLogin={login} />
+    return <LoginGate org={org} onLogin={login} notice={ssoError} />
   }
 
   const project = org.projects.find((p) => p.id === auth.project.id) ?? auth.project
