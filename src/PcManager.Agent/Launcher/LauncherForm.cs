@@ -143,7 +143,9 @@ internal sealed class LauncherForm : Form
         };
         _statusDot.Text = "●";
         _statusDot.ForeColor = color;
-        _statusText.Text = status?.Updating == true ? "업데이트 중…" : title;
+        _statusText.Text = status?.Updating == true
+            ? (status.UpdateNote is { } note ? $"업데이트 중… {note}" : "업데이트 중…")
+            : title;
         _statusDetail.Text = detail;
 
         _start.Visible = _serviceOff;
@@ -168,7 +170,8 @@ internal sealed class LauncherForm : Form
         }
 
         // 꺼진 상태는 상세 문구로 이미 안내하므로 중복 오류는 감추고, 그 외 오류만 표시
-        _error.Text = _serviceOff ? "" : error ?? _error.Text;
+        // 업데이트가 실패했으면 그 이유를 (다시 [업데이트]를 누를 수 있음)
+        _error.Text = _serviceOff ? "" : error ?? (status is { Updating: false, UpdateNote: { } failed } ? failed : _error.Text);
 
         UpdateButtons();
     }

@@ -15,7 +15,8 @@ public static class DetachedProcess
     private const uint CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
     private const uint CREATE_NO_WINDOW = 0x08000000;
 
-    public static void Start(string exePath, string arguments, string? workingDirectory = null)
+    /// <returns>시작한 프로세스 ID</returns>
+    public static int Start(string exePath, string arguments, string? workingDirectory = null)
     {
         // DETACHED_PROCESS(콘솔 없음)로 띄우면 powershell.exe는 스크립트를 실행하지 않고 곧바로 0으로 끝난다.
         // 그래서 숨긴 콘솔(CREATE_NO_WINDOW)을 붙여 띄운다. 부모(서비스)가 끝나도 자식은 계속 실행된다.
@@ -23,15 +24,15 @@ public static class DetachedProcess
 
         // 잡(job)에 속해 있으면 잡에서 분리해 부모와 독립시킨다.
         // 잡에 속하지 않은 경우 BREAKAWAY 플래그로 실패할 수 있어, 실패하면 그 플래그 없이 재시도한다.
-        if (TryCreate(exePath, arguments, workingDirectory, baseFlags | CREATE_BREAKAWAY_FROM_JOB, out var error))
-            return;
-        if (TryCreate(exePath, arguments, workingDirectory, baseFlags, out error))
-            return;
+        if (TryCreate(exePath, arguments, workingDirectory, baseFlags | CREATE_BREAKAWAY_FROM_JOB, out var pid, out var error))
+            return pid;
+        if (TryCreate(exePath, arguments, workingDirectory, baseFlags, out pid, out error))
+            return pid;
 
         throw new Win32Exception(error, $"프로세스를 시작할 수 없습니다: {exePath}");
     }
 
-    private static bool TryCreate(string exePath, string arguments, string? workingDirectory, uint flags, out int error)
+    private static bool TryCreate(string exePath, string arguments, string? workingDirectory, uint flags, out int pid, out int error)
     {
         var startupInfo = new STARTUPINFO { cb = Marshal.SizeOf<STARTUPINFO>() };
         // CreateProcess는 커맨드라인 버퍼를 수정할 수 있으므로 가변 버퍼(StringBuilder)를 넘긴다
@@ -42,10 +43,12 @@ public static class DetachedProcess
         {
             CloseHandle(info.hThread);
             CloseHandle(info.hProcess);
+            pid = info.dwProcessId;
             error = 0;
             return true;
         }
 
+        pid = 0;
         error = Marshal.GetLastWin32Error();
         return false;
     }

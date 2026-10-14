@@ -143,7 +143,6 @@ public class LocalControlServer(
                 if (!settings.Current.HasServer)
                     return Fail("서버에 연결된 뒤 업데이트할 수 있습니다.");
                 updater.Start(null);
-                status.SetUpdating(true);
                 logger.LogInformation("런처에서 업데이트 시작");
                 return Ok();
 

@@ -13,6 +13,7 @@ public class AgentStatusTracker
     private string? _serverVersion;
     private string? _dashboardUrl;
     private bool _updating;
+    private string? _updateNote;
 
     /// <param name="error">표시할 오류. null이면 지운다</param>
     public void SetStatus(ConnectionStatus status, string? error = null)
@@ -34,10 +35,14 @@ public class AgentStatusTracker
         }
     }
 
-    public void SetUpdating(bool updating)
+    /// <param name="note">업데이트 중이면 진행(다운로드 n% · 설치 중), 끝났으면 실패 이유. null이면 지운다</param>
+    public void SetUpdating(bool updating, string? note = null)
     {
         lock (_lock)
+        {
             _updating = updating;
+            _updateNote = note;
+        }
     }
 
     public LocalStatus Snapshot(AgentSettings settings)
@@ -47,7 +52,7 @@ public class AgentStatusTracker
             var updateAvailable = Version.TryParse(_serverVersion, out var server) && ToThreeParts(server) > AgentVersion;
             return new LocalStatus(
                 _status, settings.ServerUrl, Environment.MachineName, AgentVersionText,
-                _serverVersion, updateAvailable, _updating, _lastError, _dashboardUrl);
+                _serverVersion, updateAvailable, _updating, _lastError, _dashboardUrl, _updateNote);
         }
     }
 
