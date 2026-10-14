@@ -5071,14 +5071,16 @@ body.rv-open .pip { display: none; }
 .rv-colhead-ico { flex: none; color: var(--muted); font-size: 11px; }
 .rv-colhead.filtered { color: var(--accent); }
 .rv-colhead.filtered .rv-colhead-ico { color: var(--accent); }
-.rv-colfilter { position: fixed; z-index: 50; width: 280px; padding: 6px; display: flex; flex-direction: column; gap: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); }
+.rv-colfilter { position: fixed; z-index: 50; padding: 6px; display: flex; flex-direction: column; gap: 4px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); }
 .rv-colfilter-title { padding: 0 2px; }
 .rv-colfilter-item { text-align: left; background: none; border: 0; padding: 3px 6px; border-radius: 4px; }
 .rv-colfilter-item:hover:not(:disabled) { background: var(--hover); }
 .rv-colfilter-item.active { color: var(--accent); font-weight: 600; }
-.rv-colfilter-list { list-style: none; margin: 0; padding: 4px; max-height: 260px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
-.rv-colfilter-list label { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; padding: 1px 0; cursor: pointer; }
-.rv-colfilter-list label .ellipsis { flex: 1; min-width: 0; }
+.rv-colfilter-list { flex: none; margin: 0; padding: 4px; overflow: auto; border: 1px solid var(--border); border-radius: 4px; }
+.rv-colfilter-list label { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 0 2px; cursor: pointer; white-space: pre; }
+.rv-colfilter-list label:hover { background: var(--hover); }
+.rv-colfilter-list input { flex: none; margin: 0; }
+.rv-colfilter-text { flex: 1; }
 .rv-colfilter .rv-setup-actions { margin-top: 2px; }
 /* ATS: 시간 · B · Status · Action · Remark · Result · Y (Video_editor.py와 같은 열) */
 /* 머리글은 두 줄까지 (ACTION / CHECK, STEP / RESULT), 열 사이 세로 줄 */
@@ -5091,6 +5093,13 @@ body.rv-open .pip { display: none; }
 .rv-table.fixed .rv-colhead { width: 100%; height: 100%; border-radius: 0; border: 0; white-space: normal; line-height: 1.15; overflow: hidden; }
 .rv-colhead-label { flex: 1; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .rv-colhead.center { justify-content: center; text-align: center; }
+/* 머리글: 가로 스크롤은 본문을 따라감 · [전체 보기] 단추 (RFW Message) */
+.rv-head-scroll { flex: none; overflow: hidden; }
+.rv-table.fixed .rv-row-head > .rv-colhead-wrap { display: flex; align-items: stretch; gap: 0; padding: 0; }
+.rv-colhead-wrap > .rv-colhead { flex: 1; min-width: 0; }
+.rv-colhead-expand { flex: none; width: 24px; padding: 0; font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; border-left: 1px solid var(--border); cursor: pointer; }
+.rv-colhead-expand:hover { background: var(--hover); color: var(--text); }
+.rv-colhead-expand.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .rv-colhead.center .rv-colhead-label { flex: 0 1 auto; }
 .rv-row:hover { background: var(--hover); }
 .rv-row-head { height: 26px; font-weight: 600; background: var(--panel); cursor: default; }

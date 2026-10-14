@@ -839,7 +839,26 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   onPick: (row: ResultRow) => void
 }) {
   const bodyRef = useRef<HTMLDivElement>(null)
+  const headRef = useRef<HTMLDivElement>(null)
   const [scroll, setScroll] = useState(0)
+  // [전체 보기]: 앞 열을 줄이고 그 열(RFW Message)을 가장 긴 내용만큼 넓힌다. 다시 누르면 원래대로
+  const [expanded, setExpanded] = useState(false)
+  const expandCell = spec?.expandCell
+  const canExpand = !!headers && expandCell !== undefined && !!spec?.expandColumns
+  const expandWidth = useMemo(() => {
+    if (!expanded || !canExpand || !bodyRef.current) return 0
+    const context = document.createElement('canvas').getContext('2d')
+    if (!context) return 0
+    // 표 칸과 같은 글꼴로 잰다
+    const sample = bodyRef.current.querySelector('.rv-row > span') ?? bodyRef.current
+    context.font = getComputedStyle(sample).font || '12px sans-serif'
+    const show = (c: string) => (spec?.pathCells?.includes(expandCell) ? shortenHomePaths(c) : c)
+    let widest = 0
+    for (const row of rows) widest = Math.max(widest, context.measureText(show(row.cells[expandCell] ?? '')).width)
+    // 칸 여백(좌우 5px) · 테두리 · 반올림 여유
+    return Math.min(20000, Math.ceil(widest) + 16)
+  }, [expanded, canExpand, rows, spec, expandCell])
+  const wide = expanded && canExpand && expandWidth > 0
   const [height, setHeight] = useState(400)
   const lastUserScroll = useRef(0)
 
@@ -866,34 +885,58 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   const last = Math.min(rows.length, Math.ceil((scroll + height) / ROW_HEIGHT) + 10)
   const anchorRows = new Set(anchors.map((a) => a.row))
   const center = new Set(spec?.center ?? [])
-  const grid = spec ? { gridTemplateColumns: `40px ${spec.columns}` } : undefined
+  const grid = spec
+    ? { gridTemplateColumns: wide ? `40px ${spec.expandColumns} minmax(${expandWidth}px, 1fr)` : `40px ${spec.columns}` }
+    : undefined
+  // 넓힌 표는 가로로 스크롤 (머리글도 같이)
+  const wideWidth = wide ? 40 + (spec?.expandColumns ?? '').split(/\s+/).reduce((sum, w) => sum + (parseFloat(w) || 0), 0) + expandWidth : 0
+
+  const colHead = (h: string, i: number) => (
+    <button
+      key={i}
+      type="button"
+      className={`rv-colhead${filtered[i] ? ' filtered' : ''}${center.has(i) ? ' center' : ''}`}
+      title={`${h} — 눌러서 거르기·정렬`}
+      onClick={(e) => onHeader(i, e.currentTarget.getBoundingClientRect())}
+    >
+      {/* 짧은 열은 낱말마다 줄을 바꿔 좁게 (ACTION / CHECK) */}
+      <span className="rv-colhead-label">{center.has(i) ? h.replace(/\s+/g, '\n') : h}</span>
+      <span className="rv-colhead-ico">{sort?.col === i ? (sort.asc ? '↑' : '↓') : ''}{filtered[i] ? '⧩' : '▾'}</span>
+    </button>
+  )
 
   return (
-    <div className={`rv-table${spec ? ' fixed' : ''}`}>
-      <div className="rv-row rv-row-head small" style={grid}>
-        {headers
-          ? <><span>#</span>{headers.map((h, i) => (
-              <button
-                key={i}
-                type="button"
-                className={`rv-colhead${filtered[i] ? ' filtered' : ''}${center.has(i) ? ' center' : ''}`}
-                title={`${h} — 눌러서 거르기·정렬`}
-                onClick={(e) => onHeader(i, e.currentTarget.getBoundingClientRect())}
-              >
-                {/* 짧은 열은 낱말마다 줄을 바꿔 좁게 (ACTION / CHECK) */}
-                <span className="rv-colhead-label">{center.has(i) ? h.replace(/\s+/g, '\n') : h}</span>
-                <span className="rv-colhead-ico">{sort?.col === i ? (sort.asc ? '↑' : '↓') : ''}{filtered[i] ? '⧩' : '▾'}</span>
-              </button>
-            ))}</>
-          : <><span>#</span><span>시간</span><span>회차</span><span>스텝</span><span>결과</span><span>걸린 시간</span><span>메시지</span><span>영상</span></>}
+    <div className={`rv-table${spec ? ' fixed' : ''}${wide ? ' expanded' : ''}`}>
+      <div className="rv-head-scroll" ref={headRef}>
+        <div className="rv-row rv-row-head small" style={{ ...grid, ...(wide ? { minWidth: wideWidth } : null) }}>
+          {headers
+            ? <><span>#</span>{headers.map((h, i) => (canExpand && i === expandCell ? (
+                <span key={i} className="rv-colhead-wrap">
+                  {colHead(h, i)}
+                  <button
+                    type="button"
+                    className={`rv-colhead-expand${expanded ? ' on' : ''}`}
+                    title={expanded ? '원래 폭으로' : '전체 보기 — 앞 열을 줄이고 이 열을 내용 전체 길이로'}
+                    aria-pressed={expanded}
+                    onClick={() => setExpanded((v) => !v)}
+                  >
+                    {expanded ? '⇤' : '⇔'}
+                  </button>
+                </span>
+              ) : colHead(h, i)))}</>
+            : <><span>#</span><span>시간</span><span>회차</span><span>스텝</span><span>결과</span><span>걸린 시간</span><span>메시지</span><span>영상</span></>}
+        </div>
       </div>
       <div
         className="rv-table-body"
         ref={bodyRef}
-        onScroll={(e) => setScroll(e.currentTarget.scrollTop)}
+        onScroll={(e) => {
+          setScroll(e.currentTarget.scrollTop)
+          if (headRef.current) headRef.current.scrollLeft = e.currentTarget.scrollLeft
+        }}
         onWheel={() => (lastUserScroll.current = Date.now())}
       >
-        <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
+        <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative', ...(wide ? { minWidth: wideWidth } : null) }}>
           {rows.slice(first, last).map((row, i) => (
             <div
               key={row.index}

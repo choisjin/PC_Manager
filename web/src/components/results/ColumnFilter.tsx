@@ -11,7 +11,10 @@ export interface ColSort {
   asc: boolean
 }
 
-const LIST_LIMIT = 1000
+// 값 목록: 값이 수천 개여도 다 보여 주되 보이는 줄만 그린다
+const ITEM_HEIGHT = 20
+const LIST_MAX_HEIGHT = 260
+const MIN_WIDTH = 280
 
 /** 엑셀 자동 필터처럼: 정렬 · 검색 · 값 체크 목록 */
 export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onApply, onSort, onClose }: {
@@ -28,7 +31,9 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
   onClose: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const [search, setSearch] = useState('')
+  const [scroll, setScroll] = useState(0)
   const counts = useMemo(() => {
     const m = new Map<string, number>()
     for (const v of values) m.set(v, (m.get(v) ?? 0) + 1)
@@ -41,6 +46,27 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
   const q = search.trim().toLowerCase()
   const shown = q ? counts.filter(([v]) => label(v).toLowerCase().includes(q)) : counts
   const allShown = shown.every(([v]) => checked.has(v))
+
+  // 가장 긴 값이 줄임 없이 보이도록 창을 넓힌다 (화면보다 길면 목록을 가로로 스크롤)
+  const textWidth = useMemo(() => {
+    const context = document.createElement('canvas').getContext('2d')
+    if (!context) return 0
+    context.font = `12px ${getComputedStyle(document.body).fontFamily}`
+    let widest = 0
+    for (const [v, n] of counts) widest = Math.max(widest, context.measureText(label(v) || '(빈 값)').width + context.measureText(String(n)).width)
+    return Math.ceil(widest)
+    // label은 부르는 쪽에서 매번 새로 만들어지므로(영상 재생 중 계속) 값 목록이 바뀔 때만 잰다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [counts])
+  // 체크 상자 · 칸 사이 · 목록 여백 · 세로 스크롤 막대
+  const width = Math.min(window.innerWidth - 8, Math.max(MIN_WIDTH, textWidth + 64))
+  const rowWidth = textWidth + 40
+
+  // 0번 줄은 (모두 선택)
+  const total = shown.length + 1
+  const listHeight = Math.min(LIST_MAX_HEIGHT, total * ITEM_HEIGHT + 8)
+  const first = Math.max(0, Math.floor(scroll / ITEM_HEIGHT) - 5)
+  const last = Math.min(total, Math.ceil((scroll + listHeight) / ITEM_HEIGHT) + 5)
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -68,14 +94,14 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
   }
 
   // 화면 오른쪽·아래로 넘치지 않게
-  const left = Math.max(4, Math.min(x, window.innerWidth - 284))
+  const left = Math.max(4, Math.min(x, window.innerWidth - width - 4))
   const top = Math.max(4, Math.min(y, window.innerHeight - 440))
 
   return (
     <div
       ref={ref}
       className="rv-colfilter panel"
-      style={{ left, top }}
+      style={{ left, top, width }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation()
@@ -87,34 +113,55 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
       <button type="button" className={`rv-colfilter-item${sort === 'asc' ? ' active' : ''}`} onClick={() => { onSort(true); onClose() }}>↑ 오름차순 정렬</button>
       <button type="button" className={`rv-colfilter-item${sort === 'desc' ? ' active' : ''}`} onClick={() => { onSort(false); onClose() }}>↓ 내림차순 정렬</button>
       <button type="button" className="rv-colfilter-item" disabled={!filter} onClick={() => { onApply(null); onClose() }}>✕ "{title}" 필터 지우기</button>
-      <input autoFocus placeholder="검색" value={search} onChange={(e) => setSearch(e.target.value)} />
-      <ul className="rv-colfilter-list">
-        <li>
-          <label>
-            <input type="checkbox" checked={shown.length > 0 && allShown} onChange={toggleAll} />
-            {q ? '(검색 결과 모두 선택)' : '(모두 선택)'}
-          </label>
-        </li>
-        {shown.slice(0, LIST_LIMIT).map(([v, n]) => (
-          <li key={v}>
-            <label title={label(v)}>
-              <input
-                type="checkbox"
-                checked={checked.has(v)}
-                onChange={() => setChecked((prev) => {
-                  const next = new Set(prev)
-                  if (next.has(v)) next.delete(v)
-                  else next.add(v)
-                  return next
-                })}
-              />
-              <span className="ellipsis">{label(v) || '(빈 값)'}</span>
-              <span className="muted small">{n}</span>
-            </label>
-          </li>
-        ))}
-        {shown.length > LIST_LIMIT && <li className="muted small">… {shown.length - LIST_LIMIT}개 더 (검색으로 좁히세요)</li>}
-      </ul>
+      <input
+        autoFocus
+        placeholder="검색"
+        value={search}
+        onChange={(e) => {
+          setSearch(e.target.value)
+          // 검색이 바뀌면 목록 맨 위로
+          if (listRef.current) listRef.current.scrollTop = 0
+          setScroll(0)
+        }}
+      />
+      <div
+        className="rv-colfilter-list"
+        ref={listRef}
+        style={{ height: listHeight }}
+        onScroll={(e) => setScroll(e.currentTarget.scrollTop)}
+      >
+        <div style={{ position: 'relative', height: total * ITEM_HEIGHT, minWidth: rowWidth }}>
+          {Array.from({ length: last - first }, (_, k) => {
+            const i = first + k
+            const style = { position: 'absolute', top: i * ITEM_HEIGHT, left: 0, right: 0, height: ITEM_HEIGHT } as const
+            if (i === 0) {
+              return (
+                <label key="(all)" style={style}>
+                  <input type="checkbox" checked={shown.length > 0 && allShown} onChange={toggleAll} />
+                  <span className="rv-colfilter-text">{q ? '(검색 결과 모두 선택)' : '(모두 선택)'}</span>
+                </label>
+              )
+            }
+            const [v, n] = shown[i - 1]
+            return (
+              <label key={v} style={style}>
+                <input
+                  type="checkbox"
+                  checked={checked.has(v)}
+                  onChange={() => setChecked((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(v)) next.delete(v)
+                    else next.add(v)
+                    return next
+                  })}
+                />
+                <span className="rv-colfilter-text">{label(v) || '(빈 값)'}</span>
+                <span className="muted small">{n}</span>
+              </label>
+            )
+          })}
+        </div>
+      </div>
       <div className="rv-setup-actions">
         <button type="button" onClick={onClose}>취소</button>
         <button type="button" className="primary" disabled={(q ? shown : counts).every(([v]) => !checked.has(v))} onClick={apply}>확인</button>

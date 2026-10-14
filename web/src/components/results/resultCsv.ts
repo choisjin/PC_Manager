@@ -75,6 +75,9 @@ export interface TableSpec {
   timeCell: number
   /** 칸 안의 /home/… 경로를 마지막 이름만 보여 줄 열 (전체 경로는 마우스를 올리면) */
   pathCells?: number[]
+  /** 머리글 [전체 보기]로 내용 길이만큼 넓힐 열. expandColumns = 그때 앞 열들의 줄인 폭 */
+  expandCell?: number
+  expandColumns?: string
 }
 
 /** 글 속 /home/… 경로를 마지막 이름만 남긴다 (예: /home/lg/rfw/Image/IMG_X.bmp → IMG_X.bmp) */
@@ -486,6 +489,8 @@ export function parseRfw(text: string): ParsedResult {
     alertCells: [6],
     timeCell: 0,
     pathCells: [7],
+    expandCell: 7,
+    expandColumns: '78px 30px 72px 40px 44px 48px 40px',
   }
   attachRfwImages(rows, all.slice(1))
   return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_SHOWN, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table }

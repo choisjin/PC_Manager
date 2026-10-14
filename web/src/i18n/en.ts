@@ -1060,6 +1060,8 @@ const EXACT: Record<string, string> = {
   "APMS 포털에 로그인 확인을 하지 못했습니다.": "Couldn't verify the sign-in with the APMS portal.",
   "프로젝트 관리자 계정을 찾을 수 없습니다.": "Couldn't find the project admin account.",
   "사내 계정으로 로그인한 APMS 사용자만 자동 로그인할 수 있습니다.": "Only APMS users signed in with a company account can sign in automatically.",
+  "원래 폭으로": "Restore column widths",
+  "전체 보기 — 앞 열을 줄이고 이 열을 내용 전체 길이로": "Show all — shrink the columns before it and widen this column to its full content",
 }
 
 const TEMPLATES: [string, string][] = [
