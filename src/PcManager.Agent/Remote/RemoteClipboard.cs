@@ -6,6 +6,9 @@ namespace PcManager.Agent.Remote;
 /// 원격 PC(세션)의 클립보드(텍스트, 복사한 파일 목록)를 읽고 쓴다. 반드시 입력 데스크톱에 붙은 스레드에서 호출해야 한다
 /// (클립보드는 윈도우 스테이션/데스크톱에 묶여 있다). 원격조작 중 클립보드 동기화에 쓴다.
 /// </summary>
+/// <summary>다른 앱이 클립보드를 쓰고 있어 열지 못함 (잠시 뒤 다시 읽는다)</summary>
+internal sealed class ClipboardBusyException() : IOException("클립보드를 다른 프로그램이 쓰고 있습니다.");
+
 internal static class RemoteClipboard
 {
     private const uint CF_UNICODETEXT = 13;
@@ -15,8 +18,8 @@ internal static class RemoteClipboard
     {
         if (!IsClipboardFormatAvailable(CF_UNICODETEXT))
             return null;
-        if (!OpenClipboard(IntPtr.Zero))
-            return null;
+        if (!Open(attempts: 3))
+            throw new ClipboardBusyException();
         try
         {
             var handle = GetClipboardData(CF_UNICODETEXT);
@@ -42,7 +45,7 @@ internal static class RemoteClipboard
 
     public static bool SetText(string text)
     {
-        if (!OpenClipboard(IntPtr.Zero))
+        if (!Open())
             return false;
         try
         {
@@ -80,6 +83,21 @@ internal static class RemoteClipboard
         }
     }
 
+    /// <summary>
+    /// 클립보드 열기. 복사한 앱(탐색기 등)이 막 쓰고 있으면 실패하므로 잠깐씩 기다리며 다시 시도한다
+    /// </summary>
+    /// <param name="attempts">읽기는 짧게(입력 스레드라 오래 막지 않고 다음 폴링에서 다시), 쓰기는 길게</param>
+    private static bool Open(int attempts = 10)
+    {
+        for (var attempt = 0; attempt < attempts; attempt++)
+        {
+            if (OpenClipboard(IntPtr.Zero))
+                return true;
+            Thread.Sleep(30);
+        }
+        return false;
+    }
+
     /// <summary>클립보드가 바뀔 때마다 늘어나는 번호 (열지 않고 변경 여부만 볼 때)</summary>
     public static uint SequenceNumber => GetClipboardSequenceNumber();
 
@@ -88,8 +106,8 @@ internal static class RemoteClipboard
     {
         if (!IsClipboardFormatAvailable(CF_HDROP))
             return null;
-        if (!OpenClipboard(IntPtr.Zero))
-            return null;
+        if (!Open(attempts: 3))
+            throw new ClipboardBusyException();
         try
         {
             var handle = GetClipboardData(CF_HDROP);
@@ -155,7 +173,7 @@ internal static class RemoteClipboard
             GlobalUnlock(effect);
         }
 
-        if (!OpenClipboard(IntPtr.Zero))
+        if (!Open())
         {
             GlobalFree(drop);
             if (effect != IntPtr.Zero)

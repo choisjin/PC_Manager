@@ -285,7 +285,8 @@ internal static class RemoteSessionApp
                                 return;
                             _lastClipboard = clip;
                         }
-                        RemoteClipboard.SetText(clip);
+                        if (!RemoteClipboard.SetText(clip))
+                            _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "clipboard-failed" }, _cts.Token);
                     });
                     break;
                 }
@@ -298,7 +299,8 @@ internal static class RemoteSessionApp
                     {
                         lock (_clipLock)
                             _lastClipFiles = string.Join('\n', paths);
-                        RemoteClipboard.SetFiles(paths);
+                        if (!RemoteClipboard.SetFiles(paths))
+                            _ = SendJsonAsync(new { type = "status", desktop = DesktopSwitcher.CurrentName, note = "clipboard-failed" }, _cts.Token);
                     });
                     break;
                 }
@@ -386,12 +388,15 @@ internal static class RemoteSessionApp
                 if (_clipPolled && sequence == _clipSequence)
                     return;
                 var first = !_clipPolled;
+                // 복사한 앱이 클립보드를 쓰는 중이면 여기서 예외 → 이번 변경을 본 것으로 치지 않고 다음 폴링에서 다시 읽는다
+                // (예전에는 번호부터 기록해, 탐색기에서 파일을 복사한 직후 못 읽으면 그 복사를 놓쳤다)
+                var files = RemoteClipboard.GetFiles();
+                var text = files is { Count: > 0 } ? null : RemoteClipboard.GetText();
                 _clipPolled = true;
                 _clipSequence = sequence;
 
                 // 복사한 파일: 경로만 알린다 (붙여넣을 때 대시보드가 서버를 거쳐 그 PC로 복사).
                 // 세션을 열 때 이미 있던 목록은 알리지 않는다 (예전에 붙여넣은 파일이 새 복사로 보이지 않게)
-                var files = RemoteClipboard.GetFiles();
                 if (files is { Count: > 0 })
                 {
                     // 클립보드 변경 번호가 바뀔 때만 여기 온다. 방금 clipfiles로 넣은 목록만 건너뛴다 (같은 파일을 다시 복사하면 다시 알림)
@@ -409,7 +414,6 @@ internal static class RemoteSessionApp
                     return;
                 }
 
-                var text = RemoteClipboard.GetText();
                 if (string.IsNullOrEmpty(text) || text.Length > 256 * 1024)
                     return;
                 lock (_clipLock)
@@ -418,7 +422,8 @@ internal static class RemoteSessionApp
                         return;
                     _lastClipboard = text;
                 }
-                _ = SendJsonAsync(new { type = "clipboard", text }, ct);
+                // initial: 세션을 열 때 이미 있던 글 (대시보드는 이걸 새로 복사한 글로 보지 않는다)
+                _ = SendJsonAsync(new { type = "clipboard", text, initial = first }, ct);
             }
             catch (Exception ex)
             {

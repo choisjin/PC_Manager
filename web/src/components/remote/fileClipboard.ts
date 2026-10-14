@@ -17,6 +17,9 @@ export interface RemoteFileClip {
 }
 
 let current: RemoteFileClip | null = null
+// 원격 PC에서 마지막으로 복사한 글. 다른 PC 원격 화면에서 Ctrl+V하면 이 글을 붙여넣는다
+// (HTTP 접속처럼 이 PC 클립보드에 쓸 수 없어도 PC 간 복사가 되게). 파일·이 PC에서 새로 복사하면 비운다
+let copiedText: string | null = null
 // 이 PC 클립보드에서 마지막으로 본 텍스트. 바뀌었으면 사용자가 새로 복사한 것 → 파일 클립보드를 비운다
 let lastLocalText: string | undefined
 // 이 PC에서 복사한 파일(붙여넣을 때만 보인다): 마지막으로 본 목록, PC별로 이미 올린 목록
@@ -35,8 +38,14 @@ export const fileClipboard = {
   newId,
   set(agentId: string, machineName: string, paths: string[]) {
     current = { id: newId(), agentId, machineName, paths, delivered: new Set([agentId]) }
+    copiedText = null
     notify()
   },
+  /** 원격 PC에서 새로 복사한 글 (그 PC 화면에서 Ctrl+C) */
+  setText(text: string) {
+    copiedText = text
+  },
+  getText: () => copiedText,
   clear() {
     if (!current) return
     current = null
@@ -45,10 +54,18 @@ export const fileClipboard = {
   markDelivered(agentId: string) {
     current?.delivered.add(agentId)
   },
-  /** 이 PC 클립보드 텍스트를 읽었을 때 / 원격 텍스트를 이 PC 클립보드에 썼을 때 */
+  /**
+   * 이 PC 클립보드 텍스트를 읽었을 때 / 원격 텍스트를 이 PC 클립보드에 썼을 때
+   * @returns 이 PC에서 새로 복사한 글이면 true (원격에서 복사한 파일·글보다 우선)
+   */
   noteLocalText(text: string, readFromLocal: boolean) {
-    if (readFromLocal && lastLocalText !== undefined && text !== lastLocalText) fileClipboard.clear()
+    const changed = readFromLocal && lastLocalText !== undefined && text !== lastLocalText
+    if (changed) {
+      fileClipboard.clear()
+      copiedText = null
+    }
     lastLocalText = text
+    return changed
   },
   /**
    * 붙여넣기에서 본 이 PC 파일 목록(서명). 지난번과 다르면 새로 복사한 것 → true.
@@ -57,7 +74,10 @@ export const fileClipboard = {
   noteLocalFiles(signature: string) {
     const changed = lastLocalFiles === undefined ? !current : signature !== lastLocalFiles
     lastLocalFiles = signature
-    if (changed) fileClipboard.clear()
+    if (changed) {
+      fileClipboard.clear()
+      copiedText = null
+    }
     return changed
   },
   /** 이 PC 파일을 그 PC에 이미 올려 클립보드에 넣어 두었는지 */

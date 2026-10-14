@@ -1062,6 +1062,7 @@ const EXACT: Record<string, string> = {
   "사내 계정으로 로그인한 APMS 사용자만 자동 로그인할 수 있습니다.": "Only APMS users signed in with a company account can sign in automatically.",
   "원래 폭으로": "Restore column widths",
   "전체 보기 — 앞 열을 줄이고 이 열을 내용 전체 길이로": "Show all — shrink the columns before it and widen this column to its full content",
+  "원격 PC 클립보드에 넣지 못했습니다 (다른 프로그램이 클립보드를 쓰는 중). 잠시 뒤 다시 Ctrl+V 하세요.": "Couldn't put it on the remote PC's clipboard (another program is using the clipboard). Press Ctrl+V again in a moment.",
 }
 
 const TEMPLATES: [string, string][] = [

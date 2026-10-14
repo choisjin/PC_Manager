@@ -207,8 +207,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
   const formatRef = useRef<Format | null>(null)
   const viewOnlyRef = useRef(false)
   const pressedRef = useRef(new Set<string>())
-  // 클립보드 동기화: 마지막으로 주고받은 텍스트 (되돌려 보내지 않도록)
-  const lastClipRef = useRef<string | null>(null)
+  // 클립보드 동기화: 지금 연결된 원격 PC 클립보드에 들어 있는 글 (같은 글을 다시 보내지 않도록, PC를 바꾸면 다시 받음)
+  const remoteClipRef = useRef<string | null>(null)
   const syncClipRef = useRef<() => void>(() => {})
   // 파일 붙여넣기: 원격 PC가 받아 둘 폴더(hello), 이 연결에서 텍스트 클립보드를 처음 받았는지, 가로챈 키
   const clipDirRef = useRef<string | null>(null)
@@ -417,6 +417,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
           case 'hello': {
             clipDirRef.current = typeof msg.clipDir === 'string' ? msg.clipDir : null
             clipTextSeenRef.current = false
+            remoteClipRef.current = null
             setMonitors(msg.monitors)
             const primary = (msg.monitors as Monitor[]).find((m) => m.primary)
             setMonitor(primary?.index ?? 0)
@@ -444,6 +445,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
             else if (msg.note === 'single-monitor-failed') showHint(`모니터 하나만 켜지 못했습니다: ${msg.message ?? ''}`)
             else if (msg.note === 'virtual-monitor') showHint('모니터가 없어 가상 모니터를 켰습니다. 물리 모니터가 다시 켜지면 자동으로 꺼집니다 (멀티 모니터로 쓰지 않음).')
             else if (msg.note === 'virtual-released') showHint('물리 모니터가 켜져 가상 모니터를 껐습니다.')
+            else if (msg.note === 'clipboard-failed') showHint('원격 PC 클립보드에 넣지 못했습니다 (다른 프로그램이 클립보드를 쓰는 중). 잠시 뒤 다시 Ctrl+V 하세요.')
             else if (msg.note === 'reattaching') {
               // 로그인 등으로 원격 세션이 바뀜 → 서버가 새 세션에 다시 잇는 중
               setPhase('connecting')
@@ -453,20 +455,24 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
           case 'cursor':
             setCursor({ x: msg.x, y: msg.y, visible: msg.visible })
             break
-          case 'clipboard':
-            // 원격 클립보드가 바뀌면 이 PC 클립보드에 반영 (보안 컨텍스트에서만, 창에 포커스가 있어야 함)
-            if (typeof msg.text === 'string' && msg.text !== lastClipRef.current) {
-              lastClipRef.current = msg.text
-              const text = msg.text as string
-              navigator.clipboard?.writeText?.(text).then(() => fileClipboard.noteLocalText(text, false), () => {})
-              // 원격에서 새로 텍스트를 복사함 → 파일 클립보드는 비운다 (연결 직후 알려 오는 기존 내용은 제외)
-              if (clipTextSeenRef.current) {
-                fileClipboard.clear()
-                fileClipboard.remoteClipboardChanged(agentId)
-              }
-            }
+          case 'clipboard': {
+            if (typeof msg.text !== 'string') break
+            const text = msg.text as string
+            // 연결 직후 알려 오는 그 PC의 기존 내용: 그 PC 클립보드에 있다는 것만 기억한다.
+            // 이 PC 클립보드에 쓰면 다른 PC에서 방금 복사한 글을 덮어써 PC 간 복사가 안 된다
+            // (initial이 없는 옛 에이전트는 이 연결의 첫 글로 판단)
+            const initial = msg.initial ?? !clipTextSeenRef.current
             clipTextSeenRef.current = true
+            const changed = text !== remoteClipRef.current
+            remoteClipRef.current = text
+            if (initial || !changed) break
+            // 원격에서 새로 복사함 → 다른 PC에서 Ctrl+V하면 이 글. 이 PC 클립보드에도 (보안 컨텍스트·포커스가 있을 때만)
+            fileClipboard.clear()
+            fileClipboard.setText(text)
+            fileClipboard.remoteClipboardChanged(agentId)
+            navigator.clipboard?.writeText?.(text).then(() => fileClipboard.noteLocalText(text, false), () => {})
             break
+          }
           case 'clipfiles':
             // 원격 PC에서 파일을 복사함 → 다른 PC 원격 화면에서 Ctrl+V로 붙여넣는다
             if (Array.isArray(msg.paths) && msg.paths.length > 0) {
@@ -703,8 +709,8 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
    */
   const resolvePaste = (data: LocalPaste | null) => {
     if (pastingRef.current) return
-    // 이 PC에서 새로 텍스트를 복사했으면 원격 파일 클립보드는 비워진다
-    if (data?.text) fileClipboard.noteLocalText(data.text, true)
+    // 이 PC에서 새로 텍스트를 복사했으면 원격에서 복사한 파일·글은 비워진다
+    const localNew = data?.text ? fileClipboard.noteLocalText(data.text, true) : false
     const items = data?.items ?? []
     if (items.length > 0) {
       const signature = localSignature(items)
@@ -721,9 +727,11 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
       void pasteFiles(clip)
       return
     }
-    if (data?.text && data.text !== lastClipRef.current) {
-      lastClipRef.current = data.text
-      send({ t: 'clip', text: data.text })
+    // 글: 이 PC에서 새로 복사한 글 → 다른 원격 PC에서 복사한 글 → 이 PC 클립보드 글 (그 PC에 이미 있으면 보내지 않음)
+    const text = (!localNew && fileClipboard.getText()) || data?.text
+    if (text && text !== remoteClipRef.current) {
+      remoteClipRef.current = text
+      send({ t: 'clip', text })
     }
     send({ t: 'combo', codes: ['ControlLeft', 'KeyV'] })
   }
@@ -891,10 +899,13 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     navigator.clipboard
       ?.readText?.()
       .then((text) => {
-        if (typeof text === 'string' && text) fileClipboard.noteLocalText(text, true)
-        if (typeof text === 'string' && text && text !== lastClipRef.current) {
-          lastClipRef.current = text
-          send({ t: 'clip', text })
+        if (typeof text !== 'string' || !text) return
+        // 이 PC에서 새로 복사한 글만 보낸다. 원격에서 복사한 글이 더 최근이면(다른 PC에서 Ctrl+C) 그 글을 둔다
+        const localNew = fileClipboard.noteLocalText(text, true)
+        const pick = (!localNew && fileClipboard.getText()) || text
+        if (pick !== remoteClipRef.current) {
+          remoteClipRef.current = pick
+          send({ t: 'clip', text: pick })
         }
       })
       .catch(() => {})
