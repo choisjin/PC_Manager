@@ -12,6 +12,14 @@ export interface ColSort {
 }
 
 // 값 목록: 값이 수천 개여도 다 보여 주되 보이는 줄만 그린다
+interface Group {
+  /** 목록에 보이는 글 */
+  text: string
+  /** 그 글로 보이는 원래 값들 */
+  values: string[]
+  count: number
+}
+
 const ITEM_HEIGHT = 20
 const LIST_MAX_HEIGHT = 260
 const MIN_WIDTH = 280
@@ -34,18 +42,34 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
   const listRef = useRef<HTMLDivElement>(null)
   const [search, setSearch] = useState('')
   const [scroll, setScroll] = useState(0)
-  const counts = useMemo(() => {
+  // label은 부르는 쪽에서 매번 새로 만들어지므로(영상 재생 중 계속) 값 목록이 바뀔 때만 다시 묶는다
+  const labelRef = useRef(label)
+  labelRef.current = label
+  // 보이는 글이 같은 값은 한 줄로 묶는다 (예: 앞 50자만 보이는 HTTP 로그). 거르기는 원래 값으로
+  const groups = useMemo(() => {
     const m = new Map<string, number>()
     for (const v of values) m.set(v, (m.get(v) ?? 0) + 1)
     // 지금 거르고 있는 값이 다른 열 때문에 빠졌어도 목록에는 남긴다
     for (const v of filter?.values ?? []) if (!m.has(v)) m.set(v, 0)
-    return [...m.entries()].sort((a, b) => compareCells(a[0], b[0]))
+    const byText = new Map<string, Group>()
+    for (const [v, n] of [...m.entries()].sort((a, b) => compareCells(a[0], b[0]))) {
+      const text = labelRef.current(v) || '(빈 값)'
+      const g = byText.get(text)
+      if (g) {
+        g.values.push(v)
+        g.count += n
+      } else byText.set(text, { text, values: [v], count: n })
+    }
+    return [...byText.values()]
   }, [values, filter])
-  const [checked, setChecked] = useState<Set<string>>(() => new Set(filter?.values ?? counts.map(([v]) => v)))
+  const valueCount = useMemo(() => groups.reduce((sum, g) => sum + g.values.length, 0), [groups])
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(filter?.values ?? groups.flatMap((g) => g.values)))
+  const isOn = (g: Group) => g.values.every((v) => checked.has(v))
 
   const q = search.trim().toLowerCase()
-  const shown = q ? counts.filter(([v]) => label(v).toLowerCase().includes(q)) : counts
-  const allShown = shown.every(([v]) => checked.has(v))
+  // 줄여 보이는 값도 원래 값 전체에서 찾는다
+  const shown = q ? groups.filter((g) => g.text.toLowerCase().includes(q) || g.values.some((v) => v.toLowerCase().includes(q))) : groups
+  const allShown = shown.every(isOn)
 
   // 가장 긴 값이 줄임 없이 보이도록 창을 넓힌다 (화면보다 길면 목록을 가로로 스크롤)
   const textWidth = useMemo(() => {
@@ -53,11 +77,9 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
     if (!context) return 0
     context.font = `12px ${getComputedStyle(document.body).fontFamily}`
     let widest = 0
-    for (const [v, n] of counts) widest = Math.max(widest, context.measureText(label(v) || '(빈 값)').width + context.measureText(String(n)).width)
+    for (const g of groups) widest = Math.max(widest, context.measureText(g.text).width + context.measureText(String(g.count)).width)
     return Math.ceil(widest)
-    // label은 부르는 쪽에서 매번 새로 만들어지므로(영상 재생 중 계속) 값 목록이 바뀔 때만 잰다
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [counts])
+  }, [groups])
   // 체크 상자 · 칸 사이 · 목록 여백 · 세로 스크롤 막대
   const width = Math.min(window.innerWidth - 8, Math.max(MIN_WIDTH, textWidth + 64))
   const rowWidth = textWidth + 40
@@ -80,16 +102,18 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
 
   const toggleAll = () => setChecked((prev) => {
     const next = new Set(prev)
-    for (const [v] of shown) {
-      if (allShown) next.delete(v)
-      else next.add(v)
+    for (const g of shown) {
+      for (const v of g.values) {
+        if (allShown) next.delete(v)
+        else next.add(v)
+      }
     }
     return next
   })
   const apply = () => {
     // 검색 중이면 검색에 걸린 값 중 체크한 것만 (엑셀과 같음)
-    const picked = (q ? shown : counts).map(([v]) => v).filter((v) => checked.has(v))
-    onApply(!q && picked.length === counts.length ? null : { values: picked })
+    const picked = (q ? shown : groups).flatMap((g) => g.values).filter((v) => checked.has(v))
+    onApply(!q && picked.length === valueCount ? null : { values: picked })
     onClose()
   }
 
@@ -142,21 +166,24 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
                 </label>
               )
             }
-            const [v, n] = shown[i - 1]
+            const g = shown[i - 1]
+            const on = isOn(g)
             return (
-              <label key={v} style={style}>
+              <label key={g.text} style={style} title={g.values.length === 1 ? g.values[0] : `${g.text} (값 ${g.values.length}개)`}>
                 <input
                   type="checkbox"
-                  checked={checked.has(v)}
+                  checked={on}
                   onChange={() => setChecked((prev) => {
                     const next = new Set(prev)
-                    if (next.has(v)) next.delete(v)
-                    else next.add(v)
+                    for (const v of g.values) {
+                      if (on) next.delete(v)
+                      else next.add(v)
+                    }
                     return next
                   })}
                 />
-                <span className="rv-colfilter-text">{label(v) || '(빈 값)'}</span>
-                <span className="muted small">{n}</span>
+                <span className="rv-colfilter-text">{g.text}</span>
+                <span className="muted small">{g.count}</span>
               </label>
             )
           })}
@@ -164,7 +191,7 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
       </div>
       <div className="rv-setup-actions">
         <button type="button" onClick={onClose}>취소</button>
-        <button type="button" className="primary" disabled={(q ? shown : counts).every(([v]) => !checked.has(v))} onClick={apply}>확인</button>
+        <button type="button" className="primary" disabled={(q ? shown : groups).every((g) => g.values.every((v) => !checked.has(v)))} onClick={apply}>확인</button>
       </div>
     </div>
   )

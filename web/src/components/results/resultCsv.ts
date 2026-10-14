@@ -73,7 +73,7 @@ export interface TableSpec {
   statusCells: number[]
   alertCells: number[]
   timeCell: number
-  /** 칸 안의 /home/… 경로를 마지막 이름만 보여 줄 열 (전체 경로는 마우스를 올리면) */
+  /** 줄여 보여 줄 열 (shortMessage: HTML 태그는 값만, /home/… 경로는 마지막 이름만, HTTP 요청·응답 로그는 앞 50자). 전체는 마우스를 올리면 */
   pathCells?: number[]
   /** 머리글 [전체 보기]로 내용 길이만큼 넓힐 열. expandColumns = 그때 앞 열들의 줄인 폭 */
   expandCell?: number
@@ -83,6 +83,27 @@ export interface TableSpec {
 /** 글 속 /home/… 경로를 마지막 이름만 남긴다 (예: /home/lg/rfw/Image/IMG_X.bmp → IMG_X.bmp) */
 export const shortenHomePaths = (text: string) =>
   text.replace(/(?:file:)?\/+home\/[^\s"'<>,()=]*/gi, (p) => p.split('/').filter(Boolean).pop() ?? p)
+
+// 'GET Request : url=… headers={…}' 처럼 헤더까지 길게 찍힌 HTTP 로그
+const HTTP_LOG = /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (?:Request|Response)\b/i
+const HTTP_LOG_LIMIT = 50
+
+/** 글 속 HTML 태그를 걷어 값만 남긴다: <img src="A.bmp" style="…"> → A.bmp, 그 밖의 태그·style·script는 지움 */
+export function stripHtml(text: string) {
+  if (!/<\/?[a-z]/i.test(text)) return text
+  return text
+    .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<img\b[^>]*?\bsrc\s*=\s*(["']?)([^"'\s>]+)\1[^>]*>/gi, ' $2 ')
+    .replace(/<\/?[a-z][^>]*>/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** RFW Message 표시용: HTML 태그는 값만, /home/… 경로는 마지막 이름만, HTTP 요청·응답 로그는 앞 50자만 */
+export function shortMessage(text: string) {
+  const t = shortenHomePaths(stripHtml(text))
+  return HTTP_LOG.test(t) && t.length > HTTP_LOG_LIMIT ? t.slice(0, HTTP_LOG_LIMIT) + '…' : t
+}
 
 // ── 바이트 → 문자열 (BOM이면 UTF-8, 아니면 UTF-8 시도 후 안 되면 CP949)
 export function decodeText(bytes: ArrayBuffer): string {

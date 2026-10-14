@@ -4,7 +4,7 @@ import { api, type ResultSet, type ResultSetSummary } from '../../api'
 import { formatBytes } from '../../format'
 import { type ClipItem, FILES_MIME, type FilesDragPayload } from '../explorer/pcGroups'
 import {
-  type AtsImages, compareCells, formatSeconds, formatWall, type ParsedResult, parseAts, parseRfw, shortenHomePaths, type TableSpec,
+  type AtsImages, compareCells, formatSeconds, formatWall, type ParsedResult, parseAts, parseRfw, shortMessage, type TableSpec,
   RESULT_MODE_LABEL, type ResultMapping, type ResultMode, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
@@ -627,7 +627,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           title={parsed.headers[filterMenu.col]}
           values={menuValues}
           label={filterMenu.col === parsed.table?.timeCell ? (v) => v.replace(/^\[|\]$/g, '')
-            : parsed.table?.pathCells?.includes(filterMenu.col) ? (v) => shortenHomePaths(v).replace(/\s+/g, ' ')
+            : parsed.table?.pathCells?.includes(filterMenu.col) ? (v) => shortMessage(v).replace(/\s+/g, ' ')
             : (v) => v.replace(/\s+/g, ' ')}
           filter={colFilters[filterMenu.col]}
           sort={colSort?.col === filterMenu.col ? (colSort.asc ? 'asc' : 'desc') : null}
@@ -852,7 +852,7 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
     // 표 칸과 같은 글꼴로 잰다
     const sample = bodyRef.current.querySelector('.rv-row > span') ?? bodyRef.current
     context.font = getComputedStyle(sample).font || '12px sans-serif'
-    const show = (c: string) => (spec?.pathCells?.includes(expandCell) ? shortenHomePaths(c) : c)
+    const show = (c: string) => (spec?.pathCells?.includes(expandCell) ? shortMessage(c) : c)
     let widest = 0
     for (const row of rows) widest = Math.max(widest, context.measureText(show(row.cells[expandCell] ?? '')).width)
     // 칸 여백(좌우 5px) · 테두리 · 반올림 여유
@@ -956,7 +956,7 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
                     className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}`}
                     title={c}
                   >
-                    {i === spec.timeCell ? formatWall(row.time) || c : spec.pathCells?.includes(i) ? shortenHomePaths(c) : c}
+                    {i === spec.timeCell ? formatWall(row.time) || c : spec.pathCells?.includes(i) ? shortMessage(c) : c}
                   </span>
                 )
               }) : (

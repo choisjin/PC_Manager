@@ -5096,8 +5096,10 @@ body.rv-open .pip { display: none; }
 /* 머리글: 가로 스크롤은 본문을 따라감 · [전체 보기] 단추 (RFW Message) */
 .rv-head-scroll { flex: none; overflow: hidden; }
 .rv-table.fixed .rv-row-head > .rv-colhead-wrap { display: flex; align-items: stretch; gap: 0; padding: 0; }
-.rv-colhead-wrap > .rv-colhead { flex: 1; min-width: 0; }
-.rv-colhead-expand { flex: none; width: 24px; padding: 0; font: inherit; font-size: 13px; color: var(--muted); background: none; border: 0; border-left: 1px solid var(--border); cursor: pointer; }
+/* 열이 아주 넓어져도 거르기(▾)·넓히기 단추는 글자 바로 옆에 */
+.rv-table.fixed .rv-colhead-wrap > .rv-colhead { flex: 0 1 auto; width: auto; min-width: 0; }
+.rv-colhead-wrap .rv-colhead-label { flex: 0 1 auto; }
+.rv-colhead-expand { flex: none; align-self: center; width: 22px; height: 22px; margin-left: 2px; padding: 0; font: inherit; font-size: 13px; line-height: 1; color: var(--muted); background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
 .rv-colhead-expand:hover { background: var(--hover); color: var(--text); }
 .rv-colhead-expand.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .rv-colhead.center .rv-colhead-label { flex: 0 1 auto; }

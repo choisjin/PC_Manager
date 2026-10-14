@@ -1065,6 +1065,7 @@ const EXACT: Record<string, string> = {
 }
 
 const TEMPLATES: [string, string][] = [
+  ["{0} (값 {1}개)", "{0} ({1} values)"],
   ["APMS 계정으로 자동 로그인하지 못했습니다: {0}", "Couldn't sign in automatically with the APMS account: {0}"],
   ["RemoteKit 에 '{0}' 프로젝트가 없습니다. [관리]에서 같은 이름으로 등록하거나 직접 로그인하세요.", "RemoteKit has no '{0}' project. Register it with the same name in [Manage], or sign in directly."],
   ["Alt+Tab·Win 키를 직접 누르려면 HTTPS로 접속하세요: {0} (인증서 경고가 뜨면 Setting › 'PC 추가 · 인증서'의 인증서 설치 도구를 한 번 실행). 지금은 위 아이콘으로 보낼 수 있습니다.", "To press Alt+Tab·Win keys directly, connect over HTTPS: {0} (if a certificate warning appears, run the certificate installer from Setting › 'Add PC · Certificate' once). For now, you can send them with the icons above."],
