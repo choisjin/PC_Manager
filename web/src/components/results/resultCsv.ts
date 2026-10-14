@@ -73,36 +73,122 @@ export interface TableSpec {
   statusCells: number[]
   alertCells: number[]
   timeCell: number
-  /** 줄여 보여 줄 열 (shortMessage: HTML 태그는 값만, /home/… 경로는 마지막 이름만, HTTP 요청·응답 로그는 앞 50자). 전체는 마우스를 올리면 */
+  /** 핵심만 한 줄로 줄여 보여 줄 열 (shortMessage). 원래 글은 마우스를 올리면 */
   pathCells?: number[]
   /** 머리글 [전체 보기]로 내용 길이만큼 넓힐 열. expandColumns = 그때 앞 열들의 줄인 폭 */
   expandCell?: number
   expandColumns?: string
 }
 
-/** 글 속 /home/… 경로를 마지막 이름만 남긴다 (예: /home/lg/rfw/Image/IMG_X.bmp → IMG_X.bmp) */
-export const shortenHomePaths = (text: string) =>
-  text.replace(/(?:file:)?\/+home\/[^\s"'<>,()=]*/gi, (p) => p.split('/').filter(Boolean).pop() ?? p)
+// ── RFW Message 표시: 핵심만 한 줄로 (원래 글은 마우스를 올리면)
 
-// 'GET Request : url=… headers={…}' 처럼 헤더까지 길게 찍힌 HTTP 로그
+/** 글 속 절대 경로(/home/…, /usr/bin/python3, file:////…)를 마지막 이름만 남긴다. URL(http://…)은 그대로 */
+export const shortenPaths = (text: string) =>
+  text.replace(/(^|[\s"'=(\[,])(?:file:)?\/+(?:[^\s"'<>,()=/]+\/)+([^\s"'<>,()=/]*)/gi,
+    (m, lead: string, name: string) => lead + (name || m.slice(lead.length).split('/').filter(Boolean).pop() || ''))
+
+// 'GET Request : url=… headers={…} body=…' 처럼 헤더·본문까지 찍힌 HTTP 로그
 const HTTP_LOG = /^(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) (?:Request|Response)\b/i
-const HTTP_LOG_LIMIT = 50
+const MESSAGE_LIMIT = 140
+const BLOCK_LIMIT = 60
 
-/** 글 속 HTML 태그를 걷어 값만 남긴다: <img src="A.bmp" style="…"> → A.bmp, 그 밖의 태그·style·script는 지움 */
+// HTML 태그로 볼 이름 ('<result object with rc 0>' 같은 글은 태그가 아님)
+const HTML_TAG = /<\/?(?:a|b|i|u|s|p|br|hr|img|div|span|font|center|small|big|strong|em|pre|code|sub|sup|table|thead|tbody|tr|td|th|ul|ol|li|h[1-6]|html|head|body|title|meta|link)\b[^>]*>/gi
+
+/** 글 속 HTML 태그를 걷어 값만 남긴다: <img src="A.bmp" style="…"> → A.bmp, 그 밖의 태그·style·script·주석은 지움 */
 export function stripHtml(text: string) {
-  if (!/<\/?[a-z]/i.test(text)) return text
+  if (!/<[!/a-z]/i.test(text)) return text
   return text
     .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->|<!doctype[^>]*>/gi, ' ')
     .replace(/<img\b[^>]*?\bsrc\s*=\s*(["']?)([^"'\s>]+)\1[^>]*>/gi, ' $2 ')
-    .replace(/<\/?[a-z][^>]*>/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
+    .replace(HTML_TAG, ' ')
 }
 
-/** RFW Message 표시용: HTML 태그는 값만, /home/… 경로는 마지막 이름만, HTTP 요청·응답 로그는 앞 50자만 */
+/**
+ * 여러 줄로 찍힌 구조체(Name { a: 1,\n b: Inner { … } })는 한 줄로: 안쪽 블록은 {…}, 길면 앞 필드만
+ * 예: VehicleHmiState { value_state: VALUE_STATE_VALID, hmi_mode: HMI_MODE_T_MISSION, … }
+ */
+function flattenBlocks(text: string) {
+  let out = ''
+  let depth = 0
+  let block = ''
+  // ${var} · @{list} · &{dict} (Robot Framework 변수)는 글자 그대로
+  const literal: boolean[] = []
+  let prev = ''
+  const put = (ch: string) => {
+    if (depth === 0) out += ch
+    else if (depth === 1) block += ch
+  }
+  for (const ch of text) {
+    const before = prev
+    prev = ch
+    if (ch === '{' && /[$@&%]/.test(before)) {
+      literal.push(true)
+      put(ch)
+      continue
+    }
+    if (ch === '}' && literal.length && literal[literal.length - 1]) {
+      literal.pop()
+      put(ch)
+      continue
+    }
+    if (ch === '{') {
+      literal.push(false)
+      depth++
+      if (depth === 1) block = ''
+      else if (depth === 2) block += '{…}'
+      continue
+    }
+    if (ch === '}' && depth > 0) {
+      literal.pop()
+      depth--
+      if (depth === 0) {
+        let inner = block.replace(/\s+/g, ' ').replace(/[,\s]+$/, '').trim()
+        if (inner.length > BLOCK_LIMIT) {
+          const cut = inner.lastIndexOf(', ', BLOCK_LIMIT)
+          inner = (cut > 0 ? inner.slice(0, cut + 1) : inner.slice(0, BLOCK_LIMIT)) + ' …'
+        }
+        out += inner ? `{ ${inner} }` : '{}'
+      }
+      continue
+    }
+    put(ch)
+  }
+  // 닫히지 않은 블록은 그대로
+  return depth > 0 ? out + '{' + block : out
+}
+
+/** 명령줄(prog --opt 값 …): 프로그램과 파일 이름 값만 (예: python3 client.py Speed.json) */
+function shortenCommand(text: string) {
+  const at = text.search(/\s--[A-Za-z][\w-]*(?=[\s=])/)
+  if (at < 0) return text
+  const files = [...text.slice(at).matchAll(/--[\w-]+[ =]("[^"]*"|'[^']*'|\S+)/g)]
+    .map((m) => m[1].replace(/^["']|["']$/g, ''))
+    .filter((v) => /\.[A-Za-z][A-Za-z0-9]{0,4}$/.test(v))
+  return files.length ? `${text.slice(0, at)} ${files.join(' ')}` : text
+}
+
+/**
+ * RFW Message 표시용: HTTP 로그는 요청·응답 줄만, HTML 태그는 값만, 구조체는 한 줄로, 줄바꿈은 ' · ',
+ * 경로는 마지막 이름만, 명령줄은 프로그램 · 파일만, 그래도 길면 앞 140자
+ */
 export function shortMessage(text: string) {
-  const t = shortenHomePaths(stripHtml(text))
-  return HTTP_LOG.test(t) && t.length > HTTP_LOG_LIMIT ? t.slice(0, HTTP_LOG_LIMIT) + '…' : t
+  let t = text
+  // HTTP 로그: 헤더·본문을 떼고 한 줄로
+  if (HTTP_LOG.test(t)) t = t.replace(/\s*\b(?:headers|body)=[\s\S]*$/, '').replace(/\s+/g, ' ')
+  t = flattenBlocks(stripHtml(t))
+  // 줄마다 다듬고(빈 줄·바로 위와 같은 줄·**INFO** 표시 빼기) ' · '로 잇는다. ':'로 끝난 줄은 다음 줄과 그냥 잇기
+  let joined = ''
+  let last = ''
+  for (const raw of t.split(/\r?\n/)) {
+    const line = raw.replace(/^\s*\*\*INFO\*\*/, '').replace(/\s+/g, ' ').trim()
+    if (!line || line === last) continue
+    joined += !joined ? line : last.endsWith(':') ? ' ' + line : ' · ' + line
+    last = line
+  }
+  t = shortenCommand(shortenPaths(joined))
+  return t.length > MESSAGE_LIMIT ? t.slice(0, MESSAGE_LIMIT - 1) + '…' : t
 }
 
 // ── 바이트 → 문자열 (BOM이면 UTF-8, 아니면 UTF-8 시도 후 안 되면 CP949)
