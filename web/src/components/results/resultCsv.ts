@@ -73,7 +73,13 @@ export interface TableSpec {
   statusCells: number[]
   alertCells: number[]
   timeCell: number
+  /** 칸 안의 /home/… 경로를 마지막 이름만 보여 줄 열 (전체 경로는 마우스를 올리면) */
+  pathCells?: number[]
 }
+
+/** 글 속 /home/… 경로를 마지막 이름만 남긴다 (예: /home/lg/rfw/Image/IMG_X.bmp → IMG_X.bmp) */
+export const shortenHomePaths = (text: string) =>
+  text.replace(/(?:file:)?\/+home\/[^\s"'<>,()=]*/gi, (p) => p.split('/').filter(Boolean).pop() ?? p)
 
 // ── 바이트 → 문자열 (BOM이면 UTF-8, 아니면 UTF-8 시도 후 안 되면 CP949)
 export function decodeText(bytes: ArrayBuffer): string {
@@ -479,6 +485,7 @@ export function parseRfw(text: string): ParsedResult {
     statusCells: [4],
     alertCells: [6],
     timeCell: 0,
+    pathCells: [7],
   }
   attachRfwImages(rows, all.slice(1))
   return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_SHOWN, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table }

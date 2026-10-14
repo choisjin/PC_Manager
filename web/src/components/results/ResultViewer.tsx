@@ -4,7 +4,7 @@ import { api, type ResultSet, type ResultSetSummary } from '../../api'
 import { formatBytes } from '../../format'
 import { type ClipItem, FILES_MIME, type FilesDragPayload } from '../explorer/pcGroups'
 import {
-  type AtsImages, compareCells, formatSeconds, formatWall, type ParsedResult, parseAts, parseRfw, type TableSpec,
+  type AtsImages, compareCells, formatSeconds, formatWall, type ParsedResult, parseAts, parseRfw, shortenHomePaths, type TableSpec,
   RESULT_MODE_LABEL, type ResultMapping, type ResultMode, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
@@ -626,7 +626,9 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           y={filterMenu.y}
           title={parsed.headers[filterMenu.col]}
           values={menuValues}
-          label={filterMenu.col === parsed.table?.timeCell ? (v) => v.replace(/^\[|\]$/g, '') : (v) => v.replace(/\s+/g, ' ')}
+          label={filterMenu.col === parsed.table?.timeCell ? (v) => v.replace(/^\[|\]$/g, '')
+            : parsed.table?.pathCells?.includes(filterMenu.col) ? (v) => shortenHomePaths(v).replace(/\s+/g, ' ')
+            : (v) => v.replace(/\s+/g, ' ')}
           filter={colFilters[filterMenu.col]}
           sort={colSort?.col === filterMenu.col ? (colSort.asc ? 'asc' : 'desc') : null}
           onApply={(f) => setColFilters((all) => {
@@ -911,7 +913,7 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
                     className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}`}
                     title={c}
                   >
-                    {i === spec.timeCell ? formatWall(row.time) || c : c}
+                    {i === spec.timeCell ? formatWall(row.time) || c : spec.pathCells?.includes(i) ? shortenHomePaths(c) : c}
                   </span>
                 )
               }) : (
