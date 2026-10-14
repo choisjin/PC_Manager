@@ -391,9 +391,18 @@ internal static class RemoteSessionApp
                 // 복사한 앱이 클립보드를 쓰는 중이면 여기서 예외 → 이번 변경을 본 것으로 치지 않고 다음 폴링에서 다시 읽는다
                 // (예전에는 번호부터 기록해, 탐색기에서 파일을 복사한 직후 못 읽으면 그 복사를 놓쳤다)
                 var files = RemoteClipboard.GetFiles();
-                var text = files is { Count: > 0 } ? null : RemoteClipboard.GetText();
+                var hdropUnreadable = files is not { Count: > 0 } && RemoteClipboard.HasFiles;
+                var text = files is { Count: > 0 } || hdropUnreadable ? null : RemoteClipboard.GetText();
                 _clipPolled = true;
                 _clipSequence = sequence;
+
+                // 탐색기에서 복사한 파일인데 SYSTEM인 이 프로세스로는 목록을 못 꺼냄 → 사용자 권한 도우미로 읽는다 (입력이 막히지 않게 따로)
+                if (hdropUnreadable)
+                {
+                    if (!first)
+                        ReadFilesAsUserAndSend(sequence, ct);
+                    return;
+                }
 
                 // 복사한 파일: 경로만 알린다 (붙여넣을 때 대시보드가 서버를 거쳐 그 PC로 복사).
                 // 세션을 열 때 이미 있던 목록은 알리지 않는다 (예전에 붙여넣은 파일이 새 복사로 보이지 않게)
@@ -410,7 +419,10 @@ internal static class RemoteSessionApp
                         }
                     }
                     if (!first)
+                    {
+                        Log($"복사한 파일 {files.Count}개 알림");
                         _ = SendJsonAsync(new { type = "clipfiles", paths = files.Take(1000) }, ct);
+                    }
                     return;
                 }
 
@@ -428,6 +440,46 @@ internal static class RemoteSessionApp
             catch (Exception ex)
             {
                 Trace.WriteLine($"클립보드 폴링 실패: {ex.Message}");
+            }
+        }
+
+        /// <summary>사용자 권한 도우미로 복사한 파일 목록을 읽어 대시보드에 알린다 (그 사이 클립보드가 또 바뀌었으면 버림)</summary>
+        private void ReadFilesAsUserAndSend(uint sequence, CancellationToken ct)
+        {
+            var error = RemoteClipboard.LastFilesError;
+            _ = Task.Run(() =>
+            {
+                var files = ClipboardHandoff.ReadFilesAsUser(Process.GetCurrentProcess().SessionId, out var helperError);
+                Log($"복사한 파일 목록을 직접 못 읽음(오류 {error}) → 사용자 권한으로 읽기: " +
+                    (files is { Count: > 0 } ? $"{files.Count}개" : $"실패 ({helperError ?? "목록 없음"})"));
+                if (files is not { Count: > 0 } || ct.IsCancellationRequested)
+                    return;
+                lock (_clipLock)
+                {
+                    if (sequence != _clipSequence)
+                        return;
+                    var key = string.Join('\n', files);
+                    if (key == _lastClipFiles)
+                    {
+                        _lastClipFiles = null;
+                        return;
+                    }
+                }
+                _ = SendJsonAsync(new { type = "clipfiles", paths = files.Take(1000) }, ct);
+            }, ct);
+        }
+
+        /// <summary>창 없이 도는 프로세스라 볼 곳이 없는 진단 기록 (임시 폴더, SYSTEM이면 C:\Windows\SystemTemp)</summary>
+        private static void Log(string message)
+        {
+            try
+            {
+                File.AppendAllText(Path.Combine(Path.GetTempPath(), "PcManagerRemote.log"),
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+            }
+            catch (IOException)
+            {
+                // 기록 실패는 무시
             }
         }
 

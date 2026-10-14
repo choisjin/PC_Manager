@@ -12,6 +12,9 @@ public static class ClipboardHandoff
 {
     public const string HelperArgument = "--set-clipboard-files";
 
+    /// <summary>사용자 세션 도우미: 클립보드의 복사한 파일 목록을 읽어 파일로 (원격조작 프로세스가 SYSTEM이라 못 읽을 때)</summary>
+    public const string ReadHelperArgument = "--get-clipboard-files";
+
     /// <summary>() → 새 받을 폴더 (공용 폴더 아래, 사용자가 읽을 수 있음)</summary>
     public static string Prepare()
     {
@@ -50,6 +53,62 @@ public static class ClipboardHandoff
         {
             return "클립보드에 넣지 못했습니다: " + ex.Message;
         }
+    }
+
+    /// <summary>
+    /// 이 세션 사용자 권한으로 클립보드의 복사한 파일 목록을 읽는다. 탐색기 Ctrl+C는 지연 렌더링이라
+    /// SYSTEM으로 도는 원격조작 프로세스에서는 목록을 못 꺼내는 경우가 있어, 그때 쓴다
+    /// </summary>
+    /// <returns>파일 경로들. 못 읽었으면 null (error에 이유)</returns>
+    public static IReadOnlyList<string>? ReadFilesAsUser(int sessionId, out string? error)
+    {
+        var output = Path.Combine(SessionProcess.GetUserLocalAppDataFolder(sessionId), "Temp", $"PcManagerClip-{Guid.NewGuid():N}.txt");
+        try
+        {
+            var exit = SessionProcess.StartAsSessionUser(sessionId, Environment.ProcessPath!, $"{ReadHelperArgument} \"{output}\"", waitMilliseconds: 10_000);
+            if (exit != 0 || !File.Exists(output))
+            {
+                error = exit is null ? "도우미 시간 초과" : $"도우미 종료 코드 {exit}";
+                return null;
+            }
+            error = null;
+            return File.ReadAllLines(output, Encoding.UTF8).Where(p => p.Length > 0).ToList();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            error = ex.Message;
+            return null;
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(output);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 사용자 임시 폴더라 남아도 무방
+            }
+        }
+    }
+
+    /// <summary>사용자 세션 도우미: 클립보드의 복사한 파일 목록을 결과 파일에 쓴다 (0: 목록 있음, 3: 없음, 2: 클립보드를 못 엶)</summary>
+    public static int RunReadHelper(string outputFile)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                var files = RemoteClipboard.GetFiles();
+                File.WriteAllLines(outputFile, files ?? [], new UTF8Encoding(false));
+                return files is { Count: > 0 } ? 0 : 3;
+            }
+            catch (ClipboardBusyException)
+            {
+                Thread.Sleep(100);
+            }
+        }
+        return 2;
     }
 
     /// <summary>사용자 세션 도우미: 목록 파일의 경로들을 클립보드에 넣고 끝낸다 (넣은 내용은 프로세스가 끝나도 남는다)</summary>

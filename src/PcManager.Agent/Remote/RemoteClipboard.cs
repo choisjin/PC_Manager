@@ -101,6 +101,12 @@ internal static class RemoteClipboard
     /// <summary>클립보드가 바뀔 때마다 늘어나는 번호 (열지 않고 변경 여부만 볼 때)</summary>
     public static uint SequenceNumber => GetClipboardSequenceNumber();
 
+    /// <summary>클립보드에 복사한 파일 목록(CF_HDROP)이 있다고 알려져 있는지 (열지 않고)</summary>
+    public static bool HasFiles => IsClipboardFormatAvailable(CF_HDROP);
+
+    /// <summary>마지막 GetFiles가 목록을 꺼내지 못한 Win32 오류 코드 (진단용)</summary>
+    public static int LastFilesError { get; private set; }
+
     /// <summary>탐색기 등에서 복사한 파일·폴더 경로 (CF_HDROP). 없으면 null</summary>
     public static IReadOnlyList<string>? GetFiles()
     {
@@ -112,7 +118,12 @@ internal static class RemoteClipboard
         {
             var handle = GetClipboardData(CF_HDROP);
             if (handle == IntPtr.Zero)
+            {
+                // 탐색기 복사는 지연 렌더링(OLE) → 붙여넣을 때 탐색기가 만들어 준다. SYSTEM에서는 여기서 실패할 수 있다
+                LastFilesError = Marshal.GetLastWin32Error();
                 return null;
+            }
+            LastFilesError = 0;
             var count = DragQueryFile(handle, 0xFFFFFFFF, null, 0);
             var files = new List<string>((int)count);
             for (uint i = 0; i < count; i++)
