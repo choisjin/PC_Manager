@@ -822,6 +822,35 @@ function AtsImageCard({ title, path, url, onPreview, empty, tools }: {
 
 // ─────────────────────────────── 스텝 표 (행이 많아 보이는 부분만 그린다)
 
+/** 선택한 칸: row = ResultRow.index, col = 열 번호 (-1 = # 열, 행 전체) */
+type CellPos = { row: number; col: number }
+
+// 앞자리 0이 없는 숫자만 엑셀이 숫자로 받게 두고, 나머지는 글자 그대로 (1/2 → 날짜, 007 → 7 같은 변환 막기)
+const PLAIN_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/
+
+/**
+ * 표 칸을 클립보드로: 엑셀에 붙이면 칸마다 들어가게 TSV와 HTML 표를 함께 넣는다.
+ * http 접속에서도 되게 navigator.clipboard 대신 copy 이벤트로
+ */
+function copyTable(lines: string[][]) {
+  const tsv = lines.map((line) => line.map((v) => (/[\t\r\n"]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)).join('\t')).join('\r\n')
+  const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const td = (v: string) => (PLAIN_NUMBER.test(v) ? `<td>${v}</td>`
+    : `<td style="mso-number-format:'\\@'">${esc(v).replace(/\r?\n/g, '<br style="mso-data-placement:same-cell">')}</td>`)
+  const html = `<html><head><meta charset="utf-8"></head><body><table>${lines.map((line) => `<tr>${line.map(td).join('')}</tr>`).join('')}</table></body></html>`
+  const onCopy = (e: ClipboardEvent) => {
+    e.preventDefault()
+    e.clipboardData?.setData('text/plain', tsv)
+    e.clipboardData?.setData('text/html', html)
+  }
+  document.addEventListener('copy', onCopy)
+  try {
+    document.execCommand('copy')
+  } finally {
+    document.removeEventListener('copy', onCopy)
+  }
+}
+
 function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, playing, follow, anchors, videoTime, onPick }: {
   /** ATS·RFW: 이 열 이름으로 행의 칸을 그대로 보여 준다 (null이면 자동 판별 공통 열) */
   headers: string[] | null
@@ -861,6 +890,118 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   const wide = expanded && canExpand && expandWidth > 0
   const [height, setHeight] = useState(400)
   const lastUserScroll = useRef(0)
+
+  // 칸 선택 (ATS·RFW): 누르고 끌면 여러 칸·행, # 열은 행 전체, Shift+누르기로 넓히기, Ctrl+A 전체, Ctrl+C 복사(엑셀에 칸마다)
+  const [sel, setSel] = useState<{ anchor: CellPos; focus: CellPos } | null>(null)
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+  const posOf = useMemo(() => new Map(rows.map((r, i) => [r.index, i])), [rows])
+  const range = useMemo(() => {
+    if (!sel || !headers) return null
+    const a = posOf.get(sel.anchor.row)
+    const f = posOf.get(sel.focus.row)
+    if (a === undefined || f === undefined) return null
+    const whole = sel.anchor.col < 0 || sel.focus.col < 0
+    return {
+      top: Math.min(a, f),
+      bottom: Math.max(a, f),
+      left: whole ? 0 : Math.min(sel.anchor.col, sel.focus.col),
+      right: whole ? headers.length - 1 : Math.max(sel.anchor.col, sel.focus.col),
+    }
+  }, [sel, posOf, headers])
+  const drag = useRef<{ x: number; y: number; col: number } | null>(null)
+  const stopDrag = useRef<(() => void) | null>(null)
+  useEffect(() => () => stopDrag.current?.(), [])
+
+  /** 끄는 중인 마우스 위치의 칸까지 선택 (표 밖이면 가장자리 칸) */
+  const dragTo = () => {
+    const d = drag.current
+    const body = bodyRef.current
+    const list = rowsRef.current
+    if (!d || !body || list.length === 0) return
+    const rect = body.getBoundingClientRect()
+    const pos = Math.max(0, Math.min(list.length - 1, Math.floor((d.y - rect.top + body.scrollTop) / ROW_HEIGHT)))
+    const hit = document.elementFromPoint(
+      Math.max(rect.left + 1, Math.min(rect.left + body.clientWidth - 1, d.x)),
+      Math.max(rect.top + 1, Math.min(rect.top + body.clientHeight - 1, d.y)),
+    )?.closest<HTMLElement>('[data-col]')
+    if (hit && body.contains(hit)) {
+      const col = Number(hit.dataset.col)
+      // 칸에서 시작했으면 # 열로 끌어도 칸 선택 그대로
+      if (col >= 0 || d.col < 0) d.col = col
+    }
+    setSel((s) => (s ? { anchor: s.anchor, focus: { row: list[pos].index, col: d.col } } : s))
+  }
+
+  const onCellDown = (e: React.MouseEvent) => {
+    const cell = (e.target as HTMLElement).closest<HTMLElement>('[data-col]')
+    const rowEl = cell?.closest<HTMLElement>('[data-pos]')
+    const row = rowEl ? rows[Number(rowEl.dataset.pos)] : undefined
+    if (e.button !== 0 || !cell || !row) return
+    // 글자 선택 대신 칸 선택 (누르기는 그대로 영상 이동)
+    e.preventDefault()
+    bodyRef.current?.focus({ preventScroll: true })
+    stopDrag.current?.()
+    const at = { row: row.index, col: Number(cell.dataset.col) }
+    const extend = e.shiftKey && !!sel && posOf.has(sel.anchor.row)
+    setSel((s) => (extend && s ? { anchor: s.anchor, focus: at } : { anchor: at, focus: at }))
+    const d = { x: e.clientX, y: e.clientY, col: extend && sel ? (sel.anchor.col < 0 ? -1 : at.col) : at.col }
+    drag.current = d
+    // 표 위·아래(옆) 밖으로 끌면 그쪽으로 스크롤하며 넓힌다
+    const timer = window.setInterval(() => {
+      const body = bodyRef.current
+      if (!body) return
+      const rect = body.getBoundingClientRect()
+      const out = (v: number, lo: number, hi: number) => (v < lo ? v - lo : v > hi ? v - hi : 0)
+      const dy = out(d.y, rect.top, rect.top + body.clientHeight)
+      const dx = out(d.x, rect.left, rect.left + body.clientWidth)
+      if (!dy && !dx) return
+      body.scrollTop += Math.max(-300, Math.min(300, dy))
+      body.scrollLeft += Math.max(-300, Math.min(300, dx))
+      lastUserScroll.current = Date.now()
+      dragTo()
+    }, 50)
+    const onMove = (ev: MouseEvent) => {
+      d.x = ev.clientX
+      d.y = ev.clientY
+      lastUserScroll.current = Date.now()
+      dragTo()
+    }
+    const stop = () => {
+      window.clearInterval(timer)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', stop)
+      drag.current = null
+      stopDrag.current = null
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', stop)
+    stopDrag.current = stop
+  }
+
+  const onTableKey = (e: React.KeyboardEvent) => {
+    if (!headers || !spec) return
+    const ctrl = e.ctrlKey || e.metaKey
+    const key = e.key.toLowerCase()
+    if (ctrl && key === 'a' && rows.length > 0) {
+      e.preventDefault()
+      e.stopPropagation()
+      setSel({ anchor: { row: rows[0].index, col: -1 }, focus: { row: rows[rows.length - 1].index, col: -1 } })
+    } else if (ctrl && key === 'c' && range) {
+      e.preventDefault()
+      e.stopPropagation()
+      copyTable(rows.slice(range.top, range.bottom + 1).map((row) => {
+        const line: string[] = []
+        for (let c = range.left; c <= range.right; c++)
+          line.push(c === spec.timeCell ? formatWall(row.time, true) || (row.cells[c] ?? '') : row.cells[c] ?? '')
+        return line
+      }))
+    } else if (e.key === 'Escape' && sel) {
+      // Esc: 선택 먼저 지우고, 한 번 더 누르면 닫기
+      e.stopPropagation()
+      setSel(null)
+    }
+  }
 
   useLayoutEffect(() => {
     const body = bodyRef.current
@@ -935,17 +1076,26 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
           if (headRef.current) headRef.current.scrollLeft = e.currentTarget.scrollLeft
         }}
         onWheel={() => (lastUserScroll.current = Date.now())}
+        onMouseDown={headers && spec ? onCellDown : undefined}
+        onKeyDown={onTableKey}
+        tabIndex={headers && spec ? 0 : undefined}
       >
         <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative', ...(wide ? { minWidth: wideWidth } : null) }}>
-          {rows.slice(first, last).map((row, i) => (
+          {rows.slice(first, last).map((row, i) => {
+            const pos = first + i
+            const inRows = !!range && pos >= range.top && pos <= range.bottom
+            const isCur = (c: number) => !!sel && sel.focus.row === row.index && sel.focus.col === c
+            const cellClass = (c: number) => (inRows && c >= range!.left && c <= range!.right ? ' rv-cell-sel' : '') + (isCur(c) ? ' rv-cell-cur' : '')
+            return (
             <div
               key={row.index}
+              data-pos={pos}
               className={`rv-row${row.index === selected ? ' selected' : ''}${row.index === playing ? ' playing' : ''} tone-${statusTone(row.status) || 'none'}`}
-              style={{ position: 'absolute', top: (first + i) * ROW_HEIGHT, left: 0, right: 0, height: ROW_HEIGHT, ...grid }}
+              style={{ position: 'absolute', top: pos * ROW_HEIGHT, left: 0, right: 0, height: ROW_HEIGHT, ...grid }}
               onClick={() => onPick(row)}
               title="누르면 영상의 이 시점으로"
             >
-              <span className="muted">{anchorRows.has(row.index) ? '📍' : row.index + 1}</span>
+              <span className={`muted${inRows ? ' rv-cell-rowsel' : ''}`} data-col={headers && spec ? -1 : undefined}>{anchorRows.has(row.index) ? '📍' : row.index + 1}</span>
               {headers && spec ? row.cells.map((c, i) => {
                 const tone = statusTone(c)
                 // 결과 열은 늘 색, 알림 열(ACTION CHECK·Message Level)은 실패·경고일 때만
@@ -953,10 +1103,11 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
                 return (
                   <span
                     key={i}
-                    className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}`}
+                    data-col={i}
+                    className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}${cellClass(i)}`}
                     title={c}
                   >
-                    {i === spec.timeCell ? formatWall(row.time) || c : spec.pathCells?.includes(i) ? shortMessage(c) : c}
+                    {i === spec.timeCell ? formatWall(row.time, true) || c : spec.pathCells?.includes(i) ? shortMessage(c) : c}
                   </span>
                 )
               }) : (
@@ -971,7 +1122,8 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
               )}
               {!headers && <span className="mono muted">{videoTime(row)}</span>}
             </div>
-          ))}
+            )
+          })}
         </div>
       </div>
     </div>

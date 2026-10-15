@@ -5088,6 +5088,12 @@ body.rv-open .pip { display: none; }
 .rv-table.fixed .rv-row > * { align-self: stretch; display: block; line-height: 25px; padding: 0 5px; border-right: 1px solid var(--border); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rv-table.fixed .rv-row > *:last-child { border-right: 0; }
 .rv-table.fixed .rv-row > .rv-center { text-align: center; }
+/* 칸 선택 (끌어서 여러 칸·행, Ctrl+C 복사): 글자 선택 대신, 칸 색은 그대로 두고 위에 덮는다 */
+.rv-table.fixed .rv-table-body { user-select: none; }
+.rv-table.fixed .rv-table-body:focus { outline: none; }
+.rv-table.fixed .rv-row > .rv-cell-sel { box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--accent) 20%, transparent); }
+.rv-table.fixed .rv-row > .rv-cell-rowsel { color: var(--accent); font-weight: 600; }
+.rv-table.fixed .rv-row > .rv-cell-cur { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rv-table.fixed .rv-row-head { height: 36px; }
 .rv-table.fixed .rv-row-head > * { display: flex; align-items: center; line-height: normal; padding: 0 2px; }
 .rv-table.fixed .rv-colhead { width: 100%; height: 100%; border-radius: 0; border: 0; white-space: normal; line-height: 1.15; overflow: hidden; }

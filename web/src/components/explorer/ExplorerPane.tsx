@@ -854,6 +854,8 @@ export function ExplorerPane({
   const handleKey = useEffectEvent((e: KeyboardEvent) => {
     const t = e.target as HTMLElement | null
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+    // 결과 확인(전체 화면)이 열려 있으면 그 화면의 단축키 (표 칸 복사 Ctrl+C 등)
+    if (document.body.classList.contains('rv-open')) return
     const ctrl = e.ctrlKey || e.metaKey
     const key = e.key
     const sel = selectedEntries()

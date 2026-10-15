@@ -520,7 +520,7 @@ export function parseAts(text: string): ParsedResult {
     })
   }
   const table: TableSpec = {
-    columns: '112px 66px minmax(80px, 1fr) 64px minmax(120px, 1.8fr) 62px minmax(80px, 1.2fr)',
+    columns: '178px 66px minmax(80px, 1fr) 64px minmax(120px, 1.8fr) 62px minmax(80px, 1.2fr)',
     center: [1, ATS_ACTION_CELL, ATS_RESULT_CELL],
     statusCells: [ATS_RESULT_CELL],
     alertCells: [ATS_ACTION_CELL],
@@ -590,14 +590,14 @@ export function parseRfw(text: string): ParsedResult {
     }
   })
   const table: TableSpec = {
-    columns: '112px 52px minmax(110px, 1.4fr) minmax(60px, 0.6fr) 60px minmax(80px, 0.9fr) 62px minmax(130px, 2fr)',
+    columns: '178px 52px minmax(110px, 1.4fr) minmax(60px, 0.6fr) 60px minmax(80px, 0.9fr) 62px minmax(130px, 2fr)',
     center: [1, 4, 6],
     statusCells: [4],
     alertCells: [6],
     timeCell: 0,
     pathCells: [7],
     expandCell: 7,
-    expandColumns: '78px 30px 72px 40px 44px 48px 40px',
+    expandColumns: '178px 30px 72px 40px 44px 48px 40px',
   }
   attachRfwImages(rows, all.slice(1))
   return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_SHOWN, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table }
