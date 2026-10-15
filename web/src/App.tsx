@@ -11,6 +11,7 @@ import { StatePage } from './components/StatePage'
 import { TransfersPage } from './components/TransfersPage'
 import { TransfersPip } from './components/TransfersPip'
 import { ResultHost } from './components/results/ResultViewer'
+import { RESULT_TAB_ID } from './components/results/resultTab'
 import { UpdateDialog } from './components/UpdateDialog'
 import { PinDialog } from './components/PinDialog'
 import { pcLockStore } from './pcLocks'
@@ -252,6 +253,18 @@ export default function App() {
 
   const project = org.projects.find((p) => p.id === auth.project.id) ?? auth.project
   const selfUser = org.users.find((u) => u.id === auth.user.id) ?? auth.user
+
+  // 결과 확인 탭 (?result=…): 대시보드 대신 결과 확인만 (PIN으로 잠긴 PC 파일을 열 때 PIN 창)
+  if (RESULT_TAB_ID) {
+    return (
+      <PermsContext.Provider value={perms}>
+        <div className="app">
+          <PinDialog />
+          <ResultHost machineName={machineName} />
+        </div>
+      </PermsContext.Provider>
+    )
+  }
 
   return (
     <PermsContext.Provider value={perms}>

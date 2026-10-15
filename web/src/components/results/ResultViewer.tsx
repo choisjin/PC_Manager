@@ -16,6 +16,7 @@ import {
   type Anchor, baseSeconds, emptySync, resolveStart, rowAtTime, START_SOURCE_LABEL, type SyncState,
   toRowTime, toVideoTime, type VideoInfo, videoForRow,
 } from './sync'
+import { openResultTab, readResultTab, RESULT_TAB_ID, updateResultTab } from './resultTab'
 import { type ColFilters, ColumnFilterMenu, type ColSort } from './ColumnFilter'
 import { VideoTransport } from './VideoTransport'
 
@@ -32,13 +33,46 @@ const sourceFromSet = (set: ResultSet): Source => ({
 
 /**
  * 결과 확인 (앱 전체에 하나): 경로 지정 창 · 다 불러온 결과의 전체 화면 · 저장된 셋 · 준비 완료 알림.
- * Result(CSV)·영상·이미지를 시각으로 맞춰 본다 (ReplayKit 시나리오 상세결과 방식)
+ * Result(CSV)·영상·이미지를 시각으로 맞춰 본다 (ReplayKit 시나리오 상세결과 방식).
+ * 결과 화면은 새 브라우저 탭(?result=…)에서 연다: 대시보드 탭은 경로 지정·셋 고르기만 하고, 결과 확인 탭이 불러와 보여 준다
  */
 export function ResultHost({ machineName }: { machineName: (agentId: string) => string }) {
   const { sessions, activeId, setup, setsOpen, toasts } = useResults()
   const active = sessions.find((s) => s.id === activeId && s.state === 'ready') ?? null
   const [dialog, setDialog] = useState<Dialog>(null)
   const [preview, setPreview] = useState<string | null>(null)
+  // 결과 확인 탭: 주소의 id로 적어 둔 내용(경로·셋)을 읽어 불러오고, 다 되면 바로 연다
+  const tabId = RESULT_TAB_ID
+  const [tabError, setTabError] = useState<string | null>(null)
+  const tabStarted = useRef(false)
+  useEffect(() => {
+    if (!tabId || tabStarted.current) return
+    tabStarted.current = true
+    // 부모(App)의 effect(사용자 id 설정 등)가 먼저 돌고 나서 불러온다 (자식 effect가 먼저 실행되므로 한 틱 미룸)
+    const timer = window.setTimeout(() => {
+      const request = readResultTab(tabId)
+      if (request?.setId) {
+        api.resultSet(request.setId).then((full) => startSession(sourceFromSet(full), full), (err) => setTabError(`저장한 결과를 읽지 못했습니다: ${toMessage(err)}`))
+      } else if (request?.source) {
+        startSession(request.source)
+      } else {
+        setTabError('열 결과를 찾지 못했습니다. 대시보드에서 다시 여세요.')
+      }
+    })
+    return () => window.clearTimeout(timer)
+  }, [tabId])
+  // 다 된 결과가 있는데 보고 있는 게 없으면 바로 연다 (처음 불러왔을 때, '경로'에서 다시 열었을 때)
+  useEffect(() => {
+    if (!tabId || activeId) return
+    const ready = sessions.find((s) => s.state === 'ready' && !s.opened)
+    if (ready) openViewer(ready.id)
+  }, [tabId, sessions, activeId])
+  // 탭 제목
+  useEffect(() => {
+    if (!tabId) return
+    const s = sessions.find((x) => x.id === activeId) ?? sessions[0]
+    document.title = s ? `${sessionTitle(s)} · 결과 확인` : '결과 확인'
+  }, [tabId, sessions, activeId])
 
   // 다른 결과로 바꾸면 열린 창은 닫는다
   useEffect(() => {
@@ -68,17 +102,63 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
     return () => window.removeEventListener('keydown', onKey)
   }, [dialog, preview, setsOpen, viewing, setup])
 
+  const [setsError, setSetsError] = useState<string | null>(null)
   const openSet = async (summary: ResultSetSummary) => {
+    // 대시보드: 새 탭에서 (누른 직후 동기로 열어야 팝업 차단에 안 걸린다)
+    if (!tabId) {
+      if (!openResultTab({ setId: summary.id })) {
+        setSetsError('새 탭을 열지 못했습니다 (팝업 차단). 이 사이트의 팝업을 허용해 주세요.')
+        return
+      }
+      closeSets()
+      closeSetup()
+      return
+    }
     const full = await api.resultSet(summary.id)
     closeSets()
     closeSetup()
+    updateResultTab(tabId, { setId: full.id })
     const loaded = sessions.find((s) => s.set?.id === full.id && s.state !== 'failed')
     if (loaded?.state === 'ready') openViewer(loaded.id)
     else if (!loaded) startSession(sourceFromSet(full), full)
   }
 
+  // 결과 확인 탭에서 보고 있는 게 없을 때: 불러오는 진행·실패·다시 열기
+  const latest = sessions[0] ?? null
+  const tabPanel = tabId && !active && (
+    <div className="rv-page rv-tab">
+      <div className="rv-tab-box panel">
+        <h2>결과 확인</h2>
+        {tabError ? <p className="error">{tabError}</p> : !latest ? <p className="muted">불러오는 중…</p> : (
+          <>
+            <p>
+              <strong>{RESULT_MODE_LABEL[latest.source.mode]} · {sessionTitle(latest)}</strong>
+              <span className="muted small"> {latest.source.machineName}</span>
+            </p>
+            {latest.state === 'loading' && (
+              <>
+                <progress max={Math.max(1, latest.total)} value={latest.done} />
+                <p className="small muted">{latest.step} ({latest.done}/{latest.total})</p>
+              </>
+            )}
+            {latest.state === 'failed' && <p className="error small">{latest.error ?? '불러오지 못했습니다'}</p>}
+            {latest.state === 'ready' && <p className="small muted">준비 완료</p>}
+          </>
+        )}
+        <div className="rv-setup-actions">
+          {latest?.state === 'ready' && <button type="button" className="primary" onClick={() => openViewer(latest.id)}>열기</button>}
+          {latest?.state === 'failed' && <button type="button" onClick={() => startSession(latest.source, latest.set, latest.id)}>다시 불러오기</button>}
+          {latest && <button type="button" onClick={() => openSetup(latest.source, latest.id)}>경로 수정</button>}
+          <button type="button" onClick={openSets}>불러오기</button>
+          <button type="button" onClick={() => window.close()}>탭 닫기</button>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <>
+      {tabPanel}
       {setup && <SetupPopup key={setup.key} setup={setup} machineName={machineName} />}
       {active && createPortal(
         <div className="rv-page" role="dialog" aria-label="결과 확인">
@@ -93,14 +173,14 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
         </div>,
         document.body,
       )}
-      {setsOpen && createPortal(<SetsDialog onOpen={(s) => void openSet(s)} onClose={closeSets} />, document.body)}
+      {setsOpen && createPortal(<SetsDialog onOpen={(s) => void openSet(s)} onClose={closeSets} notice={setsError} />, document.body)}
       {preview && createPortal(
         <div className="rv-preview" onClick={() => setPreview(null)}>
           <img src={preview} alt="" />
         </div>,
         document.body,
       )}
-      {toasts.length > 0 && createPortal(
+      {toasts.length > 0 && !tabId && createPortal(
         <div className="rv-toasts">
           {toasts.map((t) => (
             <div key={t.id} className={`rv-toast panel${t.failed ? ' failed' : ''}`}>
@@ -224,7 +304,11 @@ function SetupPopup({ setup, machineName }: { setup: SetupState; machineName: (a
           items={source.imageDir ? [source.imageDir] : []} onRemove={() => setSource((s) => ({ ...s, imageDir: null }))} />
       </div>
       {warn && <p className="error small">{warn}</p>}
-      <p className="hint">'열기'를 누르면 뒤에서 모두 불러오고(영상은 필요하면 재생용으로 변환), 다 되면 알려 줍니다. 진행은 진행상황 탭에서 볼 수 있습니다.</p>
+      <p className="hint">
+        {RESULT_TAB_ID
+          ? "'열기'를 누르면 이 탭에서 모두 불러오고(영상은 필요하면 재생용으로 변환), 다 되면 바로 보여 줍니다."
+          : "'열기'를 누르면 새 탭에서 모두 불러오고(영상은 필요하면 재생용으로 변환), 다 되면 바로 보여 줍니다."}
+      </p>
       <div className="rv-setup-actions">
         <button
           type="button"
@@ -232,7 +316,14 @@ function SetupPopup({ setup, machineName }: { setup: SetupState; machineName: (a
           disabled={!source.resultPath}
           onClick={() => {
             rememberRefDir(source.agentId, source.mode, source.refDir)
-            startSession(source, null, setup.replaceId)
+            if (RESULT_TAB_ID) {
+              // 결과 확인 탭: 이 탭에서 불러온다 (F5로 다시 열면 바뀐 경로로)
+              startSession(source, null, setup.replaceId)
+              updateResultTab(RESULT_TAB_ID, { source })
+            } else if (!openResultTab({ source })) {
+              setWarn('새 탭을 열지 못했습니다 (팝업 차단). 이 사이트의 팝업을 허용해 주세요.')
+              return
+            }
             closeSetup()
           }}
         >
@@ -709,7 +800,23 @@ function ViewerHead({ session, sessions, onBack, setDialog }: {
       <span className="rv-spacer" />
       <button type="button" onClick={openSets} title="저장해 둔 결과 확인 불러오기">불러오기</button>
       <button type="button" className="primary" onClick={() => setDialog('save')} title="Result·이미지(·영상)를 서버에 저장">저장</button>
-      <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc) — 진행상황에서 다시 열 수 있습니다" onClick={closeViewer}>✕</button>
+      {RESULT_TAB_ID ? (
+        <button
+          type="button"
+          className="icon"
+          aria-label="탭 닫기"
+          title="탭 닫기 (Esc: 화면만 닫기)"
+          onClick={() => {
+            // 스크립트로 연 탭이라 닫힌다. 못 닫으면(직접 연 주소 등) 화면만 닫아 '탭 닫기' 단추가 있는 안내로
+            window.close()
+            closeViewer()
+          }}
+        >
+          ✕
+        </button>
+      ) : (
+        <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc) — 진행상황에서 다시 열 수 있습니다" onClick={closeViewer}>✕</button>
+      )}
     </header>
   )
 }
@@ -1297,9 +1404,12 @@ function SaveDialog({ source, set, config, videos, backupFiles, onSaved, onClose
   )
 }
 
-function SetsDialog({ onOpen, onClose }: { onOpen: (s: ResultSetSummary) => void; onClose: () => void }) {
+function SetsDialog({ onOpen, onClose, notice }: { onOpen: (s: ResultSetSummary) => void; onClose: () => void; notice?: string | null }) {
   const [sets, setSets] = useState<ResultSetSummary[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(notice ?? null)
+  useEffect(() => {
+    if (notice) setError(notice)
+  }, [notice])
   const load = () => api.resultSets().then(setSets, (err) => setError(toMessage(err)))
   useEffect(() => {
     void load()

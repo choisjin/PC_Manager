@@ -4882,6 +4882,12 @@ th.sortable:hover {
 .rv-mode button + button { border-left: 1px solid var(--border-strong); }
 .rv-mode button.active { background: var(--accent); color: #fff; }
 .rv-error, .rv-loading { padding: 16px; }
+/* 결과 확인 탭에서 보고 있는 게 없을 때: 불러오는 진행·실패·다시 열기 */
+.rv-tab { align-items: center; justify-content: center; z-index: 2800; } /* 경로 지정 창(2900)이 위에 보이게 */
+.rv-tab-box { width: min(520px, 92vw); padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+.rv-tab-box h2 { margin: 0 0 4px; font-size: 16px; }
+.rv-tab-box p { margin: 0; }
+.rv-tab-box progress { width: 100%; }
 .rv-setup {
   flex: 1;
   min-height: 0;
