@@ -101,6 +101,34 @@ internal static class RemoteClipboard
     /// <summary>클립보드가 바뀔 때마다 늘어나는 번호 (열지 않고 변경 여부만 볼 때)</summary>
     public static uint SequenceNumber => GetClipboardSequenceNumber();
 
+    /// <summary>진단용: 지금 클립보드에 있는 형식들 (번호 또는 등록된 이름)</summary>
+    public static string DescribeFormats()
+    {
+        if (!Open(attempts: 3))
+            return "열지 못함";
+        try
+        {
+            var names = new List<string>();
+            var buffer = new char[128];
+            for (uint format = EnumClipboardFormats(0); format != 0 && names.Count < 40; format = EnumClipboardFormats(format))
+            {
+                var length = GetClipboardFormatName(format, buffer, buffer.Length);
+                names.Add(length > 0 ? new string(buffer, 0, length) : format.ToString());
+            }
+            return string.Join(", ", names);
+        }
+        finally
+        {
+            CloseClipboard();
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint EnumClipboardFormats(uint format);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClipboardFormatName(uint format, char[] name, int maxCount);
+
     /// <summary>클립보드에 복사한 파일 목록(CF_HDROP)이 있다고 알려져 있는지 (열지 않고)</summary>
     public static bool HasFiles => IsClipboardFormatAvailable(CF_HDROP);
 

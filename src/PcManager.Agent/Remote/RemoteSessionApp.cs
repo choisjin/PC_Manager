@@ -22,6 +22,9 @@ namespace PcManager.Agent.Remote;
 /// 받는 메시지 (JSON, t 필드로 구분)
 ///   m(이동) md/mu(버튼) w(휠) kd/ku(키) combo(조합 키) text(문자열) monitor(모니터 전환) keyframe quality
 ///   clip(텍스트를 클립보드에) clipfiles(이 PC에 받아 둔 파일들을 클립보드에 — 다른 PC에서 복사한 파일 붙여넣기)
+///
+/// 클립보드 읽기는 로그인 사용자 권한 도우미(UserClipboardWatcher)가 맡는다: SYSTEM인 이 프로세스는 탐색기에서 복사한
+/// 파일 목록(OLE 지연 렌더링)을 못 읽는 경우가 있다. 도우미를 못 띄우면(로그인 전) 직접 읽는다
 /// </summary>
 internal static class RemoteSessionApp
 {
@@ -148,7 +151,12 @@ internal static class RemoteSessionApp
         private string? _lastClipFiles;
         private uint _clipSequence;
         private bool _clipPolled;
+        // 마지막으로 대시보드에 알린 복사한 파일 목록과 그때 (도우미와 직접 읽기가 겹쳐 두 번 알리지 않게)
+        private string? _lastSentFiles;
+        private long _lastSentFilesAt;
         private readonly Lock _clipLock = new();
+        // 로그인 사용자 권한으로 클립보드를 지켜보는 도우미 (null이거나 끝났으면 입력 스레드가 직접 읽는다)
+        private UserClipboardWatcher? _watcher;
         private Rectangle _monitorBounds;
         private readonly Lock _boundsLock = new();
 
@@ -176,6 +184,8 @@ internal static class RemoteSessionApp
             var input = new Thread(InputLoop) { IsBackground = true, Name = "remote-input" };
             capture.Start();
             input.Start();
+            // 클립보드는 로그인 사용자 권한 도우미가 지켜본다 (뜰 때까지는 입력 스레드가 직접 읽는다)
+            _ = Task.Run(() => _watcher = UserClipboardWatcher.Start(change => HandleClipboard(change.First, change.Files, change.Text, ct), Log), ct);
 
             try
             {
@@ -187,6 +197,7 @@ internal static class RemoteSessionApp
                 _inputQueue.CompleteAdding();
                 capture.Join(TimeSpan.FromSeconds(3));
                 input.Join(TimeSpan.FromSeconds(3));
+                _watcher?.Dispose();
             }
         }
 
@@ -348,6 +359,7 @@ internal static class RemoteSessionApp
         {
             var ct = _cts.Token;
             var lastPoll = Stopwatch.StartNew();
+            var watching = false;
             try
             {
                 while (!ct.IsCancellationRequested)
@@ -365,11 +377,18 @@ internal static class RemoteSessionApp
                         }
                     }
 
-                    // 원격 클립보드가 바뀌면 대시보드로 보낸다 (클립보드는 입력 데스크톱에 붙은 이 스레드에서만 접근 가능)
+                    // 원격 클립보드가 바뀌면 대시보드로 보낸다 (클립보드는 입력 데스크톱에 붙은 이 스레드에서만 접근 가능).
+                    // 사용자 권한 도우미가 지켜보는 동안은 직접 읽지 않는다
                     if (lastPoll.ElapsedMilliseconds >= 600)
                     {
                         lastPoll.Restart();
-                        PollClipboard(ct);
+                        var active = _watcher is { Active: true };
+                        // 도우미가 끝나 직접 읽기로 돌아오면, 그 사이 바뀐 내용은 이미 알린 것일 수 있어 새 복사로 보지 않는다
+                        if (watching && !active)
+                            _clipPolled = false;
+                        watching = active;
+                        if (!active)
+                            PollClipboard(ct);
                     }
                 }
             }
@@ -391,57 +410,40 @@ internal static class RemoteSessionApp
                 // 복사한 앱이 클립보드를 쓰는 중이면 여기서 예외 → 이번 변경을 본 것으로 치지 않고 다음 폴링에서 다시 읽는다
                 // (예전에는 번호부터 기록해, 탐색기에서 파일을 복사한 직후 못 읽으면 그 복사를 놓쳤다)
                 var files = RemoteClipboard.GetFiles();
-                var hdropUnreadable = files is not { Count: > 0 } && RemoteClipboard.HasFiles;
-                var text = files is { Count: > 0 } || hdropUnreadable ? null : RemoteClipboard.GetText();
+                var text = files is { Count: > 0 } ? null : RemoteClipboard.GetText();
                 _clipPolled = true;
                 _clipSequence = sequence;
+                if (!first)
+                {
+                    Log($"클립보드 변경 #{sequence}: 형식 [{RemoteClipboard.DescribeFormats()}], 파일 {files?.Count ?? 0}개" +
+                        (files is null && RemoteClipboard.LastFilesError != 0 ? $"(오류 {RemoteClipboard.LastFilesError})" : "") +
+                        $", 글 {text?.Length ?? 0}자");
+                }
 
-                // 탐색기에서 복사한 파일인데 SYSTEM인 이 프로세스로는 목록을 못 꺼냄 → 사용자 권한 도우미로 읽는다 (입력이 막히지 않게 따로)
-                if (hdropUnreadable)
+                // 글도 파일 목록도 못 읽음: 탐색기에서 복사한 파일은 SYSTEM인 이 프로세스에게 안 보이거나 못 꺼내는 경우가 있다
+                // → 로그인 사용자 권한 도우미로 파일 목록을 읽는다 (입력이 막히지 않게 따로)
+                if (files is not { Count: > 0 } && string.IsNullOrEmpty(text))
                 {
                     if (!first)
                         ReadFilesAsUserAndSend(sequence, ct);
                     return;
                 }
 
-                // 복사한 파일: 경로만 알린다 (붙여넣을 때 대시보드가 서버를 거쳐 그 PC로 복사).
-                // 세션을 열 때 이미 있던 목록은 알리지 않는다 (예전에 붙여넣은 파일이 새 복사로 보이지 않게)
-                if (files is { Count: > 0 })
-                {
-                    // 클립보드 변경 번호가 바뀔 때만 여기 온다. 방금 clipfiles로 넣은 목록만 건너뛴다 (같은 파일을 다시 복사하면 다시 알림)
-                    var key = string.Join('\n', files);
-                    lock (_clipLock)
-                    {
-                        if (key == _lastClipFiles)
-                        {
-                            _lastClipFiles = null;
-                            return;
-                        }
-                    }
-                    if (!first)
-                    {
-                        Log($"복사한 파일 {files.Count}개 알림");
-                        _ = SendJsonAsync(new { type = "clipfiles", paths = files.Take(1000) }, ct);
-                    }
-                    return;
-                }
-
-                if (string.IsNullOrEmpty(text) || text.Length > 256 * 1024)
-                    return;
-                lock (_clipLock)
-                {
-                    if (text == _lastClipboard)
-                        return;
-                    _lastClipboard = text;
-                }
-                // initial: 세션을 열 때 이미 있던 글 (대시보드는 이걸 새로 복사한 글로 보지 않는다)
-                _ = SendJsonAsync(new { type = "clipboard", text, initial = first }, ct);
+                HandleClipboard(first, files, text, ct);
             }
             catch (Exception ex)
             {
-                Trace.WriteLine($"클립보드 폴링 실패: {ex.Message}");
+                // 같은 변경에서 되풀이되면(클립보드를 계속 못 엶) 한 번만 기록
+                var sequence = RemoteClipboard.SequenceNumber;
+                if (sequence != _clipErrorSequence)
+                {
+                    _clipErrorSequence = sequence;
+                    Log($"클립보드 읽기 실패 #{sequence}: {ex.Message}");
+                }
             }
         }
+
+        private uint _clipErrorSequence;
 
         /// <summary>사용자 권한 도우미로 복사한 파일 목록을 읽어 대시보드에 알린다 (그 사이 클립보드가 또 바뀌었으면 버림)</summary>
         private void ReadFilesAsUserAndSend(uint sequence, CancellationToken ct)
@@ -458,15 +460,53 @@ internal static class RemoteSessionApp
                 {
                     if (sequence != _clipSequence)
                         return;
-                    var key = string.Join('\n', files);
+                }
+                HandleClipboard(first: false, files, text: null, ct);
+            }, ct);
+        }
+
+        /// <summary>
+        /// 클립보드 내용(사용자 권한 도우미 또는 직접 읽기) → 대시보드에 알린다.
+        /// 복사한 파일은 경로만 (붙여넣을 때 대시보드가 서버를 거쳐 그 PC로 복사). first: 세션을 열 때 이미 있던 내용은
+        /// 알리지 않는다 (예전에 붙여넣은 파일이 새 복사로 보이지 않게). 글은 initial 표시로 보낸다
+        /// </summary>
+        private void HandleClipboard(bool first, IReadOnlyList<string>? files, string? text, CancellationToken ct)
+        {
+            if (files is { Count: > 0 })
+            {
+                var key = string.Join('\n', files);
+                lock (_clipLock)
+                {
+                    // 방금 clipfiles로 넣은 목록만 건너뛴다 (같은 파일을 다시 복사하면 다시 알림)
                     if (key == _lastClipFiles)
                     {
                         _lastClipFiles = null;
                         return;
                     }
+                    if (first)
+                        return;
+                    // 같은 목록을 2초 안에 두 번 알리지 않는다 (도우미가 뜨는 사이 직접 읽기와 겹칠 때)
+                    var now = Environment.TickCount64;
+                    if (key == _lastSentFiles && now - _lastSentFilesAt < 2000)
+                        return;
+                    _lastSentFiles = key;
+                    _lastSentFilesAt = now;
                 }
+                Log($"복사한 파일 {files.Count}개 알림");
                 _ = SendJsonAsync(new { type = "clipfiles", paths = files.Take(1000) }, ct);
-            }, ct);
+                return;
+            }
+
+            if (string.IsNullOrEmpty(text) || text.Length > 256 * 1024)
+                return;
+            lock (_clipLock)
+            {
+                if (text == _lastClipboard)
+                    return;
+                _lastClipboard = text;
+            }
+            // initial: 세션을 열 때 이미 있던 글 (대시보드는 이걸 새로 복사한 글로 보지 않는다)
+            _ = SendJsonAsync(new { type = "clipboard", text, initial = first }, ct);
         }
 
         /// <summary>창 없이 도는 프로세스라 볼 곳이 없는 진단 기록 (임시 폴더, SYSTEM이면 C:\Windows\SystemTemp)</summary>
@@ -474,10 +514,13 @@ internal static class RemoteSessionApp
         {
             try
             {
-                File.AppendAllText(Path.Combine(Path.GetTempPath(), "PcManagerRemote.log"),
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+                // 설정 폴더(C:\ProgramData\PcManager\Agent\remote.log): 대시보드 파일 탐색기로 바로 열 수 있게. 1MB를 넘으면 새로
+                var path = Path.Combine(AgentOptions.DefaultDataDirectory, "remote.log");
+                if (File.Exists(path) && new FileInfo(path).Length > 1024 * 1024)
+                    File.Delete(path);
+                File.AppendAllText(path, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
             }
-            catch (IOException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
                 // 기록 실패는 무시
             }

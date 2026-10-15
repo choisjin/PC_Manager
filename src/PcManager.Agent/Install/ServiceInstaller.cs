@@ -132,7 +132,23 @@ internal static class ServiceInstaller
             TryDeleteDirectory(Path.Combine(temp, "PcManagerUpdate"), log);
         }
         foreach (var profile in UserProfiles())
-            TryDeleteDirectory(Path.Combine(profile, "AppData", "Local", "Temp", "PcManagerIcons"), log);
+        {
+            var temp = Path.Combine(profile, "AppData", "Local", "Temp");
+            TryDeleteDirectory(Path.Combine(temp, "PcManagerIcons"), log);
+            // 원격조작 클립보드 도우미가 남긴 파일 (감시 결과 · 읽기 결과)
+            try
+            {
+                if (Directory.Exists(temp))
+                {
+                    foreach (var file in Directory.EnumerateFiles(temp, "PcManagerClip*.*"))
+                        TryDeleteFile(file);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 남아도 무방
+            }
+        }
 
         if (removeData)
         {

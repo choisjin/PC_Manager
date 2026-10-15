@@ -34,6 +34,11 @@ internal static class Program
         if (clipReadIndex >= 0 && clipReadIndex + 1 < args.Length)
             return ClipboardHandoff.RunReadHelper(args[clipReadIndex + 1]);
 
+        // 원격조작 프로세스(SYSTEM)가 사용자 권한으로 띄우는 클립보드 감시 도우미: --watch-clipboard <결과 파일> <부모 PID>
+        var watchIndex = Array.IndexOf(args, Remote.UserClipboardWatcher.HelperArgument);
+        if (watchIndex >= 0 && watchIndex + 2 < args.Length && int.TryParse(args[watchIndex + 2], out var parentPid))
+            return Remote.UserClipboardWatcher.RunHelper(args[watchIndex + 1], parentPid);
+
         // 서비스가 사용자 세션에 띄우는 아이콘 도우미: --shell-icons <결과 파일> <확장자:크기,...>
         var iconIndex = Array.IndexOf(args, UserShellIcons.HelperArgument);
         if (iconIndex >= 0 && iconIndex + 2 < args.Length)
