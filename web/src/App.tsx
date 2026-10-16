@@ -12,6 +12,8 @@ import { TransfersPage } from './components/TransfersPage'
 import { TransfersPip } from './components/TransfersPip'
 import { ResultHost } from './components/results/ResultViewer'
 import { RESULT_TAB_ID } from './components/results/resultTab'
+import { RemoteTabHost } from './components/remote/RemoteTabHost'
+import { REMOTE_TAB_AGENT } from './components/remote/remoteTab'
 import { UpdateDialog } from './components/UpdateDialog'
 import { PinDialog } from './components/PinDialog'
 import { pcLockStore } from './pcLocks'
@@ -117,6 +119,9 @@ export default function App() {
     watchThumbnails,
     watchRun,
     subscribeTransfers,
+    fileFavorites,
+    saveFileFavorites,
+    reloadFileFavorites,
   } = dashboard
 
   const [auth, setAuth] = useState<Auth | null>(null)
@@ -218,11 +223,12 @@ export default function App() {
   useEffect(() => {
     setCurrentUser(userId)
     reloadShares()
+    reloadFileFavorites()
     // 채팅: 이 사용자의 방만 받는다
     joinChat(userId)
     // 접속 중인 사용자로 알린다 (State 화면)
     announceUser(userId)
-  }, [userId, reloadShares, joinChat, announceUser])
+  }, [userId, reloadShares, reloadFileFavorites, joinChat, announceUser])
 
   // id → 이름 해석 (PC/공유, 사용자)
   const nameById = useMemo(() => {
@@ -261,6 +267,35 @@ export default function App() {
         <div className="app">
           <PinDialog />
           <ResultHost machineName={machineName} />
+        </div>
+      </PermsContext.Provider>
+    )
+  }
+
+  // 원격조작 탭 (?remote=…): 대시보드 대신 원격조작 창만 (PIN으로 잠긴 PC면 PIN 창)
+  if (REMOTE_TAB_AGENT) {
+    return (
+      <PermsContext.Provider value={perms}>
+        <div className="app">
+          <PinDialog />
+          {perms.has('remote') ? (
+            <RemoteTabHost
+              initialAgentId={REMOTE_TAB_AGENT}
+              agents={agents}
+              pcGroups={pcGroups}
+              org={org}
+              filterProjectId={auth.project.id}
+              selfUserId={auth.user.id}
+              pcStatuses={pcStatuses}
+              remoteUsage={remoteUsage}
+              serverHostName={serverHostName}
+              clientIp={clientIp}
+              selfPc={selfPc}
+              selfAgentId={selfAgentOnlineId}
+            />
+          ) : (
+            <div className="gate muted">원격조작 권한이 없습니다.</div>
+          )}
         </div>
       </PermsContext.Provider>
     )
@@ -361,6 +396,8 @@ export default function App() {
             announcePresence={announcePresence}
             subscribeTransfers={subscribeTransfers}
             watchRun={watchRun}
+            fileFavorites={fileFavorites}
+            saveFileFavorites={saveFileFavorites}
           />
         ) : visiblePage === 'state' ? (
           <StatePage

@@ -17,6 +17,8 @@ import {
   type Org,
   type OutputLine,
   type PcFavorites,
+  type FileFavorite,
+  type FileFavorites,
   type StateLayout,
   type PcGroups,
   type Run,
@@ -112,6 +114,8 @@ export function useDashboard() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null)
   const [pcGroups, setPcGroups] = useState<PcGroups>(EMPTY_GROUPS)
   const [favorites, setFavorites] = useState<PcFavorites>({ favorites: {} })
+  // 파일 즐겨찾기 (사용자별)
+  const [fileFavorites, setFileFavoritesState] = useState<FileFavorite[]>([])
   const [shares, setShares] = useState<SharedFolder[]>([])
   const [org, setOrg] = useState<Org>({ projects: [], users: [], projectUsers: {}, agentProjects: {} })
   const [presence, setPresence] = useState<Record<string, string[]>>({})
@@ -189,6 +193,7 @@ export function useDashboard() {
     connection.on('UpdateStatusChanged', (status: UpdateStatus) => setUpdateStatus(status))
     connection.on('PcGroupsChanged', (groups: PcGroups) => setPcGroups(groups))
     connection.on('PcFavoritesChanged', (f: PcFavorites) => setFavorites(f))
+    connection.on('FileFavoritesChanged', (f: FileFavorites) => setFileFavoritesState(f.items))
     // 사용자마다 목록이 달라 서버는 '바뀜'만 알린다 → 내 목록을 다시 불러온다
     connection.on('SharesChanged', () => {
       api.shares().then((s: SharedFolders) => setShares(s.shares)).catch(() => {})
@@ -272,6 +277,7 @@ export function useDashboard() {
       // 채팅: 이 접속이 받을 사용자를 다시 알리고(재연결 후 그룹 복구) 내 방 목록을 받는다
       if (chatUserRef.current) await connection.invoke('JoinChat', null, chatUserRef.current).catch(() => {})
       const rooms = chatUserRef.current ? await api.chatRooms().catch(() => null) : null
+      const fileFavs = chatUserRef.current ? await api.fileFavorites().catch(() => null) : null
       const install = await api.installInfo().catch(() => null)
       if (disposed) return
       if (install) {
@@ -281,6 +287,7 @@ export function useDashboard() {
       if (statuses) setPcStatuses(statuses.statuses)
       if (usage) setRemoteUsage(usage.inUseBy)
       if (rooms) setChatRooms(rooms)
+      if (fileFavs) setFileFavoritesState(fileFavs.items)
       setAgents(agentList.sort(byMachineName))
       setRuns(runList)
       setJobs(jobList)
@@ -404,6 +411,19 @@ export function useDashboard() {
       })
       return next
     })
+  }, [])
+
+  // 파일 즐겨찾기 저장: 화면은 바로 바꾸고 서버에 저장 (실패하면 다시 불러옴)
+  const saveFileFavorites = useCallback((items: FileFavorite[]) => {
+    setFileFavoritesState(items)
+    api.saveFileFavorites(items).then((f) => setFileFavoritesState(f.items)).catch((err) => {
+      console.error('파일 즐겨찾기 저장 실패', err)
+      api.fileFavorites().then((f) => setFileFavoritesState(f.items)).catch(() => {})
+    })
+  }, [])
+  // 사용자를 바꾸면(로그인) 그 사용자의 파일 즐겨찾기로
+  const reloadFileFavorites = useCallback(() => {
+    api.fileFavorites().then((f) => setFileFavoritesState(f.items)).catch(() => setFileFavoritesState([]))
   }, [])
 
   // 공유 폴더 등록/삭제 (서버가 SharesChanged로 전체를 다시 알려준다)
@@ -563,6 +583,9 @@ export function useDashboard() {
     reorderShares,
     removeAgent,
     reloadShares,
+    fileFavorites,
+    saveFileFavorites,
+    reloadFileFavorites,
     org,
     orgActions,
     presence,

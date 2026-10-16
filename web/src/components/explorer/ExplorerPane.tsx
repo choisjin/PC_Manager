@@ -35,6 +35,7 @@ function loadColumns(): ColumnVisibility {
 import { fileTypeLabel, lastSep, pathSep, type PaneController, sortEntries, type SortKey, type ViewMode, type ColumnVisibility, type OptionalColumn } from './paneController'
 import { SplitCompressModal } from './SplitCompressModal'
 import { RemoteModal } from './RemoteModal'
+import { openRemoteTab } from '../remote/remoteTab'
 import { openResultSetup } from '../results/resultSessions'
 import { useCan } from '../../perms'
 import { TerminalModal } from './TerminalModal'
@@ -70,6 +71,8 @@ interface Props {
   onAddFavorite: (path: string) => void
   onRemoveFavorite: (path: string) => void
   onReorderFavorites: (paths: string[]) => void
+  /** 파일 즐겨찾기(사이드바)에 추가. 이미 있으면 false */
+  onAddFileFavorite: (path: string) => boolean
   subscribeTransfers: SubscribeTransfers
   watchRun: WatchRun
   onClose: () => void
@@ -133,6 +136,7 @@ export function ExplorerPane({
   onAddFavorite,
   onRemoveFavorite,
   onReorderFavorites,
+  onAddFileFavorite,
   subscribeTransfers,
   watchRun,
   onClose,
@@ -837,7 +841,12 @@ export function ExplorerPane({
         return
       }
       if (st?.status === 'testing' && !window.confirm(`이 PC는 '테스트 중' 상태입니다.${st.note ? ` (${st.note})` : ''}\n그래도 원격조작할까요?`)) return
-      setError(null)
+      // 원격조작 탭에서 (이미 열려 있으면 그 탭에서 PC만 바꾼다). 팝업이 막히면 이 화면에서
+      if (openRemoteTab(agentId)) {
+        setError(null)
+        return
+      }
+      setError('새 탭을 열지 못해(팝업 차단) 이 화면에서 엽니다. 이 사이트의 팝업을 허용하면 새 탭으로 열립니다.')
       setRemote(true)
     },
     upload: () => fileInputRef.current?.click(),
@@ -1031,6 +1040,17 @@ export function ExplorerPane({
       items.push({
         label: `즐겨찾기에 추가${favPaths.length > 1 ? ` (${favPaths.length})` : ''}`,
         onClick: () => favPaths.forEach(onAddFavorite),
+      })
+    }
+    // 파일 하나: 사이드바 파일 즐겨찾기 (어느 PC 것인지 함께 저장, 열면 원래 경로에 저장)
+    if (targets.length === 1 && !targets[0].isDirectory) {
+      const t = targets[0]
+      items.push({
+        label: '파일 즐겨찾기에 추가',
+        onClick: () => {
+          setError(null)
+          setNotice(onAddFileFavorite(t.fullPath) ? `'${t.name}'을(를) 파일 즐겨찾기에 추가했습니다 (왼쪽 PC 목록 아래).` : `'${t.name}'은(는) 이미 파일 즐겨찾기에 있습니다.`)
+        },
       })
     }
     if (targets.length > 0 && can('fileWrite')) {

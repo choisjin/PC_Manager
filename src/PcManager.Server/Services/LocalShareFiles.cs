@@ -42,6 +42,19 @@ public class LocalShareFiles(SharedFolderStore store, ILogger<LocalShareFiles> l
         }
     }
 
+    /// <summary>공유 폴더 안에 그 파일이 있는지 (파일 즐겨찾기를 열 수 있는지 표시)</summary>
+    public bool FileExists(SharedFolder share, string path)
+    {
+        try
+        {
+            return store.RunAs(share, () => File.Exists(ResolveWithin(share, path)));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
     public string? ReplaceFile(SharedFolder share, string path, byte[] bytes, bool backup) =>
         store.RunAs(share, () => ReplaceFileCore(share, path, bytes, backup));
 

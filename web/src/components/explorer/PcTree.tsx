@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { api, type Agent, isLinuxAgent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type SharedFolder } from '../../api'
 import { ensureUnlocked, pcLockStore, usePcLocks } from '../../pcLocks'
 import { useCan } from '../../perms'
@@ -37,9 +37,11 @@ interface Props {
   /** Browser(파일 탐색기) ↔ Remote(화면 미리보기) */
   mode: 'browser' | 'remote'
   onModeChange: (mode: 'browser' | 'remote') => void
+  /** PC 목록 아래에 붙일 내용 (파일 즐겨찾기) */
+  footer?: ReactNode
 }
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange, footer }: Props) {
   const pcLocks = usePcLocks()
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
@@ -406,6 +408,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         {agents.length === 0 && <li className="placeholder small">등록된 PC가 없습니다</li>}
       </ul>
 
+      {footer}
 
       {showAddShare && <AddShareModal onConfirm={addShare} onClose={() => setShowAddShare(false)} />}
 

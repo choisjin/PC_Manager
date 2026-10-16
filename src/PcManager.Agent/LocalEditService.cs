@@ -106,12 +106,16 @@ public class LocalEditService
         }
     }
 
-    /// <summary>이 PC의 파일을 그 자리에서 기본 프로그램으로 연다 (대시보드를 연 PC 자신의 파일).</summary>
+    /// <summary>
+    /// 파일을 그 자리에서 기본 프로그램으로 연다 (대시보드를 연 PC 자신의 파일, 또는 공유 폴더의 네트워크 경로 \\서버\…).
+    /// 네트워크 경로는 SYSTEM(컴퓨터 계정)으로는 안 보일 수 있어 있는지 확인하지 않고 사용자 권한으로 바로 연다
+    /// </summary>
     public string? LaunchInPlace(string path)
     {
         try
         {
-            if (!File.Exists(path) && !Directory.Exists(path))
+            var network = path.StartsWith(@"\\", StringComparison.Ordinal);
+            if (!network && !File.Exists(path) && !Directory.Exists(path))
                 return "파일이 없습니다.";
             Launch(path);
             return null;

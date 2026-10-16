@@ -1870,6 +1870,21 @@ tr.cut td {
   flex-direction: column;
 }
 
+/* 원격조작 탭 (?remote=…): 창을 탭 전체로 */
+.remote-dialog.remote-tab {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.remote-tab-closed { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 16px; }
+.remote-tab-box { width: min(480px, 92vw); padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+.remote-tab-box h2 { margin: 0; font-size: 16px; }
+.remote-tab-box p { margin: 0; }
+.remote-tab-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+
 .remote-dialog:fullscreen {
   width: 100vw;
   height: 100vh;
@@ -3502,6 +3517,24 @@ tr.drop-into > td,
   flex: 1;
   min-width: 0;
 }
+
+/* 파일 즐겨찾기 (PC 트리 맨 아래, 사용자별) */
+.file-fav-section {
+  flex: none;
+  max-height: 35%;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 4px 2px 2px;
+}
+.file-fav-list { flex: none; padding: 1px 0; }
+.file-fav-item { gap: 5px; cursor: pointer; align-items: center; }
+.file-fav-item.blocked { cursor: not-allowed; opacity: 0.45; }
+.file-fav-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.file-fav-source { font-size: 11px; }
+.file-fav-item .icon-mini { visibility: hidden; }
+.file-fav-item:hover .icon-mini, .file-fav-item:focus-within .icon-mini { visibility: visible; }
+.file-fav-notice { margin: 4px 4px 2px; padding: 4px 6px; border-radius: 6px; background: var(--surface2); cursor: pointer; }
+.file-fav-notice.error { color: var(--bad); }
 
 /* ===== 윈도우 11 스타일 통합 툴바 (활성 창에 적용) ===== */
 .win-toolbar {

@@ -11,6 +11,10 @@ interface Props {
   machineName: string
   userId: string | null
   onClose: () => void
+  /** 원격조작 탭: 창을 탭 전체로, agentId가 바뀌면(대시보드에서 다른 PC 선택) 그 PC로 다시 연결 */
+  tab?: boolean
+  /** PC 목록에서 다른 PC로 바꿨을 때 (원격조작 탭이 주소를 바꾼다) */
+  onAgentChange?: (agentId: string) => void
 }
 
 interface Monitor {
@@ -164,7 +168,7 @@ const KEY_RELAY_URL = 'ws://127.0.0.1:47651/keys'
 const LOCK_HINT = '키보드 잠금: Alt+Tab·Win·Alt+F4가 원격으로 전달됩니다. 종료하려면 Esc를 길게 누르거나 ⛶ 버튼을 누르세요.'
 
 /** 원격 PC 화면 보기 + 마우스/키보드 조작 (H.264 스트리밍) */
-export function RemoteModal({ agentId: initialAgentId, machineName: initialName, userId, onClose }: Props) {
+export function RemoteModal({ agentId: initialAgentId, machineName: initialName, userId, onClose, tab = false, onAgentChange }: Props) {
   // PC 목록에서 다른 PC로 바꾸면 그 PC로 다시 연결한다
   const [agentId, setAgentId] = useState(initialAgentId)
   const { pcs, userName, selfAgentId } = useContext(RemoteContext)
@@ -223,6 +227,12 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     agentIdRef.current = agentId
     pcsRef.current = pcs
   }, [agentId, pcs])
+  // 원격조작 탭: 대시보드에서 다른 PC를 고르면(새 탭 대신 이 탭을 쓴다) 그 PC로 바꾼다
+  useEffect(() => {
+    if (initialAgentId !== agentIdRef.current) applySwitch(initialAgentId)
+    // initialAgentId가 바뀔 때만
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialAgentId])
   const fileClip = useFileClipboard()
   const [pasting, setPasting] = useState<string | null>(null)
   const pendingMoveRef = useRef<{ x: number; y: number } | null>(null)
@@ -926,8 +936,14 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
       return
     }
     if (pc.status?.status === 'testing' && !window.confirm(`'${pc.name}'은(는) '테스트 중' 상태입니다.${pc.status.note ? ` (${pc.status.note})` : ''}\n그래도 원격조작할까요?`)) return
+    applySwitch(id)
+  }
+
+  // 다른 PC로 다시 연결 (검사는 부르는 쪽에서)
+  const applySwitch = (id: string) => {
     releaseKeys()
     setAgentId(id)
+    onAgentChange?.(id)
     setPipOpen(false)
     setEdgeOpen(false)
     focusStage()
@@ -996,7 +1012,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
   return (
     <dialog
       ref={dialogRef}
-      className="dialog remote-dialog"
+      className={`dialog remote-dialog${tab ? ' remote-tab' : ''}`}
       aria-label={`${machineName} 원격조작`}
       onClose={onClose}
       // Esc는 원격 PC로 보낸다 (닫기는 ✕ 버튼)
@@ -1065,7 +1081,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
           >
             <Icon name="fullscreen" size={18} />
           </button>
-          <button type="button" className="icon" aria-label="닫기" onClick={() => dialogRef.current?.close()}>
+          <button type="button" className="icon" aria-label={tab ? '탭 닫기' : '닫기'} title={tab ? '탭 닫기' : undefined} onClick={() => dialogRef.current?.close()}>
             ✕
           </button>
         </span>

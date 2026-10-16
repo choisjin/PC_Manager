@@ -2,16 +2,19 @@ import { findSelfAgentId } from '../selfAgent'
 import { ensureUnlocked } from '../pcLocks'
 import { useEffect, useMemo, useState } from 'react'
 import { useCan } from '../perms'
-import type { Agent, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder, Thumbnail } from '../api'
-import { RemoteGrid, type RemoteSection } from './RemoteGrid'
+import type { Agent, FileFavorite, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder, Thumbnail } from '../api'
+import { RemoteGrid } from './RemoteGrid'
 import { RemoteContext, type RemoteContextValue } from './remote/RemoteContext'
+import { projectAgents, remoteCandidates, remotePcList, remoteSections } from './remote/remotePcs'
 import type { SubscribeTransfers, WatchRun } from '../useDashboard'
 import { ExplorerPane, type Pane } from './explorer/ExplorerPane'
 import { ExplorerToolbar } from './explorer/ExplorerToolbar'
+import { FileFavorites } from './explorer/FileFavorites'
+import { newFileFavorite } from './explorer/fileFavorite'
 import { Icon } from './explorer/Icon'
 import type { PaneController } from './explorer/paneController'
 import { PcTree } from './explorer/PcTree'
-import { AGENT_MIME, buildTree, displayName, type FileClipboard, type FolderNode, newId } from './explorer/pcGroups'
+import { AGENT_MIME, displayName, type FileClipboard, newId } from './explorer/pcGroups'
 
 interface Props {
   agents: Agent[]
@@ -45,6 +48,9 @@ interface Props {
   announcePresence: (userId: string, agentIds: string[]) => void
   subscribeTransfers: SubscribeTransfers
   watchRun: WatchRun
+  /** 파일 즐겨찾기 (사용자별, 사이드바 PC 목록 아래) */
+  fileFavorites: FileFavorite[]
+  saveFileFavorites: (items: FileFavorite[]) => void
 }
 
 // 브라우저별 저장 (열린 창, 열/접힘 상태)
@@ -68,19 +74,10 @@ const MODE_KEY = 'explorer.mode'
 const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
-export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, clientIp, selfPc, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun }: Props) {
+export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, clientIp, selfPc, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun, fileFavorites, saveFileFavorites }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   // 선택한 프로젝트의 에이전트 + 아직 미배정 에이전트를 노출 (다른 프로젝트 전용은 숨김). 전체 보기면 모두.
-  const visibleAgents = useMemo(
-    () =>
-      filterProjectId
-        ? agents.filter((a) => {
-            const pid = org.agentProjects[a.id]
-            return !pid || pid === filterProjectId
-          })
-        : agents,
-    [agents, org.agentProjects, filterProjectId],
-  )
+  const visibleAgents = useMemo(() => projectAgents(agents, org, filterProjectId), [agents, org, filterProjectId])
   // Remote 모드에서는 서버 PC와, 지금 대시보드를 보고 있는 이 PC를 숨긴다 (자기 화면을 원격하면 화면이 무한히 겹친다).
   // Browser·파일 작업에는 그대로 둔다
   // 대시보드를 연 PC의 에이전트 ('내 PC 프로그램으로 열기'에 쓴다):
@@ -88,16 +85,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   const selfAgentId = useMemo(() => findSelfAgentId(agents, selfPc, clientIp, serverHostName), [agents, selfPc, clientIp, serverHostName])
   const selfOnline = !!selfAgentId && agents.some((a) => a.id === selfAgentId && a.online)
 
-  const remoteAgents = useMemo(
-    () =>
-      visibleAgents.filter((a) => {
-        if (serverHostName && a.machineName.toLowerCase() === serverHostName.toLowerCase()) return false
-        if (selfPc && a.machineName.toLowerCase() === selfPc.toLowerCase()) return false
-        if (clientIp && a.ipAddresses.includes(clientIp)) return false
-        return true
-      }),
-    [visibleAgents, serverHostName, clientIp, selfPc],
-  )
+  const remoteAgents = useMemo(() => remoteCandidates(visibleAgents, serverHostName, selfPc, clientIp), [visibleAgents, serverHostName, clientIp, selfPc])
   const shareById = useMemo(() => new Map(shares.map((s) => [s.id, s])), [shares])
   // 창 제목·온라인 상태: 에이전트면 별칭, 공유 폴더면 공유 이름
   const sourceName = (id: string) => {
@@ -112,6 +100,13 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   const addFavorite = (agentId: string, path: string) => {
     const current = favorites.favorites[agentId] ?? []
     if (!current.some((p) => p.toLowerCase() === path.toLowerCase())) setAgentFavorites(agentId, [...current, path])
+  }
+  /** 파일 즐겨찾기에 추가: 어느 PC(공유 폴더)의 파일인지 함께 저장한다. 이미 있으면 false */
+  const addFileFavorite = (sourceId: string, path: string) => {
+    const fav = newFileFavorite(fileFavorites, sourceId, sourceName(sourceId), shareById.has(sourceId), path)
+    if (!fav) return false
+    saveFileFavorites([...fileFavorites, fav])
+    return true
   }
   const removeFavorite = (agentId: string, path: string) =>
     setAgentFavorites(agentId, (favorites.favorites[agentId] ?? []).filter((p) => p !== path))
@@ -131,56 +126,15 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   }
   // Remote 모드 대상: 선택한 폴더(하위 포함), 없으면 전체. 폴더(그룹)별 구역으로 나눠 보여 준다
   // allSections는 선택과 무관한 전체 구역 (원격 창 빠른 전환 목록의 그룹 표시에 쓴다)
-  const { remoteTargets, allSections } = useMemo(() => {
-    // 트리와 같은 규칙: 다른 프로젝트에 배정된 폴더는 숨긴다
-    const folderVisible = (folderId: string) => {
-      const pid = org.folderProjects?.[folderId]
-      if (!pid) return true
-      if (filterProjectId) return pid === filterProjectId
-      return selfUserId ? (org.projectUsers[pid] ?? []).includes(selfUserId) : true
-    }
-    const { roots, ungrouped } = buildTree(pcGroups, remoteAgents)
-    const sections: RemoteSection[] = []
-    const walk = (n: FolderNode, path: string) => {
-      if (!folderVisible(n.folder.id)) return
-      if (n.agents.length > 0) sections.push({ key: n.folder.id, name: path, agents: n.agents })
-      for (const c of n.children) walk(c, `${path} / ${c.folder.name}`)
-    }
-    for (const r of roots) walk(r, r.folder.name)
-    if (ungrouped.length > 0) sections.push({ key: 'ungrouped', name: '미분류', agents: ungrouped })
-    const all = [...sections]
-    const whole = { remoteTargets: { name: null as string | null, sections: all }, allSections: all }
-    if (!selectedFolderId) return whole
-    const find = (nodes: FolderNode[]): FolderNode | null => {
-      for (const n of nodes) {
-        if (n.folder.id === selectedFolderId) return n
-        const c = find(n.children)
-        if (c) return c
-      }
-      return null
-    }
-    const node = find(roots)
-    if (!node) return whole
-    sections.length = 0
-    walk(node, node.folder.name)
-    return { remoteTargets: { name: node.folder.name, sections: [...sections] }, allSections: all }
-  }, [selectedFolderId, pcGroups, remoteAgents, org.folderProjects, org.projectUsers, filterProjectId, selfUserId])
+  const { targets: remoteTargets, allSections } = useMemo(
+    () => remoteSections(pcGroups, remoteAgents, org, filterProjectId, selfUserId, selectedFolderId),
+    [selectedFolderId, pcGroups, remoteAgents, org, filterProjectId, selfUserId],
+  )
 
   // 원격조작 모달의 PC 목록(빠른 전환): 그룹(폴더) 순서, 그룹 안은 별칭 순
   const remoteContext = useMemo<RemoteContextValue>(
     () => ({
-      pcs: allSections.flatMap((section) =>
-        section.agents
-          .map((a) => ({
-            id: a.id,
-            name: displayName(a, pcGroups),
-            group: section.name,
-            online: a.online,
-            status: pcStatuses[a.id] ?? null,
-            inUseBy: remoteUsage[a.id]?.userId ?? null,
-          }))
-          .sort((x, y) => x.name.localeCompare(y.name, 'ko', { numeric: true, sensitivity: 'base' })),
-      ),
+      pcs: remotePcList(allSections, pcGroups, pcStatuses, remoteUsage),
       userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
       selfAgentId: selfOnline ? selfAgentId : null,
     }),
@@ -304,6 +258,16 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         onSelectFolder={setSelectedFolderId}
         mode={mode}
         onModeChange={switchMode}
+        footer={
+          <FileFavorites
+            items={fileFavorites}
+            onSave={saveFileFavorites}
+            agents={agents}
+            shares={shares}
+            pcGroups={pcGroups}
+            selfAgentId={selfOnline ? selfAgentId : null}
+          />
+        }
       />
 
       <div className="explorer-main">
@@ -372,6 +336,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
                 onAddFavorite={(p) => addFavorite(pane.agentId, p)}
                 onRemoveFavorite={(p) => removeFavorite(pane.agentId, p)}
                 onReorderFavorites={(paths) => setAgentFavorites(pane.agentId, paths)}
+                onAddFileFavorite={(p) => addFileFavorite(pane.agentId, p)}
                 subscribeTransfers={subscribeTransfers}
                 watchRun={watchRun}
                 selfUserId={selfUserId}

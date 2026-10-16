@@ -267,6 +267,28 @@ export interface PcFavorites {
   favorites: Record<string, string[]>
 }
 
+/** 파일 즐겨찾기 하나 (사용자별). 어느 PC·공유 폴더의 파일인지 늘 함께 둔다 */
+export interface FileFavorite {
+  id: string
+  /** 에이전트 id 또는 공유 폴더 id */
+  sourceId: string
+  /** 추가할 때의 PC 이름(별칭)·공유 폴더 이름 */
+  sourceName: string
+  /** 공유 폴더 파일: 내 PC에서 네트워크 경로로 바로 연다. 아니면 내 PC 프로그램으로 열기(저장하면 원래 PC에) */
+  isShare: boolean
+  path: string
+  addedAt: string
+}
+
+export interface FileFavorites {
+  items: FileFavorite[]
+}
+
+export interface FileFavoriteAccess {
+  ok: boolean
+  reason: string | null
+}
+
 /** 서버가 직접 접근하는 공유 폴더 */
 export interface SharedFolder {
   id: string
@@ -611,6 +633,14 @@ export const api = {
   saveStateLayout: (layout: StateLayout) => request<StateLayout>('/api/state-layout', { method: 'PUT', body: JSON.stringify(layout) }),
   savePcFavorites: (favorites: PcFavorites) =>
     request<PcFavorites>('/api/pc-favorites', { method: 'PUT', body: JSON.stringify(favorites) }),
+  fileFavorites: () => request<FileFavorites>('/api/file-favorites'),
+  saveFileFavorites: (items: FileFavorite[]) =>
+    request<FileFavorites>('/api/file-favorites', { method: 'PUT', body: JSON.stringify({ items }) }),
+  /** 즐겨찾기 id → 지금 열 수 있는지 */
+  fileFavoriteAccess: () => request<Record<string, FileFavoriteAccess>>('/api/file-favorites/access', { method: 'POST' }),
+  /** 공유 폴더 파일을 내 PC에서 네트워크 경로로 바로 연다 (사본 없음) */
+  openShareDirect: (shareId: string, path: string, editorAgentId: string) =>
+    request<void>(`/api/shares/${encodeURIComponent(shareId)}/open-direct`, { method: 'POST', body: JSON.stringify({ path, editorAgentId }) }),
 
   shares: () => request<SharedFolders>('/api/shares'),
   addShare: (name: string, path: string, username?: string, password?: string) =>

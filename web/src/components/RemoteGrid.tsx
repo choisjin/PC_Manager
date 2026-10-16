@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { type Agent, PC_STATUS_LABEL, type PcStatus, type RemoteUsage, type Thumbnail } from '../api'
 import { usePcLocks } from '../pcLocks'
 import { RemoteModal } from './explorer/RemoteModal'
+import { openRemoteTab } from './remote/remoteTab'
 
 /** 그룹(폴더) 하나의 PC들. 하위 폴더는 "상위 / 하위" 이름의 별도 구역 */
 export interface RemoteSection {
@@ -69,6 +70,9 @@ export function RemoteGrid({ sections, groupName, displayName, thumbnails, watch
       return
     }
     if (st?.status === 'testing' && !window.confirm(`'${displayName(agent)}'은(는) '테스트 중' 상태입니다.${st.note ? ` (${st.note})` : ''}\n그래도 원격조작할까요?`)) return
+    // 원격조작 탭에서 (이미 열려 있으면 그 탭에서 PC만 바꾼다). 팝업이 막히면 이 화면에서
+    if (openRemoteTab(agent.id)) return
+    setNotice('새 탭을 열지 못해(팝업 차단) 이 화면에서 엽니다. 이 사이트의 팝업을 허용하면 새 탭으로 열립니다.')
     setRemote(agent)
   }
 

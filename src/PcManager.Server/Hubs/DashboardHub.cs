@@ -18,6 +18,8 @@ public interface IDashboardClient
     Task UpdateStatusChanged(UpdateStatusView status);
     Task PcGroupsChanged(PcGroupsView groups);
     Task PcFavoritesChanged(PcFavoritesView favorites);
+    /// <summary>파일 즐겨찾기가 바뀜 (그 사용자에게만)</summary>
+    Task FileFavoritesChanged(FileFavoritesView favorites);
     Task SharesChanged(SharedFoldersView shares);
     Task OrgChanged(OrgView org);
     Task PresenceChanged(IReadOnlyDictionary<string, IReadOnlyList<string>> viewers);
