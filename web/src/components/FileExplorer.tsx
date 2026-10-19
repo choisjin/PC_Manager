@@ -258,7 +258,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
         onSelectFolder={setSelectedFolderId}
         mode={mode}
         onModeChange={switchMode}
-        footer={
+        fileFavorites={
           <FileFavorites
             items={fileFavorites}
             onSave={saveFileFavorites}

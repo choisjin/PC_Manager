@@ -25,7 +25,7 @@ interface Props {
 }
 
 /**
- * 사이드바 PC 목록 아래 파일 즐겨찾기 (사용자별).
+ * 사이드바 PC 목록 위 '파일 즐겨찾기' 탭 (사용자별, 공유 서버 탭 옆).
  * 공유 폴더 파일은 내 PC에서 네트워크 경로로 바로 열고, 테스트 PC 파일은 내 PC 프로그램으로 열어 저장하면 원래 PC에 저장된다.
  * PC가 꺼졌거나 파일이 없어 열 수 없으면 흐리게 두고 누를 수 없다
  */
@@ -141,9 +141,6 @@ export function FileFavorites({ items, onSave, agents, shares, pcGroups, selfAge
 
   return (
     <div className="file-fav-section">
-      <div className="share-head">
-        <span className="pane-side-title">파일 즐겨찾기</span>
-      </div>
       <ul className="tree-root file-fav-list">
         {items.map((fav) => {
           const reason = blockedReason(fav)

@@ -3503,6 +3503,35 @@ tr.drop-into > td,
   padding: 1px 3px;
 }
 
+/* 공유 서버 / 파일 즐겨찾기 탭 */
+.side-tabs {
+  display: inline-flex;
+  gap: 2px;
+  min-width: 0;
+}
+
+.side-tabs button {
+  padding: 1px 4px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+}
+
+.side-tabs button:hover {
+  color: var(--text);
+  background: none;
+}
+
+.side-tabs button.active,
+.side-tabs button.active:hover {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
 .share-list {
   flex: none;
   padding: 1px 0;
@@ -3519,13 +3548,6 @@ tr.drop-into > td,
 }
 
 /* 파일 즐겨찾기 (PC 트리 맨 아래, 사용자별) */
-.file-fav-section {
-  flex: none;
-  max-height: 35%;
-  overflow: auto;
-  border-top: 1px solid var(--border);
-  padding: 4px 2px 2px;
-}
 .file-fav-list { flex: none; padding: 1px 0; }
 .file-fav-item { gap: 5px; cursor: pointer; align-items: center; }
 .file-fav-item.blocked { cursor: not-allowed; opacity: 0.45; }

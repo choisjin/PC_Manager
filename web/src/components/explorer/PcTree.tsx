@@ -37,11 +37,14 @@ interface Props {
   /** Browser(파일 탐색기) ↔ Remote(화면 미리보기) */
   mode: 'browser' | 'remote'
   onModeChange: (mode: 'browser' | 'remote') => void
-  /** PC 목록 아래에 붙일 내용 (파일 즐겨찾기) */
-  footer?: ReactNode
+  /** 공유 서버 옆 탭에 보일 내용 (파일 즐겨찾기) */
+  fileFavorites?: ReactNode
 }
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange, footer }: Props) {
+type SideTab = 'shares' | 'favorites'
+const SIDE_TAB_KEY = 'pcm.tree.sideTab'
+
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange, fileFavorites }: Props) {
   const pcLocks = usePcLocks()
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
@@ -91,6 +94,22 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
     return selfUserId ? (org.projectUsers[pid] ?? []).includes(selfUserId) : true
   }
   const [showAddShare, setShowAddShare] = useState(false)
+  // PC 목록 위: 공유 서버 / 파일 즐겨찾기 탭 (마지막에 본 탭을 기억)
+  const [sideTab, setSideTabState] = useState<SideTab>(() => {
+    try {
+      return localStorage.getItem(SIDE_TAB_KEY) === 'favorites' ? 'favorites' : 'shares'
+    } catch {
+      return 'shares'
+    }
+  })
+  const setSideTab = (tab: SideTab) => {
+    setSideTabState(tab)
+    try {
+      localStorage.setItem(SIDE_TAB_KEY, tab)
+    } catch {
+      // 저장 못 해도 탭 전환은 된다
+    }
+  }
   const [hover, setHover] = useState<{ agentId: string; x: number; y: number } | null>(null)
 
   const onlineCount = agents.filter((a) => a.online).length
@@ -321,10 +340,19 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
 
       <div className="share-section">
         <div className="share-head">
-          <span className="pane-side-title">공유 서버</span>
+          <span className="side-tabs" role="tablist" aria-label="공유 서버 / 파일 즐겨찾기">
+            <button type="button" role="tab" aria-selected={sideTab === 'shares'} className={sideTab === 'shares' ? 'active' : ''} onClick={() => setSideTab('shares')}>
+              공유 서버
+            </button>
+            <button type="button" role="tab" aria-selected={sideTab === 'favorites'} className={sideTab === 'favorites' ? 'active' : ''} onClick={() => setSideTab('favorites')}>
+              파일 즐겨찾기
+            </button>
+          </span>
+          {/* 탭을 바꿔도 머리 높이가 그대로이게 자리는 남긴다 */}
           <button
             type="button"
             className="small-btn"
+            style={sideTab === 'shares' ? undefined : { visibility: 'hidden' }}
             title={selfUserId ? '공유 폴더 등록 (내 목록에만 저장)' : '사용자를 선택(로그인)해야 공유 폴더를 등록할 수 있습니다'}
             disabled={!selfUserId}
             onClick={() => setShowAddShare(true)}
@@ -332,6 +360,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
             ＋
           </button>
         </div>
+        {sideTab === 'favorites' ? fileFavorites : (
         <ul className="tree-root share-list">
           {shares.length === 0 && (
             <li className="placeholder small">{selfUserId ? '등록된 공유 폴더가 없습니다' : '사용자를 선택하면 내 공유 폴더가 보입니다'}</li>
@@ -386,6 +415,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
             </li>
           ))}
         </ul>
+        )}
       </div>
 
       <ul className="tree-root">
@@ -407,8 +437,6 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
 
         {agents.length === 0 && <li className="placeholder small">등록된 PC가 없습니다</li>}
       </ul>
-
-      {footer}
 
       {showAddShare && <AddShareModal onConfirm={addShare} onClose={() => setShowAddShare(false)} />}
 
