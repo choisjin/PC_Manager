@@ -1,10 +1,11 @@
-import { useState } from 'react'
-import { api, type Agent, type Org, type OrgUser, type PcGroups } from '../api'
+import { useEffect, useState } from 'react'
+import { api, type Agent, type InstallInfo, type Org, type OrgUser, type PcGroups } from '../api'
 import { FEATURES } from '../perms'
 import { useLang } from '../i18n/useLang'
 import { AddAgentDialog } from './AddAgentDialog'
 import { EditFolderSection } from './EditFolderSection'
-import { displayName } from './explorer/pcGroups'
+import { copyText, displayName } from './explorer/pcGroups'
+import { projectAgents } from './remote/remotePcs'
 
 interface Props {
   org: Org
@@ -29,7 +30,7 @@ const formatLogin = (iso?: string | null) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-/** Setting 페이지: (관리자) 인원 권한 · 프로젝트 구성 · 관리자 비밀번호, (모두) PC 추가·인증서 · 편집 폴더 */
+/** Setting 페이지: (관리자) 인원 권한 · 프로젝트 구성 · 에이전트 서버 주소 · 관리자 비밀번호, (모두) PC 추가 · HTTPS 인증서 · 편집 폴더 */
 export function SettingsPage({ org, agents, pcGroups, selfAgentId, token, projectId, isAdmin, noPerms }: Props) {
   const [addingPc, setAddingPc] = useState(false)
 
@@ -45,23 +46,22 @@ export function SettingsPage({ org, agents, pcGroups, selfAgentId, token, projec
         <>
           <PermissionSection org={org} token={token} projectId={projectId} />
           <ProjectSection org={org} agents={agents} pcGroups={pcGroups} projectId={projectId} />
+          <AgentServerSection org={org} agents={agents} pcGroups={pcGroups} token={token} projectId={projectId} />
           <AdminPasswordSection token={token} />
         </>
       )}
-      {/* PC 추가 · 인증서 */}
+      {/* PC 추가 */}
       <section className="panel settings-section">
         <div className="settings-section-head">
-          <h2>PC 추가 · 인증서</h2>
+          <h2>PC 추가</h2>
           <button type="button" className="primary" onClick={() => setAddingPc(true)}>
             열기
           </button>
         </div>
-        <p className="muted small">
-          테스트 PC에 설치할 에이전트 설치 파일과 서버 주소, 그리고 이 대시보드를 HTTPS로 경고 없이 열기 위한 인증서 설치 도구가
-          있습니다. 인증서 설치 도구는 대시보드를 여는 PC마다 한 번 실행합니다 (에이전트가 설치된 PC는 자동).
-        </p>
+        <p className="muted small">테스트 PC에 설치할 에이전트 설치 파일(Windows·Linux)과 런처에 입력할 서버 주소가 있습니다.</p>
       </section>
       {addingPc && <AddAgentDialog onClose={() => setAddingPc(false)} />}
+      <CertificateSection />
       {/* 편집 폴더 */}
       <EditFolderSection
         selfAgentId={selfAgentId}
@@ -278,6 +278,191 @@ function AdminPasswordSection({ token }: { token: string }) {
       </form>
       {message && <p className={message.ok ? 'muted small' : 'output-error'}>{message.text}</p>}
       <p className="muted small">처음 비밀번호는 admin입니다. 로그인 화면에서 계정 ID에 admin을 넣으면 이 프로젝트 관리자로 들어옵니다.</p>
+    </section>
+  )
+}
+
+/** HTTPS 인증서: 대시보드를 HTTPS로 경고 없이 열도록 이 PC에 서버 인증서를 신뢰 설치 (서버 PC·에이전트 PC는 자동) */
+function CertificateSection() {
+  const [info, setInfo] = useState<InstallInfo | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    api
+      .installInfo()
+      .then(setInfo)
+      .catch((err) => setError(toMessage(err)))
+  }, [])
+
+  return (
+    <section className="panel settings-section">
+      <div className="settings-section-head">
+        <h2>HTTPS 인증서</h2>
+        {info?.certificateInstallerUrl && (
+          <a className="button primary" href={info.certificateInstallerUrl} download>
+            인증서 설치 도구 받기
+          </a>
+        )}
+      </div>
+      {error && <div className="output-error">{error}</div>}
+      {info &&
+        (info.certificateInstallerUrl ? (
+          <>
+            <ol className="install-steps">
+              <li>[인증서 설치 도구 받기]로 받은 파일을 더블클릭하고, 관리자 승인 창에서 [예]를 누릅니다.</li>
+              <li>브라우저를 모두 닫았다가 다시 열고 아래 HTTPS 주소로 접속합니다.</li>
+            </ol>
+            {info.httpsUrl && (
+              <div className="server-url-row">
+                <input className="mono" readOnly aria-label="대시보드 HTTPS 주소" value={info.httpsUrl} onFocus={(e) => e.currentTarget.select()} />
+                <button type="button" onClick={() => void copyText(info.httpsUrl!)}>
+                  복사
+                </button>
+                <a className="button" href={info.httpsUrl}>
+                  열기
+                </a>
+              </div>
+            )}
+            <p className="muted small">
+              {location.protocol === 'https:' ? '지금 HTTPS로 열려 있습니다.' : '지금은 HTTP로 열려 있습니다.'}{' '}
+              원격조작의 키보드 잠금·저지연 화면은 HTTPS에서만 됩니다. 서버 PC와 에이전트가 설치된 PC는 인증서가 자동으로 신뢰되므로, 그 밖에
+              대시보드를 여는 PC에서 한 번만 실행하면 됩니다.
+            </p>
+            {info.certificateDownloadUrl && (
+              <p className="muted small">
+                도구를 쓸 수 없으면 <a href={info.certificateDownloadUrl} download>인증서 파일(.cer)</a>을 받아 '신뢰할 수 있는 루트 인증 기관'에 직접 넣으세요.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="muted small">
+            이 서버에는 HTTPS 인증서가 없습니다. 설치형 서버(설치 스크립트)이거나 서버 런처에서 HTTPS 포트를 켜면 인증서가 만들어집니다.
+          </p>
+        ))}
+    </section>
+  )
+}
+
+/** 서버 주소를 바꿀 수 있는 에이전트 최소 버전 */
+const SERVER_MOVE_MIN_VERSION = '0.8.81'
+
+const versionBelow = (a: string, b: string) => {
+  const pa = a.split('.').map(Number)
+  const pb = b.split('.').map(Number)
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0)
+  }
+  return false
+}
+
+/**
+ * 에이전트 서버 주소 일괄 변경 (관리자): 서버를 옮길 때 고른 PC의 에이전트를 새 서버로 보낸다.
+ * 각 PC가 새 서버에 먼저 접속해 보고, 안 되면 바꾸지 않는다 (틀린 주소로 PC를 잃지 않게).
+ */
+function AgentServerSection({ org, agents, pcGroups, token, projectId }: { org: Org; agents: Agent[]; pcGroups: PcGroups; token: string; projectId: string }) {
+  const [url, setUrl] = useState('')
+  const [current, setCurrent] = useState<string | null>(null)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [results, setResults] = useState<Record<string, { ok: boolean; error: string | null }>>({})
+
+  useEffect(() => {
+    api
+      .installInfo()
+      .then((info) => setCurrent(info.serverUrl))
+      .catch(() => {})
+  }, [])
+
+  const list = projectAgents(agents, org, projectId)
+    .map((a) => ({ agent: a, name: displayName(a, pcGroups) }))
+    .sort((x, y) => x.name.localeCompare(y.name, 'ko'))
+  const ready = list.filter(({ agent }) => agent.online && !versionBelow(agent.agentVersion, SERVER_MOVE_MIN_VERSION))
+  const chosen = ready.filter(({ agent }) => picked.has(agent.id))
+  const allPicked = ready.length > 0 && chosen.length === ready.length
+
+  const toggle = (id: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const submit = async () => {
+    const target = url.trim()
+    if (!target || chosen.length === 0) return
+    if (!window.confirm(`PC ${chosen.length}대의 에이전트 서버 주소를 ${target}(으)로 바꿉니다.\n바뀐 PC는 이 서버에서 오프라인이 되고 새 서버에 나타납니다. 계속할까요?`)) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await api.setAgentsServerUrl(
+        token,
+        target,
+        chosen.map(({ agent }) => agent.id),
+      )
+      setResults((prev) => ({ ...prev, ...Object.fromEntries(res.map((r) => [r.agentId, { ok: r.ok, error: r.error }])) }))
+      setPicked(new Set())
+    } catch (err) {
+      setError(toMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const stateOf = (agent: Agent) => {
+    const result = results[agent.id]
+    if (result) return result.ok ? <span className="as-ok">옮김 ✓</span> : <span className="as-bad">{result.error}</span>
+    if (!agent.online) return <span className="muted">오프라인</span>
+    if (versionBelow(agent.agentVersion, SERVER_MOVE_MIN_VERSION)) return <span className="as-bad">에이전트 업데이트 필요</span>
+    return null
+  }
+
+  return (
+    <section className="panel settings-section">
+      <div className="settings-section-head">
+        <h2>에이전트 서버 주소 일괄 변경</h2>
+      </div>
+      <div className="server-url-row">
+        <input
+          className="mono"
+          aria-label="새 서버 주소"
+          placeholder={`새 서버 주소 (예: http://192.168.0.20:5063)${current ? ` · 지금: ${current}` : ''}`}
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+        <button type="button" className="primary" disabled={busy || !url.trim() || chosen.length === 0} onClick={() => void submit()}>
+          {busy ? '바꾸는 중…' : `${chosen.length}대 변경`}
+        </button>
+      </div>
+      {error && <div className="output-error">{error}</div>}
+      {list.length === 0 ? (
+        <p className="muted small">PC가 없습니다.</p>
+      ) : (
+        <div className="as-list">
+          <label className="as-row as-all">
+            <input type="checkbox" checked={allPicked} disabled={ready.length === 0} onChange={() => setPicked(allPicked ? new Set() : new Set(ready.map(({ agent }) => agent.id)))} />
+            <span>{`온라인 PC 모두 (${ready.length})`}</span>
+          </label>
+          {list.map(({ agent, name }) => {
+            const able = ready.some((r) => r.agent.id === agent.id)
+            return (
+              <label key={agent.id} className={`as-row${able ? '' : ' off'}`}>
+                <input type="checkbox" checked={able && picked.has(agent.id)} disabled={!able} onChange={() => toggle(agent.id)} />
+                <span className="as-name" translate="no">
+                  {name}
+                </span>
+                <span className="muted small mono">{agent.agentVersion}</span>
+                <span className="as-state small">{stateOf(agent)}</span>
+              </label>
+            )
+          })}
+        </div>
+      )}
+      <p className="muted small">
+        서버를 다른 PC로 옮길 때 씁니다. 고른 PC마다 새 서버에 먼저 접속해 보고, 연결되면 그 서버로 옮겨 가고 안 되면 그대로 둡니다. 옛
+        버전 에이전트는 먼저 업데이트하고, 오프라인 PC는 그 PC의 런처에서 바꿉니다.
+      </p>
     </section>
   )
 }

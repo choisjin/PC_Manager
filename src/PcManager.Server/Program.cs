@@ -205,6 +205,7 @@ app.MapInstallApi(serverOptions);
 app.MapLauncherApi();
 app.MapResultSetApi();
 app.MapResultProfileApi();
+app.MapAgentServerApi();
 
 // 설치 파일은 크므로 요청 크기 제한과 무관하게 스트리밍 (다운로드만, 업로드 아님)
 

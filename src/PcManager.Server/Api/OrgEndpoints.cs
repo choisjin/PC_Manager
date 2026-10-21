@@ -277,7 +277,7 @@ public static partial class OrgEndpoints
         OrgStore.PermsOf(view, user, project.Id),
         remember ? auth.IssueRemember(user.Id, project.Id) : null);
 
-    private static (OrgView View, OrgUser? User, Project? Project) Current(HttpContext context, OrgStore store, AuthStore auth)
+    internal static (OrgView View, OrgUser? User, Project? Project) Current(HttpContext context, OrgStore store, AuthStore auth)
     {
         var view = store.Load();
         var session = auth.GetSession(context);
@@ -298,7 +298,7 @@ public static partial class OrgEndpoints
         }
     }
 
-    private static IResult Error(int status, string message) => Results.Json(new { error = message }, statusCode: status);
+    internal static IResult Error(int status, string message) => Results.Json(new { error = message }, statusCode: status);
 
     private static async Task<IResult> Run(IHubContext<DashboardHub, IDashboardClient> hub, Func<OrgView> action)
     {

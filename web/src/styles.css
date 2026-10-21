@@ -5662,3 +5662,15 @@ body.rv-open .pip { display: none; }
   .rp-run { grid-template-columns: 70px minmax(0, 1fr) 60px; }
   .rp-run > :nth-child(3), .rp-run > :nth-child(5) { display: none; }
 }
+
+/* Setting › 에이전트 서버 주소 일괄 변경 */
+.as-list { max-height: 320px; overflow: auto; margin: 8px 0; border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+.as-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+.as-row:hover { background: var(--hover); }
+.as-row.off { cursor: default; }
+.as-row.off .as-name { color: var(--muted); }
+.as-all { font-weight: 600; border-bottom: 1px solid var(--border); border-radius: 0; margin-bottom: 2px; }
+.as-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-state { flex: none; max-width: 50%; text-align: right; }
+.as-ok { color: var(--ok); font-weight: 600; }
+.as-bad { color: var(--bad); }

@@ -300,6 +300,9 @@ public static class AgentClientMethods
     /// <summary>() → string? 오류. Linux: 로그인 관리자(GDM)의 Wayland를 끄고(Xorg 사용) 재부팅한다 (원격조작은 X11에서만 됨)</summary>
     public const string SwitchToX11 = "SwitchToX11";
 
+    /// <summary>string serverUrl → string? 오류. 새 서버가 응답하면 잠시 뒤 서버 주소를 바꿔 그 서버로 다시 연결한다 (설정 '서버 주소 일괄 변경')</summary>
+    public const string SetServerUrl = "SetServerUrl";
+
     /// <summary>(string path, double startSec, double endSec) → VideoTrimResult. 영상 구간을 ffmpeg로 잘라 원래 영상 폴더에 저장 (결과 확인 도구)</summary>
     public const string TrimVideo = "TrimVideo";
     /// <summary>(string path, bool convert) → VideoPrepareResult. 영상 길이·fps를 읽고, convert면 탐색 가능한 재생용 사본을 만든다 (캐시)</summary>

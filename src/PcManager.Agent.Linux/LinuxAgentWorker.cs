@@ -171,6 +171,7 @@ public class LinuxAgentWorker(
         connection.On<string[], string?>(AgentClientMethods.SetClipboardFiles, paths => Task.Run(() => LinuxClipboardHandoff.SetFiles(paths)));
 
         connection.On<string?>(nameof(IAgentClient.UpdateAgent), _ => updater.Start());
+        connection.On<string, string?>(AgentClientMethods.SetServerUrl, settingsStore.MoveToServerAsync);
 
         // Windows 대시보드 PC 전용 기능 (이 PC에서 대시보드를 열지 않으므로)
         connection.On(AgentClientMethods.PrepareEdit,

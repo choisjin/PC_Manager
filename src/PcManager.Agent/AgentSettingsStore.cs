@@ -63,4 +63,26 @@ public class AgentSettingsStore
         }
         previous.TrySetResult();
     }
+
+    /// <summary>
+    /// 대시보드 '서버 주소 일괄 변경': 새 서버가 PC Manager 서버로 응답하는지 먼저 확인하고(틀린 주소로 연결이 끊기지 않게),
+    /// 결과를 지금 서버에 돌려줄 시간을 둔 뒤 주소를 바꾼다 → 연결 루프가 새 서버로 다시 연결한다. 실패면 오류 메시지
+    /// </summary>
+    public async Task<string?> MoveToServerAsync(string? input)
+    {
+        var url = ServerInfoClient.NormalizeServerUrl(input);
+        if (url is null)
+            return "서버 주소 형식이 올바르지 않습니다.";
+        if (string.Equals(url, ServerInfoClient.NormalizeServerUrl(Current.ServerUrl), StringComparison.OrdinalIgnoreCase))
+            return null;
+        var probe = await ServerInfoClient.ProbeAsync(url, CancellationToken.None);
+        if (probe.Error is not null)
+            return $"이 PC에서 새 서버에 연결할 수 없습니다: {probe.Error}";
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            Save(Current with { ServerUrl = url, Enabled = true });
+        });
+        return null;
+    }
 }

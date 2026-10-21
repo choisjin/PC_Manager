@@ -709,6 +709,13 @@ export const api = {
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ old: oldPassword, new: newPassword }),
     }),
+  /** 설정 '에이전트 서버 주소 일괄 변경' (관리자): 각 에이전트가 새 서버 응답을 확인한 뒤 옮겨 간다 */
+  setAgentsServerUrl: (token: string, serverUrl: string, agentIds: string[]) =>
+    request<{ agentId: string; ok: boolean; error: string | null }[]>('/api/agents/server-url', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ serverUrl, agentIds }),
+    }),
   setUserPerms: (token: string, userId: string, perms: string[]) =>
     request<Org>(`/api/auth/perms/${encodeURIComponent(userId)}`, {
       method: 'PUT',

@@ -1108,6 +1108,31 @@ const EXACT: Record<string, string> = {
   "새 탭을 열지 못했습니다 (팝업 차단). 이 사이트의 팝업을 허용해 주세요.": "Couldn't open a new tab (popup blocked). Allow popups for this site.",
   "실행 시간에 맞는 영상이 없습니다": "No video matches the run time",
   "결과 이미지 폴더를 찾지 못했습니다": "Result image folder not found",
+  "PC 추가": "Add PC",
+  "테스트 PC에 설치할 에이전트 설치 파일(Windows·Linux)과 런처에 입력할 서버 주소가 있습니다.": "Agent installers for test PCs (Windows·Linux) and the server address to enter in the launcher.",
+  "HTTPS 인증서": "HTTPS certificate",
+  "인증서 설치 도구 받기": "Download certificate installer",
+  "[인증서 설치 도구 받기]로 받은 파일을 더블클릭하고, 관리자 승인 창에서 [예]를 누릅니다.": "Double-click the file from [Download certificate installer] and click [Yes] in the administrator prompt.",
+  "브라우저를 모두 닫았다가 다시 열고 아래 HTTPS 주소로 접속합니다.": "Close all browser windows, reopen, and go to the HTTPS address below.",
+  "대시보드 HTTPS 주소": "Dashboard HTTPS address",
+  "지금 HTTPS로 열려 있습니다.": "This page is open over HTTPS.",
+  "지금은 HTTP로 열려 있습니다.": "This page is open over HTTP.",
+  "원격조작의 키보드 잠금·저지연 화면은 HTTPS에서만 됩니다. 서버 PC와 에이전트가 설치된 PC는 인증서가 자동으로 신뢰되므로, 그 밖에 대시보드를 여는 PC에서 한 번만 실행하면 됩니다.": "Remote control keyboard lock and low-latency video work only over HTTPS. The server PC and PCs with the agent trust the certificate automatically, so run this once on any other PC that opens the dashboard.",
+  "도구를 쓸 수 없으면": "If you can't use the tool, download the",
+  "인증서 파일(.cer)": "certificate file (.cer)",
+  "을 받아 '신뢰할 수 있는 루트 인증 기관'에 직접 넣으세요.": "and add it to 'Trusted Root Certification Authorities' yourself.",
+  "이 서버에는 HTTPS 인증서가 없습니다. 설치형 서버(설치 스크립트)이거나 서버 런처에서 HTTPS 포트를 켜면 인증서가 만들어집니다.": "This server has no HTTPS certificate. One is created for an installed server (install script) or when the HTTPS port is turned on in the server launcher.",
+  "에이전트 서버 주소 일괄 변경": "Change agent server address",
+  "새 서버 주소": "New server address",
+  "새 서버 주소 (예: http://192.168.0.20:5063)": "New server address (e.g. http://192.168.0.20:5063)",
+  "바꾸는 중…": "Changing…",
+  "PC가 없습니다.": "No PCs.",
+  "옮김 ✓": "Moved ✓",
+  "에이전트 업데이트 필요": "Agent update required",
+  "서버를 다른 PC로 옮길 때 씁니다. 고른 PC마다 새 서버에 먼저 접속해 보고, 연결되면 그 서버로 옮겨 가고 안 되면 그대로 둡니다. 옛 버전 에이전트는 먼저 업데이트하고, 오프라인 PC는 그 PC의 런처에서 바꿉니다.": "Use this when moving the server to another PC. Each selected PC first tries the new server; if it connects, it moves there, otherwise it stays. Update old agents first, and change offline PCs in their launcher.",
+  "새 서버 주소를 입력하세요.": "Enter the new server address.",
+  "PC를 고르세요.": "Select PCs.",
+  "서버 주소 형식이 올바르지 않습니다.": "The server address format is invalid.",
 }
 
 const TEMPLATES: [string, string][] = [
@@ -1394,6 +1419,11 @@ const TEMPLATES: [string, string][] = [
   ["{0}의 결과 폴더 설정을 지울까요?", "Clear the result folder settings of {0}?"],
   ["{0}를 이 PC에서 찾지 못했습니다. 그래도 저장하려면 다시 '저장'을 누르세요.", "{0} not found on this PC. Press 'Save' again to save anyway."],
   ["결과를 찾지 못했습니다: {0}", "Couldn't find the result: {0}"],
+  ["{0}대 변경", "Change {0}"],
+  ["온라인 PC 모두 ({0})", "All online PCs ({0})"],
+  ["새 서버 주소 (예: http://192.168.0.20:5063) · 지금: {0}", "New server address (e.g. http://192.168.0.20:5063) · now: {0}"],
+  ["PC {0}대의 에이전트 서버 주소를 {1}(으)로 바꿉니다.\n바뀐 PC는 이 서버에서 오프라인이 되고 새 서버에 나타납니다. 계속할까요?", "Change the agent server address of {0} PCs to {1}.\nMoved PCs go offline on this server and appear on the new one. Continue?"],
+  ["이 PC에서 새 서버에 연결할 수 없습니다: {0}", "This PC can't connect to the new server: {0}"],
 ]
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
