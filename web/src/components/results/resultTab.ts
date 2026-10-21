@@ -8,6 +8,14 @@ export interface ResultTabRequest {
   source?: Source
   /** 저장한 셋으로 연 것 */
   setId?: string
+  /** 결과 확인 탭(PC별 결과 폴더)에서 연 것: 새 탭이 그 PC의 결과 폴더에서 찾아 연다 (찾으면 source로 바꿔 적는다) */
+  find?: {
+    agentId: string
+    machineName: string
+    /** 이 Result 파일 (없으면 day의 최신, day도 없으면 가장 최신) */
+    path?: string
+    day?: string | null
+  }
 }
 
 const PREFIX = 'pcm.result.'

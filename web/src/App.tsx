@@ -11,6 +11,7 @@ import { StatePage } from './components/StatePage'
 import { TransfersPage } from './components/TransfersPage'
 import { TransfersPip } from './components/TransfersPip'
 import { ResultHost } from './components/results/ResultViewer'
+import { ResultsPage } from './components/results/ResultsPage'
 import { RESULT_TAB_ID } from './components/results/resultTab'
 import { RemoteTabHost } from './components/remote/RemoteTabHost'
 import { REMOTE_TAB_AGENT } from './components/remote/remoteTab'
@@ -19,7 +20,7 @@ import { PinDialog } from './components/PinDialog'
 import { pcLockStore } from './pcLocks'
 import { useDashboard } from './useDashboard'
 
-type Page = 'files' | 'state' | 'transfers' | 'settings'
+type Page = 'files' | 'state' | 'results' | 'transfers' | 'settings'
 
 function cmpVersion(a: string, b: string) {
   const pa = a.split('.').map(Number)
@@ -58,8 +59,8 @@ const writeKey = (key: string, value: string | null) => {
 }
 
 /** 탭 → 그 탭에 필요한 기능 (Setting은 모두: 편집 폴더 같은 내 PC 설정이 있다) */
-const PAGE_FEATURE: Record<Page, Feature | null> = { files: 'files', state: 'state', transfers: 'history', settings: null }
-const PAGE_ORDER: Page[] = ['files', 'state', 'transfers', 'settings']
+const PAGE_FEATURE: Record<Page, Feature | null> = { files: 'files', state: 'state', results: 'results', transfers: 'history', settings: null }
+const PAGE_ORDER: Page[] = ['files', 'state', 'results', 'transfers', 'settings']
 const SELF_PC_KEY = 'pcm.selfPc'
 
 /** 에이전트 런처가 연 대시보드면 주소에 ?pc=<이 PC 이름>이 붙는다. 기억해 두고 주소에서는 지운다 */
@@ -104,6 +105,8 @@ export default function App() {
     onlineUsers,
     stateLayout,
     saveStateLayout,
+    resultProfiles,
+    saveResultProfile,
     pcStatuses,
     setPcStatus,
     serverHostName,
@@ -328,6 +331,11 @@ export default function App() {
               State
             </button>
           )}
+          {pageAllowed('results') && (
+            <button type="button" role="tab" aria-selected={visiblePage === 'results'} className={visiblePage === 'results' ? 'active' : ''} onClick={() => setPage('results')} title="결과 확인: PC별 결과 폴더에서 날짜로 불러오기">
+              Result
+            </button>
+          )}
           {pageAllowed('transfers') && (
             <button type="button" role="tab" aria-selected={visiblePage === 'transfers'} className={visiblePage === 'transfers' ? 'active' : ''} onClick={() => setPage('transfers')}>
               History
@@ -414,6 +422,17 @@ export default function App() {
             layout={stateLayout}
             saveLayout={saveStateLayout}
             connected={connected}
+          />
+        ) : visiblePage === 'results' ? (
+          <ResultsPage
+            agents={agents}
+            pcGroups={pcGroups}
+            org={org}
+            filterProjectId={auth.project.id}
+            selfUserId={auth.user.id}
+            profiles={resultProfiles}
+            saveProfile={saveResultProfile}
+            userName={userName}
           />
         ) : visiblePage === 'settings' ? (
           <SettingsPage

@@ -27,6 +27,8 @@ public interface IDashboardClient
     Task OnlineUsersChanged(IReadOnlyList<string> userIds);
     /// <summary>State 화면 배치(위치·고정)가 바뀜</summary>
     Task StateLayoutChanged(StateLayoutView layout);
+    /// <summary>PC별 결과 폴더(결과 확인 탭)가 바뀜</summary>
+    Task ResultProfilesChanged(ResultProfilesView profiles);
     Task PcStatusesChanged(PcStatusesView statuses);
     Task RemoteUsageChanged(RemoteUsageView usage);
     Task ChatRoomChanged(ChatRoomView room);

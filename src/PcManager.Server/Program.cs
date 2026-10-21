@@ -91,6 +91,7 @@ builder.Services.AddSingleton<NoteStore>();
 builder.Services.AddSingleton<PcLockStore>();
 builder.Services.AddHostedService<NoteImageJanitor>();
 builder.Services.AddSingleton<ResultSetStore>();
+builder.Services.AddSingleton<ResultProfileStore>();
 builder.Services.AddSingleton<ThumbnailService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<RunService>();
@@ -203,6 +204,7 @@ app.MapDownloadLinkApi();
 app.MapInstallApi(serverOptions);
 app.MapLauncherApi();
 app.MapResultSetApi();
+app.MapResultProfileApi();
 
 // 설치 파일은 크므로 요청 크기 제한과 무관하게 스트리밍 (다운로드만, 업로드 아님)
 

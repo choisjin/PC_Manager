@@ -16,7 +16,8 @@ import {
   type Anchor, baseSeconds, emptySync, resolveStart, rowAtTime, START_SOURCE_LABEL, type SyncState,
   toRowTime, toVideoTime, type VideoInfo, videoForRow,
 } from './sync'
-import { openResultTab, readResultTab, RESULT_TAB_ID, updateResultTab } from './resultTab'
+import { openResultTab, readResultTab, RESULT_TAB_ID, type ResultTabRequest, updateResultTab } from './resultTab'
+import { findRun } from './resultFinder'
 import { type ColFilters, ColumnFilterMenu, type ColSort } from './ColumnFilter'
 import { VideoTransport } from './VideoTransport'
 
@@ -44,23 +45,29 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
   // 결과 확인 탭: 주소의 id로 적어 둔 내용(경로·셋)을 읽어 불러오고, 다 되면 바로 연다
   const tabId = RESULT_TAB_ID
   const [tabError, setTabError] = useState<string | null>(null)
+  // PC별 결과 폴더에서 찾는 중이면 그 안내 (찾은 뒤에는 찾은 내용)
+  const [tabFinding, setTabFinding] = useState<string | null>(null)
   const tabStarted = useRef(false)
   useEffect(() => {
     if (!tabId || tabStarted.current) return
-    tabStarted.current = true
     // 부모(App)의 effect(사용자 id 설정 등)가 먼저 돌고 나서 불러온다 (자식 effect가 먼저 실행되므로 한 틱 미룸)
+    // 시작 표시는 타이머 안에서 (개발 모드 StrictMode가 effect를 두 번 돌려 첫 타이머를 지워도 두 번째가 시작하게)
     const timer = window.setTimeout(() => {
+      tabStarted.current = true
       const request = readResultTab(tabId)
       if (request?.setId) {
         api.resultSet(request.setId).then((full) => startSession(sourceFromSet(full), full), (err) => setTabError(`저장한 결과를 읽지 못했습니다: ${toMessage(err)}`))
       } else if (request?.source) {
         startSession(request.source)
+      } else if (request?.find) {
+        void findInTab(tabId, request.find, setTabFinding, setTabError)
       } else {
         setTabError('열 결과를 찾지 못했습니다. 대시보드에서 다시 여세요.')
       }
     })
     return () => window.clearTimeout(timer)
   }, [tabId])
+
   // 다 된 결과가 있는데 보고 있는 게 없으면 바로 연다 (처음 불러왔을 때, '경로'에서 다시 열었을 때)
   useEffect(() => {
     if (!tabId || activeId) return
@@ -129,7 +136,7 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
     <div className="rv-page rv-tab">
       <div className="rv-tab-box panel">
         <h2>결과 확인</h2>
-        {tabError ? <p className="error">{tabError}</p> : !latest ? <p className="muted">불러오는 중…</p> : (
+        {tabError ? <p className="error">{tabError}</p> : !latest ? <p className="muted">{tabFinding ?? '불러오는 중…'}</p> : (
           <>
             <p>
               <strong>{RESULT_MODE_LABEL[latest.source.mode]} · {sessionTitle(latest)}</strong>
@@ -143,6 +150,7 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
             )}
             {latest.state === 'failed' && <p className="error small">{latest.error ?? '불러오지 못했습니다'}</p>}
             {latest.state === 'ready' && <p className="small muted">준비 완료</p>}
+            {tabFinding && <p className="small muted">{tabFinding}</p>}
           </>
         )}
         <div className="rv-setup-actions">
@@ -194,6 +202,24 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
       )}
     </>
   )
+}
+
+/** 결과 확인 탭(PC별 결과 폴더)에서 연 것: 결과 폴더에서 실행을 찾아 불러온다. F5로 다시 열면 찾은 그 실행으로 */
+async function findInTab(
+  id: string, find: NonNullable<ResultTabRequest['find']>, setFinding: (text: string | null) => void, setError: (text: string) => void,
+) {
+  setFinding(`${find.machineName} · ${find.path ? baseName(find.path) : find.day ? `${find.day} 최신 결과` : '최신 결과'} 찾는 중…`)
+  try {
+    const profile = (await api.resultProfiles()).profiles[find.agentId]
+    if (!profile) throw new Error('이 PC의 결과 폴더가 정해져 있지 않습니다. Result 탭에서 정하세요.')
+    const found = await findRun(find.agentId, find.machineName, profile, find)
+    setFinding(found.notes.join(' · '))
+    updateResultTab(id, { source: found.source })
+    startSession(found.source)
+  } catch (err) {
+    setFinding(null)
+    setError(`결과를 찾지 못했습니다: ${toMessage(err)}`)
+  }
 }
 
 // ─────────────────────────────── 경로 지정: 떠 있는 작은 창 (탐색기에서 끌어다 놓기)
