@@ -4993,7 +4993,7 @@ th.sortable:hover {
 .rv-video-stage video { width: 100%; max-height: 56vh; object-fit: contain; display: block; }
 .rv-video:fullscreen .rv-video-stage video { max-height: calc(100vh - 80px); }
 .rv-video-empty { padding: 60px 0; color: #aaa; }
-/* 불러오는 중: 화면을 먼저 열고 진행(받는 속도·남은 시간)은 머리글 아래·영상 자리에 따로 */
+/* 불러오는 중: 화면을 먼저 열고 진행(받는 속도·남은 시간)은 머리글 아래·영상 자리에 따로 · 변환 승인 */
 .rv-loadbar { flex: none; display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--accent-soft); }
 .rv-loadbar > .ellipsis { flex: 0 1 auto; min-width: 0; max-width: 40%; }
 .rv-progress { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -5004,6 +5004,10 @@ th.sortable:hover {
 .rv-video-wait .rv-progress { flex-direction: column; }
 .rv-video-wait .rv-progress progress { width: min(320px, 80%); }
 .rv-video-wait .rv-progress-text { justify-content: center; color: #ddd; }
+.rv-convert { color: #ddd; max-width: 560px; }
+.rv-convert strong { color: #fff; }
+.rv-convert-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 4px; }
+.rv-convert-actions button:not(.primary) { color: var(--text); }
 .rv-video-error { position: absolute; bottom: 8px; left: 8px; right: 8px; color: #fff; background: rgba(200, 40, 40, 0.8); padding: 4px 8px; border-radius: 4px; }
 .rv-osd {
   position: absolute;
@@ -5683,6 +5687,16 @@ body.rv-open .pip { display: none; }
 .rp-run { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; cursor: pointer; min-width: 0; }
 .rp-run-name { min-width: 0; }
 .rp-run-meta { display: flex; gap: 10px; }
+/* 저장 공간: 드라이브 남은 공간 · 재생용 사본 목록 */
+.rp-storage { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; border: 1px solid var(--border-light); border-radius: 6px; }
+.rp-storage-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-width: 0; }
+.rp-drive { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.rp-drive meter { width: 70px; height: 8px; }
+.rp-cache { display: flex; flex-direction: column; gap: 6px; }
+.rp-cache p { margin: 0; }
+.rp-cache-list { margin: 0; padding: 0; list-style: none; max-height: 30vh; overflow: auto; border-top: 1px solid var(--border-light); }
+.rp-cache-list li { display: grid; grid-template-columns: auto minmax(120px, 1fr) minmax(0, 1.4fr) 70px 110px auto; align-items: center; gap: 8px; padding: 3px 2px; border-bottom: 1px solid var(--border-light); }
+.rp-cache-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rp-info { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 0; }
 .rp-info dt { color: var(--muted); }
 .rp-info dd { margin: 0; min-width: 0; }

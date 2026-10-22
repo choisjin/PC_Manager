@@ -142,10 +142,30 @@ public record VideoTrimResult(string? OutputPath, string? Error);
 
 /// <summary>
 /// 결과 확인 도구의 영상 재생 준비. PlayPath: 브라우저가 재생·탐색할 파일 (원본이 그대로 되면 원본, 아니면 변환한 캐시 파일, 아직 변환 전이면 null).
-/// NeedsConvert: 길이·탐색 색인이 없거나(브라우저 녹화 webm 등) 브라우저가 못 푸는 코덱이라 변환이 필요함.
-/// Duration·Fps: ffmpeg가 읽은 값 (모르면 null)
+/// NeedsConvert: 길이·탐색 색인이 없거나(브라우저 녹화 webm 등) 브라우저가 못 푸는 코덱이라 변환이 필요함 (사용자가 승인하면 convert로 다시 부른다).
+/// Duration·Fps: ffmpeg가 읽은 값 (모르면 null). Note: 변환이 무엇을 하는지 (색인을 넣은 사본 · H.264로 다시 인코딩)
 /// </summary>
-public record VideoPrepareResult(string? PlayPath, bool NeedsConvert, double? Duration, double? Fps, string? Note, string? Error);
+/// <param name="Reason">왜 바로 재생할 수 없는지 (변환 승인 안내)</param>
+/// <param name="Transcode">다시 인코딩한다 (오래 걸림). false면 영상은 그대로 옮겨 담기만 (빠름, 화질 그대로)</param>
+/// <param name="SourceBytes">원본 크기 (사본도 대략 이만큼)</param>
+/// <param name="CacheDrive">사본을 둘 드라이브 · CacheFreeBytes: 그 드라이브의 남은 공간</param>
+public record VideoPrepareResult(string? PlayPath, bool NeedsConvert, double? Duration, double? Fps, string? Note, string? Error,
+    string? Reason = null, bool Transcode = false, long SourceBytes = 0, string? CacheDrive = null, long CacheFreeBytes = 0);
+
+/// <summary>테스트 PC 드라이브 하나 (Linux는 마운트 지점)</summary>
+public record DriveSpace(string Name, string? Label, long FreeBytes, long TotalBytes);
+
+/// <param name="Name">재생용 사본 폴더 안 파일 이름 (지울 때 쓴다)</param>
+/// <param name="Source">원본 영상 경로 (모르면 null: 이전 버전이 만든 사본)</param>
+/// <param name="LastUsed">마지막으로 쓴 시각 (UTC)</param>
+/// <param name="Converting">지금 만드는 중</param>
+public record VideoCacheEntry(string Name, long Bytes, DateTime LastUsed, string? Source, bool Converting);
+
+/// <summary>결과 확인 Result 탭의 저장 공간: 드라이브 남은 공간 + 재생용 사본 목록 (사용자가 직접 지운다)</summary>
+public record VideoStorageInfo(IReadOnlyList<DriveSpace> Drives, string CacheDirectory, IReadOnlyList<VideoCacheEntry> Cache);
+
+/// <param name="Failed">지우지 못한 사본 (만드는 중·사용 중)</param>
+public record VideoCacheDeleteResult(int Deleted, long FreedBytes, IReadOnlyList<string> Failed);
 
 /// <summary>
 /// 재생 준비 진행 (결과 확인 화면이 속도·남은 시간을 계산해 보여 준다).
@@ -336,6 +356,10 @@ public static class AgentClientMethods
     public const string PrepareVideo = "PrepareVideo";
     /// <summary>(string path) → VideoPrepareProgress? 이 영상의 재생 준비 진행 (사본 만드는 중·ffmpeg 받는 중이 아니면 null)</summary>
     public const string GetPrepareProgress = "GetPrepareProgress";
+    /// <summary>() → VideoStorageInfo. 드라이브 남은 공간과 재생용 사본 목록</summary>
+    public const string GetVideoStorage = "GetVideoStorage";
+    /// <summary>(string[] names) → VideoCacheDeleteResult. 재생용 사본 지우기 (원본은 그대로)</summary>
+    public const string DeleteVideoCache = "DeleteVideoCache";
     /// <summary>(ImageSearchRequest) → string 작업 id. 영상들에서 크롭 이미지 유사도 찾기를 뒤에서 시작 (진행은 GetImageSearch)</summary>
     public const string StartImageSearch = "StartImageSearch";
     /// <summary>(string id, int have) → ImageSearchStatus? (없는 작업이면 null). have: 이미 받은 영상 수</summary>

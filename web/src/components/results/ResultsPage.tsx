@@ -7,6 +7,7 @@ import { RESULT_MODE_LABEL } from './resultCsv'
 import { buildSource, cachedRuns, type FoundSource, type ResultRun, type RunScan, scanRuns } from './resultFinder'
 import { dirName, toMessage } from './resultSessions'
 import { openResultTab, type ResultTabRequest } from './resultTab'
+import { VideoStorage } from './VideoStorage'
 
 interface Props {
   agents: Agent[]
@@ -268,6 +269,7 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
                 {profile.refDir && <><dt>원본 이미지</dt><dd className="mono ellipsis" title={profile.refDir}>{profile.refDir}</dd></>}
               </dl>
               {profile.updatedBy && <p className="small muted rp-updated">{`마지막 설정: ${userName(profile.updatedBy) ?? ''}`}</p>}
+              <VideoStorage key={agent.id} agentId={agent.id} online={online} />
 
               {notice && <p className="error small">{notice}</p>}
               {scanState?.error && <p className="error small">결과 폴더를 읽지 못했습니다: {scanState.error}</p>}

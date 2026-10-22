@@ -448,8 +448,41 @@ export interface VideoPrepareResult {
   needsConvert: boolean
   duration: number | null
   fps: number | null
+  /** 변환이 무엇을 하는지 */
   note: string | null
   error: string | null
+  /** 왜 바로 재생할 수 없는지 (옛 에이전트는 없음) */
+  reason?: string | null
+  /** 다시 인코딩 (오래 걸림). false면 영상은 그대로 옮겨 담기만 */
+  transcode?: boolean
+  /** 원본 크기 (사본도 대략 이만큼) · 사본을 둘 드라이브와 그 남은 공간 */
+  sourceBytes?: number
+  cacheDrive?: string | null
+  cacheFreeBytes?: number
+}
+
+export interface DriveSpace {
+  name: string
+  label: string | null
+  freeBytes: number
+  totalBytes: number
+}
+
+export interface VideoCacheEntry {
+  /** 재생용 사본 폴더 안 파일 이름 (지울 때) */
+  name: string
+  bytes: number
+  /** 마지막으로 쓴 시각 (UTC ISO) */
+  lastUsed: string
+  /** 원본 영상 경로 (모르면 null) */
+  source: string | null
+  converting: boolean
+}
+
+export interface VideoStorageInfo {
+  drives: DriveSpace[]
+  cacheDirectory: string
+  cache: VideoCacheEntry[]
 }
 
 /** 재생 준비 진행. stage: ffmpeg = 테스트 PC가 ffmpeg 받는 중 · convert = 재생용 사본 만드는 중. bytes: 받은·처리한 원본 바이트 */
@@ -891,6 +924,14 @@ export const api = {
     request<VideoPrepareResult>(`/api/agents/${agentId}/video/prepare`, {
       method: 'POST',
       body: JSON.stringify({ path, convert }),
+    }),
+  /** 테스트 PC 드라이브 남은 공간 · 재생용 사본 목록 */
+  videoStorage: (agentId: string) => request<VideoStorageInfo>(`/api/agents/${agentId}/video/storage`),
+  /** 재생용 사본 지우기 (원본은 그대로) */
+  deleteVideoCache: (agentId: string, names: string[]) =>
+    request<{ deleted: number; freedBytes: number; failed: string[] }>(`/api/agents/${agentId}/video/cache/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ names }),
     }),
   /** 재생 준비 진행 (사본 만드는 중·ffmpeg 받는 중이 아니면 undefined) */
   prepareProgress: (agentId: string, path: string) =>

@@ -27,6 +27,7 @@ public static class ResultSetEndpoints
     public record UpdateResultSetRequest(string? Name, JsonElement? Config);
 
     public record TrimRequest(string Path, double Start, double End);
+    public record CacheDeleteRequest(IReadOnlyList<string> Names);
     public record PrepareRequest(string Path, bool Convert);
 
     public static void MapResultSetApi(this WebApplication app)
@@ -147,6 +148,17 @@ public static class ResultSetEndpoints
                 await proxy.InvokeAsync<VideoPrepareProgress?>(AgentClientMethods.GetPrepareProgress, path, ct) is { } progress
                     ? Results.Ok(progress)
                     : Results.NoContent()));
+
+        // 저장 공간 (Result 탭): 테스트 PC 드라이브 남은 공간 · 재생용 사본 목록 · 사본 지우기
+        app.MapGet("/api/agents/{agentId}/video/storage", async (string agentId, AgentRegistry registry,
+            IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            await CallAgent(agentId, registry, agentHub, async proxy =>
+                Results.Ok(await proxy.InvokeAsync<VideoStorageInfo>(AgentClientMethods.GetVideoStorage, ct))));
+
+        app.MapPost("/api/agents/{agentId}/video/cache/delete", async (string agentId, CacheDeleteRequest request, AgentRegistry registry,
+            IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            await CallAgent(agentId, registry, agentHub, async proxy =>
+                Results.Ok(await proxy.InvokeAsync<VideoCacheDeleteResult>(AgentClientMethods.DeleteVideoCache, request.Names.ToArray(), ct))));
 
         // 이미지 찾기: 테스트 PC 에이전트가 영상들에서 크롭 이미지 유사도를 프레임마다 잰다 (시작 → 진행 조회 → 멈춤)
         app.MapPost("/api/agents/{agentId}/video/image-search", async (string agentId, ImageSearchRequest request, AgentRegistry registry,

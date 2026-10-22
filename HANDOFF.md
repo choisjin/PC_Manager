@@ -1,6 +1,6 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-22 · 최신 릴리스 **v0.8.89** (Result 탭 목록화 · 결과 화면 먼저 열기, 아래 1절)
+작성: 2026-10-22 · 최신 릴리스 **v0.8.90** (영상 바로 재생 · 변환은 승인 후 · 저장 공간 관리, 아래 1절)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**).
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -48,6 +48,22 @@
     서버 `GET /api/agents/{id}/video/prepare/progress?path=`(진행 없으면 204), 웹이 1초마다 물음(옛 에이전트면 조용히 그만).
   - 영상은 여전히 하나씩 준비 → 차례를 기다리는 영상은 `prep: 'waiting'`("앞 영상을 준비한 뒤 …").
 - 확인: 400 KB/s 제한에서 4.2 MB Result가 ~390 KB/s · 남은 시간 0:10→0:01, 1080p HEVC mkv 변환 60% · 34 MB/s · 0:03, 새 탭은 0.1초 만에 화면이 뜸.
+
+### 0.8.90: 영상 바로 재생 · 변환은 승인 후 · 저장 공간 관리
+
+사용자 질문 "로컬처럼 빠르고 어디서나 보는 근본 해결은?" → 느린 원인은 재생 전 mkv 전체 변환이었다.
+**최신 Chrome은 길이·탐색 색인(Cues)이 있는 mkv(H.264/AAC, OBS 녹화)를 그대로 재생·탐색**한다 (시험: 2분 mkv 95초 이동 0.15초).
+- 에이전트 `VideoTrimmer.PrepareAsync`: 형식·코덱·소리(mkv는 aac/opus/vorbis/mp3/flac)·길이·Cues가 맞으면 **원본 그대로**(PlayPath = 원본).
+  Cues는 `ffmpeg -i`로 알 수 없어 `MatroskaIndex.HasCues`가 파일을 직접 읽는다 (SeekHead → Cues 위치 확인 → 앞쪽 Cues → 끝 8MB에서 Cues+CuePoint).
+  안 되면 `Reason`(왜) · `Note`(무엇을: 색인 넣은 사본 / H.264 다시 인코딩) · `Transcode` · 원본 크기 · 사본 드라이브와 남은 공간을 돌려준다.
+- **변환은 사용자가 승인해야**: 웹 `RawVideo.prep = 'needs-convert'` → 영상 자리 `VideoWaiting`에 까닭·변환 내용·사본 크기/남은 공간과
+  [변환 시작] [변환이 필요한 영상 n개 모두 변환] [변환 없이 원본 재생] (`convertVideo`, `playOriginal`, `ORIGINAL_NOTE`). 영상 목록에 "(변환 필요)".
+  변환 전 남은 공간 확인(원본 크기 + 512MB). webm 출력이면 소리는 opus/vorbis만 복사, 아니면 libopus.
+- **사본 자동 삭제 없앰** (사용자가 직접 관리): 실패해 남은 `.part`만 하루 뒤 정리. `video-cache/index.json` = 사본 → 원본 경로.
+- Result 탭 `VideoStorage.tsx`: 드라이브별 남은/전체 공간(막대) · 재생용 사본 목록(원본·크기·마지막 사용) · 선택/모두 삭제.
+  에이전트 `GetVideoStorage`/`DeleteVideoCache`, 서버 `GET /api/agents/{id}/video/storage`, `POST …/video/cache/delete`.
+- 원본 교체(변환 후 원본 삭제)는 **하지 않기로 보류** (바로 재생으로 변환 자체가 드물어짐).
+- 옛 에이전트: 늘 '변환 필요'로 나오고 [변환 시작]·[원본 재생]은 그대로 동작, 저장 공간은 "에이전트를 업데이트하세요".
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

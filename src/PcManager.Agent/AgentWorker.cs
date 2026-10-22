@@ -157,6 +157,9 @@ public class AgentWorker(
             (path, convert) => trimmer.PrepareAsync(path, convert));
         connection.On<string, VideoPrepareProgress?>(AgentClientMethods.GetPrepareProgress,
             path => Task.Run(() => trimmer.GetProgress(path)));
+        connection.On(AgentClientMethods.GetVideoStorage, () => Task.Run(trimmer.GetStorage));
+        connection.On<string[], VideoCacheDeleteResult>(AgentClientMethods.DeleteVideoCache,
+            names => Task.Run(() => trimmer.DeleteCache(names)));
         connection.On<ImageSearchRequest, string>(AgentClientMethods.StartImageSearch,
             request => Task.Run(() => imageSearch.Start(request)));
         connection.On<string, int, ImageSearchStatus?>(AgentClientMethods.GetImageSearch,

@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using PcManager.Shared;
@@ -83,10 +85,17 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
 
     private static string Fmt(double seconds) => seconds.ToString("0.###", CultureInfo.InvariantCulture);
 
-    // ── 재생 준비: 브라우저가 길이를 모르거나(Infinity) 탐색이 안 되는 영상을 탐색 가능한 사본으로
+    // ── 재생 준비: 브라우저가 그대로 재생·탐색할 수 있으면 원본을, 아니면 (사용자가 승인하면) 탐색 가능한 사본을 만든다
 
     private static readonly string[] PlayableCodecs = ["h264", "vp8", "vp9", "av1"];
-    private static readonly TimeSpan CacheLifetime = TimeSpan.FromDays(3);
+    // Chrome이 Matroska·WebM 안에서 풀 수 있는 소리 (mp4는 예전처럼 따로 보지 않는다)
+    private static readonly string[] PlayableAudio = ["aac", "opus", "vorbis", "mp3", "flac"];
+    // 실패하고 남은 만들다 만 사본(.part)을 지우는 나이. 완성된 사본은 Result 탭에서 사용자가 직접 지운다
+    private static readonly TimeSpan PartLifetime = TimeSpan.FromDays(1);
+    // 변환 전 남겨 둘 여유 공간 (사본은 원본 크기쯤)
+    private const long SpaceMargin = 512L * 1024 * 1024;
+    private const string IndexName = "index.json";
+    private readonly object _indexLock = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<VideoPrepareResult>>> _converting = new();
     // 진행 (결과 확인 화면이 속도·남은 시간을 보여 준다): 원본 경로 → 사본 만드는 중, ffmpeg 받는 중
     private readonly ConcurrentDictionary<string, ConvertProgress> _progress = new();
@@ -116,9 +125,16 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         var webmFamily = probe.Format.Contains("matroska") || probe.Format.Contains("webm");
         var codecOk = probe.Codec is not null && PlayableCodecs.Contains(probe.Codec);
         var transcode = !codecOk || !(mp4Family || webmFamily);
-        // webm·mkv는 브라우저 녹화처럼 탐색 색인(cues)이 없는 경우가 많고 -i로는 구분이 안 돼 늘 색인을 넣은 사본으로 (영상은 복사라 빠름)
-        var needsConvert = transcode || webmFamily || probe.Duration is null;
-        if (!needsConvert)
+        var audioOk = !webmFamily || !probe.HasAudio || probe.AudioCodec is not null && PlayableAudio.Contains(probe.AudioCodec);
+        // 바로 재생할 수 없는 까닭 (null이면 원본 그대로). Chrome은 길이·탐색 색인(Cues)이 있는 mkv·webm을 그대로 재생·탐색한다 (OBS 녹화 등).
+        // 색인은 ffmpeg -i로 알 수 없어 파일 머리를 직접 읽는다 (브라우저 녹화·비정상 종료된 녹화는 길이·색인이 없다)
+        var reason = !(mp4Family || webmFamily) ? $"브라우저가 재생할 수 없는 형식({probe.Format})입니다"
+            : !codecOk ? $"브라우저가 재생할 수 없는 코덱({probe.Codec ?? "모름"})입니다"
+            : !audioOk ? $"브라우저가 재생할 수 없는 소리 형식({probe.AudioCodec})입니다"
+            : probe.Duration is null ? "영상 길이 정보가 없습니다 (녹화가 비정상 종료됐거나 브라우저로 녹화한 영상)"
+            : webmFamily && !MatroskaIndex.HasCues(path) ? "탐색 색인이 없어 원하는 위치로 바로 이동할 수 없습니다 (녹화가 비정상 종료됐을 수 있음)"
+            : null;
+        if (reason is null)
             return new VideoPrepareResult(path, false, probe.Duration, probe.Fps, null, null);
 
         var file = new FileInfo(path);
@@ -127,17 +143,25 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         var webmOut = !transcode && webmFamily && probe.Codec != "h264";
         var output = Path.Combine(CacheDirectory, key + (webmOut ? ".webm" : ".mp4"));
         var note = transcode
-            ? $"브라우저가 재생할 수 없는 형식({probe.Format}, {probe.Codec ?? "코덱 모름"})이라 H.264로 변환"
-            : "길이·탐색 색인을 넣은 사본";
+            ? $"H.264로 다시 인코딩 ({probe.Format}, {probe.Codec ?? "코덱 모름"})"
+            : "영상은 그대로 두고 길이·탐색 색인을 넣은 사본";
 
         if (File.Exists(output))
         {
             File.SetLastWriteTimeUtc(output, DateTime.UtcNow);
+            UpdateIndex(index => index[Path.GetFileName(output)] = path);
             var cached = await ProbeAsync(ffmpeg, output);
-            return new VideoPrepareResult(output, true, cached.Duration, cached.Fps ?? probe.Fps, note, null);
+            return new VideoPrepareResult(output, true, cached.Duration, cached.Fps ?? probe.Fps, note, null, reason, transcode, file.Length);
         }
+        var drive = DriveOf(CacheDirectory);
+        var free = FreeSpace(drive);
+        // 사용자 승인 전: 왜 변환해야 하는지 · 무엇을 하는지 · 사본 크기·둘 곳의 남은 공간을 알려 준다
         if (!convert)
-            return new VideoPrepareResult(null, true, probe.Duration, probe.Fps, note, null);
+            return new VideoPrepareResult(null, true, probe.Duration, probe.Fps, note, null, reason, transcode, file.Length, drive?.Name, free);
+        if (drive is not null && free < file.Length + SpaceMargin)
+            return new VideoPrepareResult(null, true, probe.Duration, probe.Fps, note,
+                $"테스트 PC {drive.Name}의 남은 공간이 부족해 변환할 수 없습니다 (필요 약 {Bytes(file.Length + SpaceMargin)}, 남음 {Bytes(free)}). Result 탭에서 사본을 지우거나 공간을 비우세요.",
+                reason, transcode, file.Length, drive.Name, free);
 
         var job = _converting.GetOrAdd(output, outputKey => new Lazy<Task<VideoPrepareResult>>(async () =>
         {
@@ -156,15 +180,17 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
     private async Task<VideoPrepareResult> ConvertAsync(string ffmpeg, string path, string output, Probe probe, bool transcode, bool webmOut, string note)
     {
         Directory.CreateDirectory(CacheDirectory);
-        CleanCache();
+        CleanParts();
+        UpdateIndex(index => index[Path.GetFileName(output)] = path);
         var temp = output + ".part" + Path.GetExtension(output);
         var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-fflags", "+genpts", "-i", path, "-map", "0:v:0", "-map", "0:a:0?" };
         if (transcode)
             args.AddRange(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]);
         else
             args.AddRange(["-c:v", "copy"]);
+        // webm에는 Opus·Vorbis만 들어간다
         if (webmOut)
-            args.AddRange(["-c:a", "copy"]);
+            args.AddRange(probe.AudioCodec is "opus" or "vorbis" ? ["-c:a", "copy"] : ["-c:a", "libopus", "-b:a", "128k"]);
         else
             args.AddRange(probe.AudioCodec == "aac" ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "128k"]);
         if (!webmOut)
@@ -253,18 +279,185 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         }
     }
 
-    /// <summary>오래 안 쓴 재생용 사본 지우기</summary>
-    private void CleanCache()
+    /// <summary>실패하고 남은 만들다 만 사본(.part) 지우기 (완성된 사본은 사용자가 Result 탭에서 지운다)</summary>
+    private void CleanParts()
     {
         try
         {
-            foreach (var file in new DirectoryInfo(CacheDirectory).EnumerateFiles())
-                if (DateTime.UtcNow - file.LastWriteTimeUtc > CacheLifetime)
+            foreach (var file in new DirectoryInfo(CacheDirectory).EnumerateFiles("*.part*"))
+                if (DateTime.UtcNow - file.LastWriteTimeUtc > PartLifetime && !_converting.ContainsKey(OutputOf(file.FullName)))
                     file.Delete();
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }
+
+    /// <summary>만드는 중 파일(사본.part.확장자) → 완성될 사본 경로</summary>
+    private static string OutputOf(string path)
+    {
+        var at = path.IndexOf(".part", StringComparison.Ordinal);
+        return at < 0 ? path : path[..at];
+    }
+
+    // ── 저장 공간 (Result 탭): 드라이브 남은 공간 · 재생용 사본 목록 · 지우기
+
+    /// <summary>사본 파일 이름 → 원본 경로 (목록에 원본을 보여 주려고)</summary>
+    private Dictionary<string, string> ReadIndex()
+    {
+        lock (_indexLock)
+        {
+            try
+            {
+                var file = Path.Combine(CacheDirectory, IndexName);
+                return File.Exists(file)
+                    ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(file)) ?? []
+                    : [];
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+                return [];
+            }
+        }
+    }
+
+    private void UpdateIndex(Action<Dictionary<string, string>> change)
+    {
+        lock (_indexLock)
+        {
+            try
+            {
+                var index = ReadIndex();
+                change(index);
+                // 지워진 사본은 뺀다 (만드는 중인 것은 둔다)
+                foreach (var name in index.Keys.Where(n => !File.Exists(Path.Combine(CacheDirectory, n))
+                             && !File.Exists(Path.Combine(CacheDirectory, n + ".part" + Path.GetExtension(n)))
+                             && !_converting.ContainsKey(Path.Combine(CacheDirectory, n))).ToList())
+                    index.Remove(name);
+                Directory.CreateDirectory(CacheDirectory);
+                File.WriteAllText(Path.Combine(CacheDirectory, IndexName), JsonSerializer.Serialize(index));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                logger.LogWarning("재생용 사본 목록을 저장하지 못했습니다: {Message}", ex.Message);
+            }
+        }
+    }
+
+    public VideoStorageInfo GetStorage()
+    {
+        var index = ReadIndex();
+        var cache = new List<VideoCacheEntry>();
+        try
+        {
+            if (Directory.Exists(CacheDirectory))
+                foreach (var file in new DirectoryInfo(CacheDirectory).EnumerateFiles())
+                {
+                    if (file.Name == IndexName)
+                        continue;
+                    var output = OutputOf(file.FullName);
+                    cache.Add(new VideoCacheEntry(file.Name, file.Length, file.LastWriteTimeUtc, index.GetValueOrDefault(Path.GetFileName(output)),
+                        output != file.FullName && _converting.ContainsKey(output)));
+                }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.LogWarning("재생용 사본 폴더를 읽지 못했습니다: {Message}", ex.Message);
+        }
+        return new VideoStorageInfo(Drives(), CacheDirectory, cache.OrderByDescending(c => c.LastUsed).ToList());
+    }
+
+    /// <summary>재생용 사본 지우기 (원본은 그대로). 만드는 중인 것은 못 지운다</summary>
+    public VideoCacheDeleteResult DeleteCache(IReadOnlyList<string> names)
+    {
+        var deleted = 0;
+        long freed = 0;
+        var failed = new List<string>();
+        foreach (var name in names.Distinct())
+        {
+            // 사본 폴더 안 파일 이름만 (경로·목록 파일은 안 됨)
+            var full = Path.Combine(CacheDirectory, name);
+            if (name != Path.GetFileName(name) || name == IndexName || _converting.ContainsKey(OutputOf(full)))
+            {
+                failed.Add(name);
+                continue;
+            }
+            try
+            {
+                if (!File.Exists(full))
+                    continue;
+                var size = new FileInfo(full).Length;
+                File.Delete(full);
+                deleted++;
+                freed += size;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                failed.Add(name);
+            }
+        }
+        if (deleted > 0)
+            UpdateIndex(_ => { });
+        logger.LogInformation("재생용 사본 {Count}개 지움 ({Bytes})", deleted, Bytes(freed));
+        return new VideoCacheDeleteResult(deleted, freed, failed);
+    }
+
+    // Linux: 장치·가상 파일 시스템 마운트는 빼고 디스크만
+    private static readonly string[] SkipMounts = ["/snap", "/var/snap", "/run", "/sys", "/proc", "/dev", "/boot"];
+
+    private static List<DriveSpace> Drives()
+    {
+        var list = new List<DriveSpace>();
+        foreach (var d in DriveInfo.GetDrives())
+        {
+            try
+            {
+                if (!d.IsReady || d.DriveType is not (DriveType.Fixed or DriveType.Removable) || d.TotalSize < 1L << 30)
+                    continue;
+                if (!OperatingSystem.IsWindows() && SkipMounts.Any(m => d.Name == m || d.Name.StartsWith(m + "/", StringComparison.Ordinal)))
+                    continue;
+                var label = OperatingSystem.IsWindows() && !string.IsNullOrWhiteSpace(d.VolumeLabel) ? d.VolumeLabel : null;
+                list.Add(new DriveSpace(d.Name, label, d.AvailableFreeSpace, d.TotalSize));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // 읽을 수 없는 드라이브는 건너뛴다
+            }
+        }
+        return list;
+    }
+
+    /// <summary>경로가 든 드라이브 (Linux는 가장 깊은 마운트 지점)</summary>
+    private static DriveInfo? DriveOf(string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(path);
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            return DriveInfo.GetDrives()
+                .Where(d => full.StartsWith(d.RootDirectory.FullName, comparison))
+                .MaxBy(d => d.RootDirectory.FullName.Length);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    private static long FreeSpace(DriveInfo? drive)
+    {
+        try
+        {
+            return drive is { IsReady: true } ? drive.AvailableFreeSpace : 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
+    }
+
+    private static string Bytes(long bytes) => bytes >= 1L << 30
+        ? (bytes / (double)(1L << 30)).ToString("0.0", CultureInfo.InvariantCulture) + " GB"
+        : (bytes / (double)(1L << 20)).ToString("0", CultureInfo.InvariantCulture) + " MB";
 
     /// <summary>ffmpeg -i 로 컨테이너·코덱·길이·fps 읽기 (ffprobe 없이)</summary>
     internal static async Task<Probe> ProbeAsync(string ffmpeg, string path)
@@ -391,5 +584,153 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         {
             _download.Release();
         }
+    }
+}
+
+/// <summary>
+/// Matroska·WebM 탐색 색인(Cues) 확인: ffmpeg -i로는 알 수 없어 파일을 직접 읽는다.
+/// Segment 앞쪽 SeekHead가 가리키는 위치에 정말 Cues가 있는지 → 앞쪽에 Cues가 바로 있는지 → 없으면 끝부분에서 Cues(첫 자식이 CuePoint)를 찾는다.
+/// 색인이 없으면 브라우저가 멀리 이동할 때 파일을 처음부터 읽어야 해 네트워크로는 사실상 탐색이 안 된다
+/// </summary>
+internal static class MatroskaIndex
+{
+    private const uint Ebml = 0x1A45DFA3, Segment = 0x18538067, SeekHead = 0x114D9B74, Seek = 0x4DBB, SeekId = 0x53AB,
+        SeekPosition = 0x53AC, Cues = 0x1C53BB6B, CuePoint = 0xBB, Cluster = 0x1F43B675;
+    private const int HeadBytes = 1 << 20;
+    private const int TailBytes = 8 << 20;
+
+    public static bool HasCues(string path)
+    {
+        try
+        {
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var head = new byte[(int)Math.Min(file.Length, HeadBytes)];
+            file.ReadExactly(head);
+            var pos = 0;
+            if (!Element(head, ref pos, out var id, out var size) || id != Ebml || size < 0 || pos + size > head.Length)
+                return false;
+            pos += (int)size;
+            if (!Element(head, ref pos, out id, out _) || id != Segment)
+                return false;
+            long segmentStart = pos;
+            while (pos < head.Length)
+            {
+                if (!Element(head, ref pos, out id, out size))
+                    break;
+                if (id == Cues)
+                    return true;
+                // 크기를 모르는(-1) 요소·첫 Cluster에서 멈춘다 (그 뒤는 영상 데이터)
+                if (id == Cluster || size < 0 || pos + size > head.Length)
+                    break;
+                if (id == SeekHead && SeekHeadPointsToCues(file, head, pos, (int)size, segmentStart))
+                    return true;
+                pos += (int)size;
+            }
+            return TailHasCues(file);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>EBML 요소 머리: ID(표지 비트 포함 1~4바이트) · 크기(1~8바이트, 모두 1이면 모름 = -1)</summary>
+    private static bool Element(byte[] buffer, ref int pos, out uint id, out long size)
+    {
+        id = 0;
+        size = 0;
+        if (pos >= buffer.Length)
+            return false;
+        var idLength = BitOperations.LeadingZeroCount((uint)buffer[pos]) - 23;
+        if (idLength is < 1 or > 4 || pos + idLength > buffer.Length)
+            return false;
+        for (var i = 0; i < idLength; i++)
+            id = (id << 8) | buffer[pos + i];
+        pos += idLength;
+        if (pos >= buffer.Length)
+            return false;
+        var sizeLength = BitOperations.LeadingZeroCount((uint)buffer[pos]) - 23;
+        if (sizeLength is < 1 or > 8 || pos + sizeLength > buffer.Length)
+            return false;
+        long value = buffer[pos] & (0xFF >> sizeLength);
+        var unknown = value == 0xFF >> sizeLength;
+        for (var i = 1; i < sizeLength; i++)
+        {
+            value = (value << 8) | buffer[pos + i];
+            unknown &= buffer[pos + i] == 0xFF;
+        }
+        pos += sizeLength;
+        size = unknown ? -1 : value;
+        return true;
+    }
+
+    private static bool SeekHeadPointsToCues(FileStream file, byte[] buffer, int start, int length, long segmentStart)
+    {
+        var pos = start;
+        var end = start + length;
+        while (pos < end)
+        {
+            if (!Element(buffer, ref pos, out var id, out var size) || size < 0 || pos + size > end)
+                return false;
+            if (id == Seek)
+            {
+                uint target = 0;
+                long position = -1;
+                var p = pos;
+                var seekEnd = pos + (int)size;
+                while (p < seekEnd)
+                {
+                    if (!Element(buffer, ref p, out var childId, out var childSize) || childSize < 0 || p + childSize > seekEnd)
+                        break;
+                    if (childId == SeekId && childSize <= 4)
+                    {
+                        target = 0;
+                        for (var i = 0; i < childSize; i++)
+                            target = (target << 8) | buffer[p + i];
+                    }
+                    else if (childId == SeekPosition && childSize <= 8)
+                    {
+                        position = 0;
+                        for (var i = 0; i < childSize; i++)
+                            position = (position << 8) | buffer[p + i];
+                    }
+                    p += (int)childSize;
+                }
+                if (target == Cues && position >= 0 && IsCuesAt(file, segmentStart + position))
+                    return true;
+            }
+            pos += (int)size;
+        }
+        return false;
+    }
+
+    private static bool IsCuesAt(FileStream file, long offset)
+    {
+        if (offset < 0 || offset + 4 > file.Length)
+            return false;
+        var id = new byte[4];
+        file.Position = offset;
+        file.ReadExactly(id);
+        return id[0] == 0x1C && id[1] == 0x53 && id[2] == 0xBB && id[3] == 0x6B;
+    }
+
+    /// <summary>SeekHead가 없거나 Cues를 가리키지 않을 때: 끝부분에서 Cues를 찾아 첫 자식이 CuePoint이고 크기가 파일 안에 맞는지 본다</summary>
+    private static bool TailHasCues(FileStream file)
+    {
+        var length = (int)Math.Min(file.Length, TailBytes);
+        var tail = new byte[length];
+        file.Position = file.Length - length;
+        file.ReadExactly(tail);
+        for (var i = length - 6; i >= 0; i--)
+        {
+            if (tail[i] != 0x1C || tail[i + 1] != 0x53 || tail[i + 2] != 0xBB || tail[i + 3] != 0x6B)
+                continue;
+            var p = i;
+            if (!Element(tail, ref p, out _, out var size) || size <= 0 || p + size > length)
+                continue;
+            if (Element(tail, ref p, out var child, out _) && child == CuePoint)
+                return true;
+        }
+        return false;
     }
 }

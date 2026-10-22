@@ -8,8 +8,8 @@ import {
   RESULT_MODE_LABEL, type ResultMapping, type ResultMode, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
-  addSessionVideo, autoAssign, baseName, closeSets, closeSetup, closeViewer, dirName, dismissToast, type LoadProgress, openSets, openSetup, openViewer,
-  type RawVideo, rememberedRefDir, rememberRefDir, type ResultSession, saveSessionConfig, sessionFileUrl, sessionTitle, setSessionSet,
+  addSessionVideo, autoAssign, baseName, closeSets, closeSetup, closeViewer, convertVideo, dirName, dismissToast, type LoadProgress, openSets, openSetup,
+  openViewer, ORIGINAL_NOTE, playOriginal, type RawVideo, rememberedRefDir, rememberRefDir, type ResultSession, saveSessionConfig, sessionFileUrl, sessionTitle, setSessionSet,
   type SetupState, type Source, startSession, toMessage, updateSessionVideo, useResults, type ViewConfig,
 } from './resultSessions'
 import {
@@ -463,6 +463,9 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
 
   const updateVideo = useCallback((path: string, p: Partial<RawVideo>) => updateSessionVideo(id, path, p), [id])
   const currentRaw = rawVideos.find((v) => v.path === current) ?? null
+  // 다 불러온 뒤 사용자가 승인한 변환 · 승인을 기다리는 영상
+  const converting = rawVideos.find((v) => v.prep === 'converting')
+  const needsConvert = rawVideos.filter((v) => v.prep === 'needs-convert')
 
   const videos: VideoInfo[] = useMemo(
     () => rawVideos.map((v) => {
@@ -624,13 +627,21 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   return (
     <>
       <ViewerHead session={session} sessions={sessions} onBack={onBack} setDialog={setDialog} />
-      {session.state === 'loading' && <LoadingBar session={session} />}
+      {(session.state === 'loading' || converting) && <LoadingBar session={session} converting={converting} />}
       {/* RFW는 열이 11개라 표 쪽을 넓게 */}
       <div className={`rv-main${parsed?.table && !ats ? ' wide' : ''}`}>
         <section className={`rv-left${pairImages ? ' fit' : ''}`}>
           <VideoTransport
             src={currentRaw?.prep === 'ready' && currentRaw.playPath ? fileUrl(currentRaw.playPath) : null}
-            waiting={currentRaw && <VideoWaiting video={currentRaw} />}
+            waiting={currentRaw && (
+              <VideoWaiting
+                video={currentRaw}
+                onConvert={() => void convertVideo(id, currentRaw.path)}
+                onOriginal={() => playOriginal(id, currentRaw.path)}
+                othersToConvert={needsConvert.filter((v) => v.path !== currentRaw.path).length}
+                onConvertAll={() => needsConvert.forEach((v) => void convertVideo(id, v.path))}
+              />
+            )}
             durationHint={currentRaw?.duration ?? null}
             fps={currentRaw?.fps ?? null}
             videoRef={videoRef}
@@ -652,7 +663,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               <>
                 {videos.length > 1 && (
                   <select value={current ?? ''} onChange={(e) => setCurrent(e.target.value)} title="영상 (F/R)">
-                    {videos.map((v) => <option key={v.path} value={v.path}>{v.name}</option>)}
+                    {videos.map((v) => <option key={v.path} value={v.path}>{`${v.name}${PREP_TAG[rawVideos.find((r) => r.path === v.path)?.prep ?? 'ready'] ?? ''}`}</option>)}
                   </select>
                 )}
                 <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!currentRaw?.playPath} className={search.open ? 'active' : ''} onClick={() => (search.open ? search.close() : search.start())} title="크롭한 이미지가 이 실행의 영상에 나타나는 구간 찾기 (테스트 PC에서 ffmpeg)">🔍 이미지 찾기</button>
@@ -662,7 +673,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           />
           {currentRaw?.prep === 'ready' && currentRaw.playPath === currentRaw.path && currentRaw.prepNote && (
             <div className="rv-notice small" title={currentRaw.prepNote}>
-              ⚠ {currentRaw.prepNote} — 길이가 안 나오거나 스텝 위치가 어긋나면 이 PC의 에이전트를 업데이트하세요 (업데이트 → 에이전트 업데이트)
+              ⚠ {currentRaw.prepNote}{currentRaw.prepNote !== ORIGINAL_NOTE && ' — 길이가 안 나오거나 스텝 위치가 어긋나면 이 PC의 에이전트를 업데이트하세요 (업데이트 → 에이전트 업데이트)'}
             </div>
           )}
           <div className="rv-sync-line small muted">
@@ -916,18 +927,60 @@ function ProgressLine({ progress: p }: { progress: LoadProgress }) {
   )
 }
 
-function LoadingBar({ session }: { session: ResultSession }) {
+/** 머리글 아래: 불러오는 중이거나, 다 불러온 뒤 승인한 변환을 하는 중 */
+function LoadingBar({ session, converting }: { session: ResultSession; converting: RawVideo | undefined }) {
+  const loading = session.state === 'loading'
+  const progress = session.progress ?? converting?.progress ?? null
+  const step = loading ? session.step : converting?.name ?? ''
   return (
     <div className="rv-loadbar" role="status">
-      <strong className="small">{`불러오는 중 ${session.done}/${session.total}`}</strong>
-      <span className="small muted ellipsis" title={session.step}>{session.step}</span>
-      {session.progress && <ProgressLine progress={session.progress} />}
+      <strong className="small">{loading ? `불러오는 중 ${session.done}/${session.total}` : '재생용 영상 만드는 중'}</strong>
+      <span className="small muted ellipsis" title={step}>{step}</span>
+      {progress && <ProgressLine progress={progress} />}
     </div>
   )
 }
 
-/** 영상 자리: 준비 단계와 진행 */
-function VideoWaiting({ video }: { video: RawVideo }) {
+/** 영상 고르기 목록에 붙이는 상태 */
+const PREP_TAG: Partial<Record<RawVideo['prep'], string>> = {
+  'needs-convert': ' (변환 필요)',
+  converting: ' (변환 중)',
+  failed: ' (실패)',
+}
+
+/** 영상 자리: 준비 단계와 진행. 바로 재생할 수 없으면 까닭·변환 내용·사본 크기를 보여 주고 승인을 받는다 */
+function VideoWaiting({ video, onConvert, onOriginal, othersToConvert, onConvertAll }: {
+  video: RawVideo
+  onConvert: () => void
+  onOriginal: () => void
+  /** 이 영상 말고도 변환을 기다리는 영상 수 */
+  othersToConvert: number
+  onConvertAll: () => void
+}) {
+  if (video.prep === 'needs-convert') {
+    const c = video.convert
+    return (
+      <div className="rv-video-wait rv-convert">
+        <strong>바로 재생할 수 없는 영상입니다</strong>
+        <div>{c?.reason ?? '브라우저가 이 영상을 그대로 재생·탐색할 수 없습니다'}</div>
+        <div className="small">
+          {`변환하면: ${c?.what ?? video.prepNote ?? '탐색할 수 있는 재생용 사본'}`}
+          {c?.transcode ? ' — 다시 인코딩이라 시간이 오래 걸립니다' : ' — 화질 그대로, 비교적 빠릅니다'}
+        </div>
+        {c?.sourceBytes && (
+          <div className="small">
+            {`사본: 테스트 PC ${c.cacheDrive ?? ''}에 약 ${formatBytes(c.sourceBytes)}${c.cacheFreeBytes ? ` (남은 공간 ${formatBytes(c.cacheFreeBytes)})` : ''}`}
+            {' · 원본은 그대로이고, 사본은 Result 탭에서 지울 수 있습니다'}
+          </div>
+        )}
+        <div className="rv-convert-actions">
+          <button type="button" className="primary" onClick={onConvert}>변환 시작</button>
+          {othersToConvert > 0 && <button type="button" onClick={onConvertAll}>{`변환이 필요한 영상 ${othersToConvert + 1}개 모두 변환`}</button>}
+          <button type="button" onClick={onOriginal} title="이동이 느리거나 안 될 수 있습니다">변환 없이 원본 재생</button>
+        </div>
+      </div>
+    )
+  }
   const text = video.prep === 'waiting' ? '앞 영상을 준비한 뒤 이 영상을 준비합니다…'
     : video.prep === 'checking' ? '영상 확인 중…'
       : video.prep === 'failed' ? `재생용 영상을 만들지 못했습니다: ${video.prepNote ?? ''}`
@@ -937,6 +990,12 @@ function VideoWaiting({ video }: { video: RawVideo }) {
     <div className="rv-video-wait">
       {text && <div>{text}</div>}
       {video.progress && <ProgressLine progress={video.progress} />}
+      {video.prep === 'failed' && (
+        <div className="rv-convert-actions">
+          <button type="button" onClick={onConvert}>다시 변환</button>
+          <button type="button" onClick={onOriginal}>변환 없이 원본 재생</button>
+        </div>
+      )}
     </div>
   )
 }

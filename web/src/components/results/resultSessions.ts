@@ -42,6 +42,17 @@ export interface LoadProgress {
   eta: number | null
 }
 
+/** 바로 재생할 수 없어 변환이 필요한 까닭과 변환 내용 (사용자가 승인해야 변환한다) */
+export interface ConvertInfo {
+  reason: string | null
+  /** 변환이 무엇을 하는지 */
+  what: string | null
+  transcode: boolean
+  sourceBytes: number | null
+  cacheDrive: string | null
+  cacheFreeBytes: number | null
+}
+
 export interface RawVideo {
   path: string
   name: string
@@ -52,9 +63,12 @@ export interface RawVideo {
   /** 브라우저가 재생할 파일 (원본 또는 재생용 사본) */
   playPath: string | null
   fps: number | null
-  /** waiting: 앞 영상 준비를 기다림 · checking: 길이·형식 확인 중 · converting: 재생용 사본 만드는 중 · ready · failed */
+  /** waiting: 앞 영상 준비를 기다림 · checking: 길이·형식 확인 중 · needs-convert: 바로 재생할 수 없어 변환 승인을 기다림 ·
+   *  converting: 재생용 사본 만드는 중 · ready · failed */
   prep: 'waiting' | 'checking' | 'needs-convert' | 'converting' | 'ready' | 'failed'
   prepNote: string | null
+  /** needs-convert일 때 까닭·변환 내용 */
+  convert: ConvertInfo | null
   /** 사본 만드는·ffmpeg 받는 진행 */
   progress: LoadProgress | null
 }
@@ -127,7 +141,7 @@ export const sessionTitle = (s: ResultSession) => s.set?.name ?? baseName(s.sour
 
 export const newRawVideo = (p: string): RawVideo => ({
   path: p, name: baseName(p), duration: null, modified: null, size: null, metaStarted: null,
-  playPath: null, fps: null, prep: 'waiting', prepNote: null, progress: null,
+  playPath: null, fps: null, prep: 'waiting', prepNote: null, progress: null, convert: null,
 })
 
 /** 셋에 백업된 파일이면 서버에서, 아니면 테스트 PC에서 바로 */
@@ -407,18 +421,25 @@ async function loadVideo(id: string, v: string) {
     () => {},
   ).catch(() => {})
 
-  // 처음이면 테스트 PC가 ffmpeg를 받고, 탐색이 안 되는 영상이면 사본을 만든다: 그동안 진행을 1초마다
+  // 브라우저가 그대로 재생할 수 있으면 원본, 아니면 까닭을 보여 주고 사용자가 승인해야 변환한다 (처음이면 테스트 PC가 ffmpeg를 받는 진행도)
   const stopWatch = watchPrepare(id, agentId, v)
   try {
-    let r = await api.prepareVideo(agentId, v, false)
-    if (!r.playPath) {
-      update({ duration: r.duration, fps: r.fps, prep: 'converting', prepNote: r.note })
-      r = await api.prepareVideo(agentId, v, true)
-    }
+    const r = await api.prepareVideo(agentId, v, false)
     stopWatch()
-    update(r.playPath
-      ? { playPath: r.playPath, duration: r.duration, fps: r.fps, prep: 'ready', prepNote: r.note }
-      : { prep: 'failed', prepNote: r.error ?? r.note })
+    const saved = (s.config?.playPaths ?? {})[v]
+    if (r.playPath) update({ playPath: r.playPath, duration: r.duration, fps: r.fps, prep: 'ready', prepNote: r.note })
+    else if (r.needsConvert && saved && s.set?.files[saved.playPath]) {
+      // 셋에 백업해 둔 재생용 사본이 있으면 그걸로 (다시 변환하지 않는다)
+      update({ playPath: saved.playPath, duration: saved.duration, fps: saved.fps, prep: 'ready' })
+    } else if (r.needsConvert) {
+      update({
+        duration: r.duration, fps: r.fps, prep: 'needs-convert', prepNote: r.note,
+        convert: {
+          reason: r.reason ?? null, what: r.note, transcode: r.transcode ?? false, sourceBytes: r.sourceBytes || null,
+          cacheDrive: r.cacheDrive ?? null, cacheFreeBytes: r.cacheFreeBytes || null,
+        },
+      })
+    } else update({ prep: 'failed', prepNote: r.error ?? r.note })
   } catch (err) {
     stopWatch()
     // PC가 꺼졌거나 옛 에이전트: 셋에 백업한 재생용 사본 → 원본을 브라우저가 읽는 만큼
@@ -433,6 +454,35 @@ async function loadVideo(id: string, v: string) {
     }
   }
   await info
+}
+
+/** 사용자가 승인한 변환: 재생용 사본을 만들며 진행(속도·남은 시간)을 보여 준다 */
+export async function convertVideo(id: string, v: string) {
+  const s = find(id)
+  if (!s) return
+  const { agentId } = s.source
+  const update = (p: Partial<RawVideo>) => updateSessionVideo(id, v, p)
+  update({ prep: 'converting' })
+  const stopWatch = watchPrepare(id, agentId, v)
+  try {
+    const r = await api.prepareVideo(agentId, v, true)
+    stopWatch()
+    update(r.playPath
+      ? { playPath: r.playPath, duration: r.duration, fps: r.fps, prep: 'ready', prepNote: r.note, convert: null }
+      : { prep: 'failed', prepNote: r.error ?? r.note })
+  } catch (err) {
+    stopWatch()
+    update({ prep: 'failed', prepNote: toMessage(err) })
+  }
+}
+
+export const ORIGINAL_NOTE = '변환하지 않고 원본을 그대로 재생합니다 — 원하는 위치로 이동이 느리거나 안 될 수 있습니다'
+
+/** 변환하지 않고 원본을 그대로 재생 (이동이 느리거나 안 될 수 있다) */
+export function playOriginal(id: string, v: string) {
+  const s = find(id)
+  if (!s) return
+  updateSessionVideo(id, v, { playPath: v, prep: 'ready', convert: null, prepNote: ORIGINAL_NOTE })
 }
 
 function probeDuration(url: string): Promise<number | null> {
