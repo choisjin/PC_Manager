@@ -57,6 +57,8 @@ internal sealed class InstanceConfig
 internal sealed class LauncherConfig
 {
     public List<InstanceConfig> Instances { get; set; } = [];
+    /// <summary>HTTPS 인증서에 더 넣을 주소 (이 PC에 없는 주소: 공유기 포트 포워딩의 바깥 주소, DNS 이름 등)</summary>
+    public List<string> CertificateHosts { get; set; } = [];
 }
 
 internal static class LauncherStore

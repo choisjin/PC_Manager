@@ -25,7 +25,7 @@ public sealed class InstalledCertificate(ServerOptions options, StoreLocation lo
     public X509Certificate2? Current => _current;
 
     /// <summary>
-    /// 인증서가 없거나 곧 만료되거나 지금 주 IP·PC 이름이 빠져 있으면 새로 만든다. 네트워크가 아직 안 잡혔으면(주 IP 없음) 그대로 둔다.
+    /// 인증서가 없거나 곧 만료되거나 지금 가진 IP·PC 이름 중 하나라도 빠져 있으면 새로 만든다. 네트워크가 아직 안 잡혔으면(주 IP 없음) 그대로 둔다.
     /// </summary>
     /// <returns>바꾼 내용 (로그용). 바꾼 게 없으면 null</returns>
     public string? Ensure()
@@ -47,10 +47,8 @@ public sealed class InstalledCertificate(ServerOptions options, StoreLocation lo
             var oldIps = existing is null ? [] : SanAddresses(existing);
             var changes = new List<string>();
 
-            // 사람들이 여는 주소의 IP가 아직 이 PC 것이면 그 IP만 보면 된다 (VPN 등 다른 어댑터가 오가도 그대로 둠)
-            var urlIp = UrlAddress(options.DashboardHttpsUrl) ?? UrlAddress(options.PublicUrl);
-            var required = urlIp is not null && ips.Contains(urlIp) ? urlIp : primary;
-            if (existing is null || existing.NotAfter < DateTime.Now.AddDays(30) || !Covers(existing, names, required))
+            // 지금 가진 IP가 모두 들어 있어야 한다 (네트워크 카드가 둘인 PC는 사람마다 다른 IP로 연다). 없어진 IP는 남아 있어도 된다
+            if (existing is null || existing.NotAfter < DateTime.Now.AddDays(30) || !Covers(existing, names, ips))
             {
                 var created = Create(names, [.. ips, IPAddress.Loopback]);
                 foreach (var old in my.Certificates.Find(X509FindType.FindBySubjectDistinguishedName, CertificateTrust.ServerSubject, validOnly: false))
@@ -98,20 +96,18 @@ public sealed class InstalledCertificate(ServerOptions options, StoreLocation lo
         return created;
     }
 
-    private static bool Covers(X509Certificate2 certificate, IReadOnlyList<string> names, IPAddress primary)
+    private static bool Covers(X509Certificate2 certificate, IReadOnlyList<string> names, IReadOnlyList<IPAddress> ips)
     {
         var ext = certificate.Extensions.OfType<X509SubjectAlternativeNameExtension>().FirstOrDefault();
         if (ext is null)
             return false;
         var dns = ext.EnumerateDnsNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return names.All(dns.Contains) && ext.EnumerateIPAddresses().Contains(primary);
+        var addresses = ext.EnumerateIPAddresses().ToHashSet();
+        return names.All(dns.Contains) && ips.All(addresses.Contains);
     }
 
     private static HashSet<IPAddress> SanAddresses(X509Certificate2 certificate) =>
         certificate.Extensions.OfType<X509SubjectAlternativeNameExtension>().FirstOrDefault()?.EnumerateIPAddresses().ToHashSet() ?? [];
-
-    private static IPAddress? UrlAddress(string? url) =>
-        Uri.TryCreate(url, UriKind.Absolute, out var uri) && IPAddress.TryParse(uri.Host, out var ip) ? ip : null;
 
     /// <summary>주소의 호스트가 이 PC의 옛 IP(지금은 없는)면 주 IP로 바꾼다</summary>
     private static string? Rehost(string? url, HashSet<IPAddress> oldIps, IReadOnlyList<IPAddress> ips, IPAddress primary)

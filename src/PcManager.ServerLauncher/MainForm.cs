@@ -39,6 +39,7 @@ internal sealed partial class MainForm : Form
     private readonly Button _update = new() { Text = "일괄 업데이트" };
     private readonly Button _updateZip = new() { Text = "zip으로 업데이트…" };
     private readonly Button _trust = new() { Text = "HTTPS 인증서 신뢰(이 PC)" };
+    private readonly Button _certificateHosts = new() { Text = "인증서 추가 주소…" };
     private readonly Label _version = new() { AutoSize = true, Margin = new Padding(0, 8, 12, 0) };
     private readonly Label _status = new() { AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(0, 8, 0, 0) };
     private readonly ProgressBar _progress = new() { Width = 160, Visible = false, Margin = new Padding(8, 6, 0, 0) };
@@ -100,6 +101,7 @@ internal sealed partial class MainForm : Form
             bottom.Controls.Add(Styled(b));
         bottom.Controls.Add(new Label { Width = 16 });
         bottom.Controls.Add(Styled(_trust));
+        bottom.Controls.Add(Styled(_certificateHosts));
         bottom.Controls.Add(_progress);
 
         var footer = Row();
@@ -133,6 +135,7 @@ internal sealed partial class MainForm : Form
         _update.Click += async (_, _) => await UpdateFromGitHubAsync();
         _updateZip.Click += async (_, _) => await UpdateFromZipAsync();
         _trust.Click += (_, _) => TrustCertificate();
+        _certificateHosts.Click += async (_, _) => await EditCertificateHostsAsync();
         _autorun.Checked = Autorun.IsEnabled;
         _autorun.CheckedChanged += (_, _) => Autorun.Set(_autorun.Checked);
 
@@ -273,6 +276,8 @@ internal sealed partial class MainForm : Form
         _stopAll.Enabled = !_busy && _instances.Any(i => i.IsActive);
         _update.Enabled = _updateZip.Enabled = !_busy;
         _trust.Visible = _instances.Any(i => i.Config.ResolvedHttpsPort > 0) && !_certificateTrusted;
+        _certificateHosts.Visible = _instances.Any(i => i.Config.ResolvedHttpsPort > 0);
+        _certificateHosts.Enabled = !_busy;
     }
 
     private string VersionText()
@@ -659,7 +664,7 @@ internal sealed partial class MainForm : Form
             return;
         try
         {
-            if (ServerCertificate.Ensure())
+            if (ServerCertificate.Ensure(_config.CertificateHosts))
                 SetStatus("HTTPS 인증서를 만들었습니다 (이 PC 이름·IP용). 에이전트는 다시 연결될 때 자동으로 신뢰합니다.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
@@ -691,7 +696,7 @@ internal sealed partial class MainForm : Form
     }
 
     /// <summary>
-    /// 서버 PC의 IP가 바뀌어 인증서를 새로 만들었으면 HTTPS 서버를 재시작해 새 인증서를 쓰게 한다
+    /// 서버 PC의 IP가 바뀌거나 늘어 인증서를 새로 만들었으면 HTTPS 서버를 재시작해 새 인증서를 쓰게 한다
     /// (서버는 시작할 때 인증서 파일을 읽는다)
     /// </summary>
     private async Task RenewCertificateAsync()
@@ -708,7 +713,7 @@ internal sealed partial class MainForm : Form
         bool renewed;
         try
         {
-            renewed = ServerCertificate.Ensure();
+            renewed = ServerCertificate.Ensure(_config.CertificateHosts);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
         {
@@ -721,12 +726,23 @@ internal sealed partial class MainForm : Form
         _certificateTrusted = ServerCertificate.IsTrustedHere();
         var running = _instances.Where(i => i.IsActive && i.Config.ResolvedHttpsPort > 0).ToList();
         if (running.Count > 0)
-            await RunBusy("IP가 바뀌어 HTTPS 인증서를 새로 만들었습니다. 서버 재시작 중…", () => Task.WhenAll(running.Select(RestartAsync)));
-        SetStatus("IP가 바뀌어 HTTPS 인증서를 새로 만들었습니다. 대시보드 PC는 인증서 설치 도구를 다시 받아 실행해야 합니다"
+            await RunBusy("주소가 바뀌어 HTTPS 인증서를 새로 만들었습니다. 서버 재시작 중…", () => Task.WhenAll(running.Select(RestartAsync)));
+        SetStatus("주소가 바뀌어 HTTPS 인증서를 새로 만들었습니다. 대시보드 PC는 인증서 설치 도구를 다시 받아 실행해야 합니다"
             + (_certificateTrusted ? "." : " (이 PC는 [HTTPS 인증서 신뢰(이 PC)])."));
         _tray.ShowBalloonTip(5000, "PC Manager 서버 런처",
-            "IP가 바뀌어 HTTPS 인증서를 새로 만들고 서버를 재시작했습니다. 대시보드 PC는 인증서 설치 도구를 다시 실행하세요.", ToolTipIcon.Info);
+            "주소가 바뀌어 HTTPS 인증서를 새로 만들고 서버를 재시작했습니다. 대시보드 PC는 인증서 설치 도구를 다시 실행하세요.", ToolTipIcon.Info);
         UpdateButtons();
+    }
+
+    /// <summary>인증서 추가 주소 (공유기 포트 포워딩의 바깥 주소 등). 바뀌면 인증서를 새로 만들고 HTTPS 서버를 재시작한다</summary>
+    private async Task EditCertificateHostsAsync()
+    {
+        using var dialog = new CertificateHostsDialog(_config.CertificateHosts);
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+        _config.CertificateHosts = dialog.Result;
+        Save();
+        await RenewCertificateAsync();
     }
 
     private void TrustCertificate()

@@ -26,26 +26,37 @@ internal static class ServerCertificate
     private static readonly Lock Gate = new();
 
     /// <summary>
-    /// 없거나, 곧 만료되거나, 이 PC의 주 IP(기본 게이트웨이가 있는 어댑터)·이름이 빠져 있으면 새로 만든다. 새로 만들었으면 true.
-    /// VPN 등 다른 어댑터 IP가 오가는 것만으로는 다시 만들지 않는다 (만들 때마다 대시보드 PC들이 인증서를 다시 설치해야 하므로)
+    /// 없거나, 곧 만료되거나, 이 PC가 지금 가진 IP·이름 중 하나라도 빠져 있으면 새로 만든다. 새로 만들었으면 true.
+    /// (네트워크 카드가 둘인 PC는 사람마다 다른 IP로 열 수 있어 모든 IP가 들어 있어야 한다. 없어진 IP는 남아 있어도 된다)
     /// </summary>
-    public static bool Ensure()
+    /// <param name="extraHosts">이 PC에 없는 주소 (공유기 포트 포워딩의 바깥 주소, DNS 이름 등)</param>
+    public static bool Ensure(IReadOnlyList<string> extraHosts)
     {
         lock (Gate)
-            return EnsureCore();
+            return EnsureCore(extraHosts);
     }
 
-    private static bool EnsureCore()
+    private static bool EnsureCore(IReadOnlyList<string> extraHosts)
     {
         var names = HostNames();
         var ips = AddressList();
+        foreach (var host in extraHosts)
+        {
+            if (IPAddress.TryParse(host, out var ip))
+            {
+                if (!ips.Contains(ip))
+                    ips.Add(ip);
+            }
+            else if (!names.Contains(host, StringComparer.OrdinalIgnoreCase))
+            {
+                names.Add(host);
+            }
+        }
         if (Load() is { } existing)
         {
             using (existing)
             {
-                // 네트워크가 아직 안 잡혔으면(주 IP 없음) 이름만 본다
-                var primary = PrimaryAddress();
-                if (existing.NotAfter > DateTime.Now.AddDays(30) && Covers(existing, names, primary))
+                if (existing.NotAfter > DateTime.Now.AddDays(30) && Covers(existing, names, ips))
                     return false;
             }
         }
@@ -127,25 +138,15 @@ internal static class ServerCertificate
         }
     }
 
-    private static bool Covers(X509Certificate2 certificate, IReadOnlyList<string> names, IPAddress? primary)
+    private static bool Covers(X509Certificate2 certificate, IReadOnlyList<string> names, IReadOnlyList<IPAddress> ips)
     {
         var ext = certificate.Extensions.OfType<X509SubjectAlternativeNameExtension>().FirstOrDefault();
         if (ext is null)
             return false;
         var dns = ext.EnumerateDnsNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return names.All(dns.Contains) && (primary is null || ext.EnumerateIPAddresses().Contains(primary));
+        var addresses = ext.EnumerateIPAddresses().ToHashSet();
+        return names.All(dns.Contains) && ips.All(addresses.Contains);
     }
-
-    /// <summary>기본 게이트웨이가 있는 어댑터의 IPv4 (127.*, 169.254.* 제외). 네트워크가 아직 안 잡혔으면 null</summary>
-    private static IPAddress? PrimaryAddress() =>
-        NetworkInterface.GetAllNetworkInterfaces()
-            .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
-            .Select(n => n.GetIPProperties())
-            .Where(p => p.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork && !g.Address.Equals(IPAddress.Any)))
-            .SelectMany(p => p.UnicastAddresses)
-            .Select(a => a.Address)
-            .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a)
-                && !a.ToString().StartsWith("169.254.", StringComparison.Ordinal));
 
     private static List<string> HostNames()
     {
@@ -169,7 +170,8 @@ internal static class ServerCertificate
             .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
             .SelectMany(n => n.GetIPProperties().UnicastAddresses)
             .Select(a => a.Address)
-            .Where(a => a.AddressFamily == AddressFamily.InterNetwork)
+            // 자동 할당(169.254.*)은 연결이 안 된 어댑터라 넣지 않는다 (붙었다 떨어질 때마다 다시 만들지 않게)
+            .Where(a => a.AddressFamily == AddressFamily.InterNetwork && !a.ToString().StartsWith("169.254.", StringComparison.Ordinal))
             .ToList();
         list.Add(IPAddress.Loopback);
         return list.Distinct().ToList();
