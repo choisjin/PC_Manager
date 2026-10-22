@@ -8,7 +8,7 @@ import {
   RESULT_MODE_LABEL, type ResultMapping, type ResultMode, type ResultRow, statusTone, timeFromName,
 } from './resultCsv'
 import {
-  addSessionVideo, autoAssign, baseName, closeSets, closeSetup, closeViewer, dirName, dismissToast, openSets, openSetup, openViewer,
+  addSessionVideo, autoAssign, baseName, closeSets, closeSetup, closeViewer, dirName, dismissToast, type LoadProgress, openSets, openSetup, openViewer,
   type RawVideo, rememberedRefDir, rememberRefDir, type ResultSession, saveSessionConfig, sessionFileUrl, sessionTitle, setSessionSet,
   type SetupState, type Source, startSession, toMessage, updateSessionVideo, useResults, type ViewConfig,
 } from './resultSessions'
@@ -41,7 +41,8 @@ const sourceFromSet = (set: ResultSet): Source => ({
  */
 export function ResultHost({ machineName }: { machineName: (agentId: string) => string }) {
   const { sessions, activeId, setup, setsOpen, toasts } = useResults()
-  const active = sessions.find((s) => s.id === activeId && s.state === 'ready') ?? null
+  // 불러오는 중에도 화면을 연다 (Result·영상은 오는 대로 채우고 진행은 위에 따로)
+  const active = sessions.find((s) => s.id === activeId && s.state !== 'failed') ?? null
   const [dialog, setDialog] = useState<Dialog>(null)
   const [preview, setPreview] = useState<string | null>(null)
   // 결과 확인 탭: 주소의 id로 적어 둔 내용(경로·셋)을 읽어 불러오고, 다 되면 바로 연다
@@ -70,11 +71,11 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
     return () => window.clearTimeout(timer)
   }, [tabId])
 
-  // 다 된 결과가 있는데 보고 있는 게 없으면 바로 연다 (처음 불러왔을 때, '경로'에서 다시 열었을 때)
+  // 보고 있는 게 없으면 불러오기를 시작하자마자 연다 (처음 불러올 때, '경로'에서 다시 열었을 때)
   useEffect(() => {
     if (!tabId || activeId) return
-    const ready = sessions.find((s) => s.state === 'ready' && !s.opened)
-    if (ready) openViewer(ready.id)
+    const fresh = sessions.find((s) => s.state !== 'failed' && !s.opened)
+    if (fresh) openViewer(fresh.id)
   }, [tabId, sessions, activeId])
   // 탭 제목
   useEffect(() => {
@@ -128,7 +129,7 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
     closeSetup()
     updateResultTab(tabId, { setId: full.id })
     const loaded = sessions.find((s) => s.set?.id === full.id && s.state !== 'failed')
-    if (loaded?.state === 'ready') openViewer(loaded.id)
+    if (loaded && loaded.state !== 'failed') openViewer(loaded.id)
     else if (!loaded) startSession(sourceFromSet(full), full)
   }
 
@@ -148,6 +149,7 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
               <>
                 <progress max={Math.max(1, latest.total)} value={latest.done} />
                 <p className="small muted">{latest.step} ({latest.done}/{latest.total})</p>
+                {latest.progress && <ProgressLine progress={latest.progress} />}
               </>
             )}
             {latest.state === 'failed' && <p className="error small">{latest.error ?? '불러오지 못했습니다'}</p>}
@@ -156,7 +158,7 @@ export function ResultHost({ machineName }: { machineName: (agentId: string) => 
           </>
         )}
         <div className="rv-setup-actions">
-          {latest?.state === 'ready' && <button type="button" className="primary" onClick={() => openViewer(latest.id)}>열기</button>}
+          {latest && latest.state !== 'failed' && <button type="button" className="primary" onClick={() => openViewer(latest.id)}>열기</button>}
           {latest?.state === 'failed' && <button type="button" onClick={() => startSession(latest.source, latest.set, latest.id)}>다시 불러오기</button>}
           {latest && <button type="button" onClick={() => openSetup(latest.source, latest.id)}>경로 수정</button>}
           <button type="button" onClick={openSets}>불러오기</button>
@@ -622,18 +624,13 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   return (
     <>
       <ViewerHead session={session} sessions={sessions} onBack={onBack} setDialog={setDialog} />
+      {session.state === 'loading' && <LoadingBar session={session} />}
       {/* RFW는 열이 11개라 표 쪽을 넓게 */}
       <div className={`rv-main${parsed?.table && !ats ? ' wide' : ''}`}>
         <section className={`rv-left${pairImages ? ' fit' : ''}`}>
           <VideoTransport
             src={currentRaw?.prep === 'ready' && currentRaw.playPath ? fileUrl(currentRaw.playPath) : null}
-            waiting={
-              !currentRaw ? null
-                : currentRaw.prep === 'checking' ? '영상 확인 중…'
-                  : currentRaw.prep === 'converting' || currentRaw.prep === 'needs-convert'
-                    ? `탐색할 수 있는 재생용 영상을 테스트 PC에서 만드는 중… (${currentRaw.prepNote ?? ''}, 한 번 만들면 다시 쓰고 원본은 그대로)`
-                    : currentRaw.prep === 'failed' ? `재생용 영상을 만들지 못했습니다: ${currentRaw.prepNote ?? ''}` : null
-            }
+            waiting={currentRaw && <VideoWaiting video={currentRaw} />}
             durationHint={currentRaw?.duration ?? null}
             fps={currentRaw?.fps ?? null}
             videoRef={videoRef}
@@ -850,7 +847,7 @@ function ViewerHead({ session, sessions, onBack, setDialog }: {
         onChange={(e) => openViewer(e.target.value)}
       >
         {sessions.map((s) => (
-          <option key={s.id} value={s.id} disabled={s.state !== 'ready'}>
+          <option key={s.id} value={s.id} disabled={s.state === 'failed'}>
             {sessionTitle(s)} · {s.source.machineName}{s.state === 'loading' ? ` (불러오는 중 ${s.done}/${s.total})` : s.state === 'failed' ? ' (실패)' : ''}
           </option>
         ))}
@@ -862,7 +859,15 @@ function ViewerHead({ session, sessions, onBack, setDialog }: {
       )}
       <span className="rv-spacer" />
       <button type="button" onClick={openSets} title="저장해 둔 결과 확인 불러오기">불러오기</button>
-      <button type="button" className="primary" onClick={() => setDialog('save')} title="Result·이미지(·영상)를 서버에 저장">저장</button>
+      <button
+        type="button"
+        className="primary"
+        disabled={session.state === 'loading'}
+        onClick={() => setDialog('save')}
+        title={session.state === 'loading' ? '불러오는 중에는 저장할 수 없습니다 (다 되면 저장)' : 'Result·이미지(·영상)를 서버에 저장'}
+      >
+        저장
+      </button>
       {RESULT_TAB_ID ? (
         <button
           type="button"
@@ -881,6 +886,58 @@ function ViewerHead({ session, sessions, onBack, setDialog }: {
         <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc) — 진행상황에서 다시 열 수 있습니다" onClick={closeViewer}>✕</button>
       )}
     </header>
+  )
+}
+
+// ─────────────────────────────── 불러오는 중: 화면은 먼저 열고 진행(받는 속도·남은 시간)은 따로
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+/** 남은 초 → m:ss (한 시간 넘으면 h:mm:ss) */
+const formatEta = (sec: number) => {
+  const t = Math.ceil(sec)
+  const h = Math.floor(t / 3600)
+  const m = Math.floor((t % 3600) / 60)
+  return h ? `${h}:${pad2(m)}:${pad2(t % 60)}` : `${m}:${pad2(t % 60)}`
+}
+
+/** 진행 막대 + 무엇을 · 몇 % · 받은 양 · 속도 · 남은 시간 */
+function ProgressLine({ progress: p }: { progress: LoadProgress }) {
+  return (
+    <div className="rv-progress">
+      <progress max={1} value={p.fraction ?? undefined} />
+      <span className="rv-progress-text small">
+        <span>{p.label}</span>
+        {p.fraction !== null && <span className="mono">{`${Math.floor(p.fraction * 100)}%`}</span>}
+        {p.total !== null && <span className="mono muted">{`${formatBytes(p.bytes)} / ${formatBytes(p.total)}`}</span>}
+        {p.rate !== null && <span className="mono">{`${formatBytes(p.rate)}/s`}</span>}
+        <span>{p.eta !== null ? `남은 시간 약 ${formatEta(p.eta)}` : '남은 시간 계산 중'}</span>
+      </span>
+    </div>
+  )
+}
+
+function LoadingBar({ session }: { session: ResultSession }) {
+  return (
+    <div className="rv-loadbar" role="status">
+      <strong className="small">{`불러오는 중 ${session.done}/${session.total}`}</strong>
+      <span className="small muted ellipsis" title={session.step}>{session.step}</span>
+      {session.progress && <ProgressLine progress={session.progress} />}
+    </div>
+  )
+}
+
+/** 영상 자리: 준비 단계와 진행 */
+function VideoWaiting({ video }: { video: RawVideo }) {
+  const text = video.prep === 'waiting' ? '앞 영상을 준비한 뒤 이 영상을 준비합니다…'
+    : video.prep === 'checking' ? '영상 확인 중…'
+      : video.prep === 'failed' ? `재생용 영상을 만들지 못했습니다: ${video.prepNote ?? ''}`
+        : video.prep === 'ready' ? null
+          : `탐색할 수 있는 재생용 영상을 테스트 PC에서 만드는 중… (${video.prepNote ?? ''}, 한 번 만들면 다시 쓰고 원본은 그대로)`
+  return (
+    <div className="rv-video-wait">
+      {text && <div>{text}</div>}
+      {video.progress && <ProgressLine progress={video.progress} />}
+    </div>
   )
 }
 

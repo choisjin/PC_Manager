@@ -142,6 +142,8 @@ public class LinuxAgentWorker(
             (path, start, end) => trimmer.TrimAsync(path, start, end));
         connection.On<string, bool, VideoPrepareResult>(AgentClientMethods.PrepareVideo,
             (path, convert) => trimmer.PrepareAsync(path, convert));
+        connection.On<string, VideoPrepareProgress?>(AgentClientMethods.GetPrepareProgress,
+            path => Task.Run(() => trimmer.GetProgress(path)));
         connection.On<ImageSearchRequest, string>(AgentClientMethods.StartImageSearch,
             request => Task.Run(() => imageSearch.Start(request)));
         connection.On<string, int, ImageSearchStatus?>(AgentClientMethods.GetImageSearch,

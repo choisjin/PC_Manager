@@ -1085,7 +1085,7 @@ const EXACT: Record<string, string> = {
   "찾은 경로를 경로 지정 창에서 고친 뒤 엽니다": "Adjust the found paths in the path window, then open",
   "영상·이미지 폴더 찾는 중…": "Finding videos and image folders…",
   "이름에 시각이 없어 수정 시각으로 봤습니다": "No time in the name, so the modified time was used",
-  "PC마다 결과가 쌓이는 폴더를 정해 두면, 날짜만 고르면 그날 실행의 Result·영상·이미지를 알아서 찾아 엽니다. 모든 사용자가 같이 씁니다.": "Set the folders where each PC stores its results; then just pick a date and that day's Result, videos and images are found and opened automatically. Shared by all users.",
+  "PC마다 결과가 쌓이는 폴더를 정해 두면, 목록에서 Result 파일을 고르기만 하면 그 실행의 영상·이미지를 알아서 찾아 엽니다. 모든 사용자가 같이 씁니다. 같은 구성의 PC는 프리셋을 골라 바로 채우세요.": "Set the folders where each PC stores its results; then just pick a Result file from the list and that run's videos and images are found and opened automatically. Shared by all users. For PCs with the same setup, pick a preset to fill them in.",
   "PC가 연결되어 있지 않아 폴더를 확인할 수 없습니다": "The PC is not connected, so folders can't be checked",
   "Result 폴더 (필수)": "Result folder (required)",
   "영상 폴더": "Video folder",
@@ -1186,6 +1186,18 @@ const EXACT: Record<string, string> = {
   "크롭한 이미지가 너무 작거나 잘못되었습니다.": "The cropped image is too small or invalid.",
   "영상 크기를 알 수 없습니다.": "Unknown video size.",
   "영상 파일이 없습니다": "Video file not found",
+  "실행 시작": "Run started",
+  "마지막 기록": "Last written",
+  "위치": "Location",
+  "Result 파일": "Result files",
+  "고른 Result 파일의 정보가 여기에 나옵니다": "Details of the selected Result file appear here",
+  "(이름에 시각이 없어 수정 시각)": "(modified time — no time in the name)",
+  "Result 받는 중": "Downloading Result",
+  "테스트 PC가 서버에서 ffmpeg 받는 중 (처음 한 번)": "Test PC is downloading ffmpeg from the server (first time only)",
+  "재생용 영상 만드는 중": "Creating playback video",
+  "남은 시간 계산 중": "estimating time left",
+  "앞 영상을 준비한 뒤 이 영상을 준비합니다…": "This video will be prepared after the previous one…",
+  "불러오는 중에는 저장할 수 없습니다 (다 되면 저장)": "Can't save while loading (save when it's done)",
 }
 
 const TEMPLATES: [string, string][] = [
@@ -1485,6 +1497,8 @@ const TEMPLATES: [string, string][] = [
   ["· 영역이 넓어 1/{0}로 훑은 뒤 원래 크기로 확인", "· wide area: scanned at 1/{0} scale, then confirmed at full size"],
   ["찾은 구간 {0}개", "{0} segments found"],
   ["프레임 {0} · {1}초 · 최고 {2}%", "frame {0} · {1}s · peak {2}%"],
+  ["불러오는 중 {0}/{1}", "Loading {0}/{1}"],
+  ["남은 시간 약 {0}", "about {0} left"],
 ]
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

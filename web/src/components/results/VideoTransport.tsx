@@ -26,8 +26,8 @@ interface Props {
   /** 도구 모음 오른쪽 추가 버튼 (자르기 등) */
   extra?: ReactNode
   error?: string | null
-  /** 영상 대신 보여 줄 안내 (재생용 영상 만드는 중 등) */
-  waiting?: string | null
+  /** 영상 대신 보여 줄 안내 (재생용 영상 만드는 중·진행 등) */
+  waiting?: ReactNode
   /** ffmpeg가 읽은 길이 (브라우저가 길이를 모르는 영상: Infinity) */
   durationHint?: number | null
   /** ffmpeg가 읽은 fps (한 프레임 이동 간격) */

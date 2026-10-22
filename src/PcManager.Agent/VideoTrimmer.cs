@@ -88,6 +88,9 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
     private static readonly string[] PlayableCodecs = ["h264", "vp8", "vp9", "av1"];
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromDays(3);
     private readonly ConcurrentDictionary<string, Lazy<Task<VideoPrepareResult>>> _converting = new();
+    // 진행 (결과 확인 화면이 속도·남은 시간을 보여 준다): 원본 경로 → 사본 만드는 중, ffmpeg 받는 중
+    private readonly ConcurrentDictionary<string, ConvertProgress> _progress = new();
+    private FfmpegDownload? _ffmpegDownload;
 
     private string CacheDirectory => Path.Combine(options.Value.DataDirectory, "video-cache");
 
@@ -168,8 +171,22 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
             args.AddRange(["-movflags", "+faststart"]);
         args.AddRange(["-y", temp]);
 
+        // -progress: 처리한 영상 시각(out_time)·쓴 크기를 줄마다 내보낸다 → 진행률·속도
+        args.InsertRange(args.Count - 2, ["-progress", "pipe:1", "-nostats"]);
+
         logger.LogInformation("재생용 영상 만들기 ({Note}): {Path} → {Output}", note, path, output);
-        var (exitCode, errors) = await RunAsync(ffmpeg, args, MaxDuration * 2);
+        var progress = new ConvertProgress(new FileInfo(path).Length, probe.Duration);
+        _progress[path] = progress;
+        int exitCode;
+        string errors;
+        try
+        {
+            (exitCode, errors) = await RunAsync(ffmpeg, args, MaxDuration * 2, progress.Read);
+        }
+        finally
+        {
+            _progress.TryRemove(path, out _);
+        }
         if (exitCode != 0 || !File.Exists(temp) || new FileInfo(temp).Length == 0)
         {
             File.Delete(temp);
@@ -180,6 +197,60 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         File.Move(temp, output, overwrite: true);
         var made = await ProbeAsync(ffmpeg, output);
         return new VideoPrepareResult(output, true, made.Duration, made.Fps ?? probe.Fps, note, null);
+    }
+
+    /// <summary>재생 준비 진행: 이 영상의 사본을 만드는 중이면 그 진행, 아니면 ffmpeg를 받는 중이면 그 진행, 둘 다 아니면 null</summary>
+    public VideoPrepareProgress? GetProgress(string path)
+    {
+        if (_progress.TryGetValue(path, out var convert))
+            return convert.Snapshot();
+        return _ffmpegDownload?.Snapshot();
+    }
+
+    /// <summary>ffmpeg -progress 출력 (out_time_us=…, total_size=…)으로 본 사본 만들기 진행</summary>
+    private sealed class ConvertProgress(long inputBytes, double? duration)
+    {
+        private readonly DateTime _started = DateTime.UtcNow;
+        private double _outSeconds;
+        private long _outBytes;
+
+        public void Read(string line)
+        {
+            var eq = line.IndexOf('=');
+            if (eq <= 0)
+                return;
+            var key = line[..eq];
+            var value = line[(eq + 1)..].Trim();
+            // out_time_ms도 실제로는 마이크로초 (옛 ffmpeg는 out_time_us가 없다)
+            if (key is "out_time_us" or "out_time_ms" && long.TryParse(value, out var us) && us >= 0)
+                _outSeconds = us / 1_000_000.0;
+            else if (key == "total_size" && long.TryParse(value, out var size) && size >= 0)
+                _outBytes = size;
+        }
+
+        /// <summary>진행률 = 처리한 시각 / 길이 (길이를 모르면 쓴 크기 / 원본 크기). Bytes = 진행률 × 원본 크기</summary>
+        public VideoPrepareProgress Snapshot()
+        {
+            var fraction = duration is > 0 ? _outSeconds / duration.Value : inputBytes > 0 ? (double)_outBytes / inputBytes : 0;
+            fraction = Math.Clamp(fraction, 0, 0.999);
+            return new VideoPrepareProgress("convert", fraction, (long)(fraction * inputBytes), inputBytes, (DateTime.UtcNow - _started).TotalSeconds);
+        }
+    }
+
+    /// <summary>서버에서 ffmpeg.exe 받는 진행</summary>
+    private sealed class FfmpegDownload(long total)
+    {
+        private readonly DateTime _started = DateTime.UtcNow;
+        private long _received;
+
+        public void Add(int bytes) => Interlocked.Add(ref _received, bytes);
+
+        public VideoPrepareProgress Snapshot()
+        {
+            var received = Interlocked.Read(ref _received);
+            return new VideoPrepareProgress("ffmpeg", total > 0 ? Math.Min(1, (double)received / total) : 0, received, total,
+                (DateTime.UtcNow - _started).TotalSeconds);
+        }
     }
 
     /// <summary>오래 안 쓴 재생용 사본 지우기</summary>
@@ -227,8 +298,8 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
             audio.Success, audio.Success ? audio.Groups[1].Value : null, width, height);
     }
 
-    /// <summary>ffmpeg 실행 → (종료 코드, stderr). 시간 초과면 코드 -1</summary>
-    private static async Task<(int ExitCode, string Errors)> RunAsync(string ffmpeg, IEnumerable<string> args, TimeSpan limit)
+    /// <summary>ffmpeg 실행 → (종료 코드, stderr). 시간 초과면 코드 -1. onOutput: stdout 줄마다 (-progress)</summary>
+    private static async Task<(int ExitCode, string Errors)> RunAsync(string ffmpeg, IEnumerable<string> args, TimeSpan limit, Action<string>? onOutput = null)
     {
         var info = new ProcessStartInfo(ffmpeg)
         {
@@ -241,7 +312,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
             info.ArgumentList.Add(arg);
         using var process = Process.Start(info) ?? throw new InvalidOperationException("ffmpeg를 시작하지 못했습니다.");
         var errors = process.StandardError.ReadToEndAsync();
-        _ = process.StandardOutput.ReadToEndAsync();
+        var output = onOutput is null ? process.StandardOutput.ReadToEndAsync() : ReadLinesAsync(process.StandardOutput, onOutput);
         using var timeout = new CancellationTokenSource(limit);
         try
         {
@@ -252,7 +323,15 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
             process.Kill(entireProcessTree: true);
             return (-1, "");
         }
+        await output;
         return (process.ExitCode, await errors);
+    }
+
+    private static async Task<string> ReadLinesAsync(StreamReader reader, Action<string> onLine)
+    {
+        while (await reader.ReadLineAsync() is { } line)
+            onLine(line);
+        return "";
     }
 
     internal async Task<string> FindFfmpegAsync()
@@ -287,7 +366,22 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
                     throw new InvalidOperationException("ffmpeg가 없습니다 (서버에도 없음). 이 PC에 ffmpeg를 설치하거나 PATH에 넣어 주세요.");
                 await using var source = await response.Content.ReadAsStreamAsync();
                 await using var file = File.Create(temp);
-                await source.CopyToAsync(file);
+                var download = new FfmpegDownload(response.Content.Headers.ContentLength ?? 0);
+                _ffmpegDownload = download;
+                try
+                {
+                    var buffer = new byte[256 * 1024];
+                    int read;
+                    while ((read = await source.ReadAsync(buffer)) > 0)
+                    {
+                        await file.WriteAsync(buffer.AsMemory(0, read));
+                        download.Add(read);
+                    }
+                }
+                finally
+                {
+                    _ffmpegDownload = null;
+                }
             }
             File.Move(temp, local, overwrite: true);
             logger.LogInformation("ffmpeg를 서버에서 받았습니다: {Path}", local);

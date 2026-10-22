@@ -140,6 +140,14 @@ public static class ResultSetEndpoints
             }
         });
 
+        // 재생 준비 진행 (사본 만드는 중·ffmpeg 받는 중): 결과 확인 화면이 1초마다 묻는다. 아무것도 안 하면 204
+        app.MapGet("/api/agents/{agentId}/video/prepare/progress", async (string agentId, string path, AgentRegistry registry,
+            IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            await CallAgent(agentId, registry, agentHub, async proxy =>
+                await proxy.InvokeAsync<VideoPrepareProgress?>(AgentClientMethods.GetPrepareProgress, path, ct) is { } progress
+                    ? Results.Ok(progress)
+                    : Results.NoContent()));
+
         // 이미지 찾기: 테스트 PC 에이전트가 영상들에서 크롭 이미지 유사도를 프레임마다 잰다 (시작 → 진행 조회 → 멈춤)
         app.MapPost("/api/agents/{agentId}/video/image-search", async (string agentId, ImageSearchRequest request, AgentRegistry registry,
             IHubContext<AgentHub> agentHub, CancellationToken ct) =>

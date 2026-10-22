@@ -1,7 +1,7 @@
-// 결과 확인 세션: 경로를 정하고 '열기'를 누르면 Result·영상·이미지를 뒤에서 모두 읽어 두고,
-// 다 되면 알린다. 진행상황(PiP)에서 목록을 보고, 다 된 것은 바로 전체 화면으로 열어 서로 오갈 수 있다.
+// 결과 확인 세션: 경로를 정하고 '열기'를 누르면 화면을 바로 열고, Result·영상·이미지는 뒤에서 읽으며
+// 받는 속도·남은 시간을 보여 준다 (다 되면 알린다). 진행상황(PiP)에서 목록을 보고 서로 오갈 수 있다.
 import { useSyncExternalStore } from 'react'
-import { api, type FileEntry, type ResultSet } from '../../api'
+import { api, type FileEntry, type ResultSet, type VideoPrepareProgress } from '../../api'
 import { isImageFile, isVideoFile } from '../../fileTypes'
 import { type ClipItem, newId } from '../explorer/pcGroups'
 import { decodeText, detectResultMode, type ResultMapping, type ResultMode } from './resultCsv'
@@ -31,6 +31,17 @@ export interface Source {
   refDir: string | null
 }
 
+/** 받는·만드는 중인 것의 진행. rate: 바이트/초 · eta: 남은 초 (최근 변화로 계산, 모르면 null) */
+export interface LoadProgress {
+  label: string
+  /** 0~1 (모르면 null) */
+  fraction: number | null
+  bytes: number
+  total: number | null
+  rate: number | null
+  eta: number | null
+}
+
 export interface RawVideo {
   path: string
   name: string
@@ -41,9 +52,11 @@ export interface RawVideo {
   /** 브라우저가 재생할 파일 (원본 또는 재생용 사본) */
   playPath: string | null
   fps: number | null
-  /** checking: 길이·형식 확인 중 · converting: 재생용 사본 만드는 중 · ready · failed */
-  prep: 'checking' | 'needs-convert' | 'converting' | 'ready' | 'failed'
+  /** waiting: 앞 영상 준비를 기다림 · checking: 길이·형식 확인 중 · converting: 재생용 사본 만드는 중 · ready · failed */
+  prep: 'waiting' | 'checking' | 'needs-convert' | 'converting' | 'ready' | 'failed'
   prepNote: string | null
+  /** 사본 만드는·ffmpeg 받는 진행 */
+  progress: LoadProgress | null
 }
 
 export interface ResultSession {
@@ -58,13 +71,14 @@ export interface ResultSession {
   videos: RawVideo[]
   images: FileEntry[]
   refImages: FileEntry[]
-  /** 진행: 끝난 일 / 전체 일 · 지금 하는 일 */
+  /** 진행: 끝난 일 / 전체 일 · 지금 하는 일 · 지금 받는·만드는 것의 속도·남은 시간 */
   done: number
   total: number
   step: string
+  progress: LoadProgress | null
   startedAt: number
   readyAt: number | null
-  /** 다 된 뒤 한 번이라도 열어 봤는지 */
+  /** 한 번이라도 열어 봤는지 (불러오는 중에도 바로 열 수 있다) */
   opened: boolean
 }
 
@@ -113,7 +127,7 @@ export const sessionTitle = (s: ResultSession) => s.set?.name ?? baseName(s.sour
 
 export const newRawVideo = (p: string): RawVideo => ({
   path: p, name: baseName(p), duration: null, modified: null, size: null, metaStarted: null,
-  playPath: null, fps: null, prep: 'checking', prepNote: null,
+  playPath: null, fps: null, prep: 'waiting', prepNote: null, progress: null,
 })
 
 /** 셋에 백업된 파일이면 서버에서, 아니면 테스트 PC에서 바로 */
@@ -183,7 +197,7 @@ export function startSession(source: Source, set: ResultSet | null = null, repla
     id, source, set, config, state: 'loading', error: null, rawText: null,
     videos: source.videoPaths.map(newRawVideo), images: [], refImages: [],
     done: 0, total: 1 + source.videoPaths.length + (source.imageDir ? 1 : 0) + (source.refDir ? 1 : 0),
-    step: '준비 중', startedAt: Date.now(), readyAt: null, opened: false,
+    step: '준비 중', progress: null, startedAt: Date.now(), readyAt: null, opened: false,
   }
   const sessions = replaceId ? state.sessions.filter((s) => s.id !== replaceId) : state.sessions
   emit({
@@ -202,9 +216,10 @@ export function removeSession(id: string) {
   })
 }
 
+/** 결과 화면 열기: 불러오는 중이어도 연다 (Result·영상은 오는 대로 채운다) */
 export function openViewer(id: string) {
   const s = find(id)
-  if (!s || s.state !== 'ready') return
+  if (!s || s.state === 'failed') return
   patch(id, { opened: true })
   emit({ activeId: id, toasts: state.toasts.filter((t) => t.sessionId !== id) })
 }
@@ -232,6 +247,93 @@ export function addSessionVideo(id: string, path: string) {
 const step = (id: string, text: string) => patch(id, { step: text })
 const tick = (id: string) => patch(id, (s) => ({ done: s.done + 1 }))
 
+/** 속도(바이트/초)·남은 시간: 0.5초 넘게 떨어진 두 표본의 순간 속도를 지수 평활 (처음에는 평균 속도) */
+class RateMeter {
+  private last: { at: number; bytes: number } | null = null
+  private rate: number | null = null
+
+  measure(bytes: number, total: number | null, average: number | null = null): { rate: number | null; eta: number | null } {
+    const now = performance.now()
+    if (!this.last) this.last = { at: now, bytes }
+    else if (now - this.last.at >= 500) {
+      const r = ((bytes - this.last.bytes) * 1000) / (now - this.last.at)
+      this.rate = this.rate === null ? r : this.rate * 0.6 + r * 0.4
+      this.last = { at: now, bytes }
+    }
+    const rate = this.rate ?? average
+    return { rate, eta: rate && rate > 0 && total ? Math.max(0, (total - bytes) / rate) : null }
+  }
+}
+
+/** 응답 본문을 받으며 진행을 알린다 (0.25초마다, 마지막에 한 번 더) */
+async function readWithProgress(res: Response, report: (bytes: number, total: number | null) => void): Promise<ArrayBuffer> {
+  const total = Number(res.headers.get('Content-Length')) || null
+  if (!res.body) return res.arrayBuffer()
+  const reader = res.body.getReader()
+  const parts: Uint8Array[] = []
+  let bytes = 0
+  let reported = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    parts.push(value)
+    bytes += value.length
+    if (performance.now() - reported >= 250) {
+      reported = performance.now()
+      report(bytes, total)
+    }
+  }
+  report(bytes, total)
+  const all = new Uint8Array(bytes)
+  let at = 0
+  for (const part of parts) {
+    all.set(part, at)
+    at += part.length
+  }
+  return all.buffer
+}
+
+const PREPARE_LABEL: Record<VideoPrepareProgress['stage'], string> = {
+  ffmpeg: '테스트 PC가 서버에서 ffmpeg 받는 중 (처음 한 번)',
+  convert: '재생용 영상 만드는 중',
+}
+
+/** 재생 준비 진행을 1초마다 물어 영상·세션에 적는다. 옛 에이전트(진행을 모름)면 조용히 그만둔다. 돌려준 함수로 멈춤 */
+function watchPrepare(id: string, agentId: string, path: string): () => void {
+  let stopped = false
+  let stage: string | null = null
+  let meter = new RateMeter()
+  void (async () => {
+    while (!stopped) {
+      await new Promise((r) => window.setTimeout(r, 1000))
+      if (stopped || !find(id)) return
+      let p: VideoPrepareProgress | undefined
+      try {
+        p = await api.prepareProgress(agentId, path)
+      } catch {
+        return
+      }
+      if (stopped || !p) continue
+      if (p.stage !== stage) {
+        stage = p.stage
+        meter = new RateMeter()
+      }
+      const total = p.totalBytes || null
+      const progress: LoadProgress = {
+        label: PREPARE_LABEL[p.stage] ?? p.stage, fraction: p.fraction, bytes: p.bytes, total,
+        ...meter.measure(p.bytes, total, p.elapsedSeconds > 1 ? p.bytes / p.elapsedSeconds : null),
+      }
+      updateSessionVideo(id, path, { progress })
+      patch(id, { progress })
+    }
+  })()
+  return () => {
+    stopped = true
+    updateSessionVideo(id, path, { progress: null })
+    patch(id, { progress: null })
+  }
+}
+
 async function load(id: string) {
   const s = find(id)
   if (!s) return
@@ -242,7 +344,12 @@ async function load(id: string) {
     const csv = (async () => {
       const res = await fetch(sessionFileUrl(set, source.agentId, source.resultPath))
       if (!res.ok) throw new Error(`Result 파일을 읽지 못했습니다 (${res.status}): ${await res.text()}`)
-      const text = decodeText(await res.arrayBuffer())
+      const meter = new RateMeter()
+      const buffer = await readWithProgress(res, (bytes, total) => patch(id, {
+        progress: { label: 'Result 받는 중', fraction: total ? bytes / total : null, bytes, total, ...meter.measure(bytes, total) },
+      }))
+      patch(id, { progress: null })
+      const text = decodeText(buffer)
       // 고른 형식과 파일 내용이 다르면 내용을 따른다 (ATS로 두고 RFW 결과를 연 경우 등)
       const mode = detectResultMode(text)
       patch(id, (cur) => ({ rawText: text, source: mode && mode !== cur.source.mode ? { ...cur.source, mode } : cur.source }))
@@ -284,6 +391,7 @@ async function loadVideo(id: string, v: string) {
   if (!s) return
   const { agentId } = s.source
   const update = (p: Partial<RawVideo>) => updateSessionVideo(id, v, p)
+  update({ prep: 'checking' })
 
   const info = api.listFiles(agentId, dirName(v)).then(
     async (l) => {
@@ -299,16 +407,20 @@ async function loadVideo(id: string, v: string) {
     () => {},
   ).catch(() => {})
 
+  // 처음이면 테스트 PC가 ffmpeg를 받고, 탐색이 안 되는 영상이면 사본을 만든다: 그동안 진행을 1초마다
+  const stopWatch = watchPrepare(id, agentId, v)
   try {
     let r = await api.prepareVideo(agentId, v, false)
     if (!r.playPath) {
       update({ duration: r.duration, fps: r.fps, prep: 'converting', prepNote: r.note })
       r = await api.prepareVideo(agentId, v, true)
     }
+    stopWatch()
     update(r.playPath
       ? { playPath: r.playPath, duration: r.duration, fps: r.fps, prep: 'ready', prepNote: r.note }
       : { prep: 'failed', prepNote: r.error ?? r.note })
   } catch (err) {
+    stopWatch()
     // PC가 꺼졌거나 옛 에이전트: 셋에 백업한 재생용 사본 → 원본을 브라우저가 읽는 만큼
     const saved = (s.config?.playPaths ?? {})[v]
     if (saved && s.set?.files[saved.playPath]) {

@@ -470,19 +470,20 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
   )
 }
 
-/** 진행상황: 결과 확인 불러오기 한 건 (다 되면 바로 전체 화면으로) */
+/** 진행상황: 결과 확인 불러오기 한 건 (불러오는 중에도 바로 전체 화면으로) */
 function ResultItem({ session: s }: { session: ResultSession }) {
   const pct = s.total ? Math.round((s.done / s.total) * 100) : 0
   const title = sessionTitle(s)
   const ready = s.state === 'ready'
+  const openable = s.state !== 'failed'
   return (
     <div className={`pip-item pip-result ${s.state}${ready && !s.opened ? ' fresh' : ''}`} title={s.source.resultPath}>
       <div className="pip-item-top">
-        <button type="button" className="pip-result-name small ellipsis" disabled={!ready} onClick={() => openViewer(s.id)}>
+        <button type="button" className="pip-result-name small ellipsis" disabled={!openable} onClick={() => openViewer(s.id)}>
           {RESULT_MODE_LABEL[s.source.mode]} · {title}
         </button>
         {s.state === 'loading' && <span className="pip-pct small">{s.done}/{s.total}</span>}
-        {ready && <button type="button" className="primary small pip-result-open" onClick={() => openViewer(s.id)}>열기</button>}
+        {openable && <button type="button" className="primary small pip-result-open" onClick={() => openViewer(s.id)}>열기</button>}
         {s.state === 'failed' && (
           <button type="button" className="small" title="다시 불러오기" onClick={() => startSession(s.source, s.set, s.id)}>다시</button>
         )}

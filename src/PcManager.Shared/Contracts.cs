@@ -148,6 +148,13 @@ public record VideoTrimResult(string? OutputPath, string? Error);
 public record VideoPrepareResult(string? PlayPath, bool NeedsConvert, double? Duration, double? Fps, string? Note, string? Error);
 
 /// <summary>
+/// 재생 준비 진행 (결과 확인 화면이 속도·남은 시간을 계산해 보여 준다).
+/// Stage: ffmpeg = 테스트 PC가 서버에서 ffmpeg를 받는 중 · convert = 재생용 사본 만드는 중.
+/// Bytes/TotalBytes: 받은 바이트 (ffmpeg) 또는 처리한 원본 바이트 = 진행률 × 원본 크기 (convert)
+/// </summary>
+public record VideoPrepareProgress(string Stage, double Fraction, long Bytes, long TotalBytes, double ElapsedSeconds);
+
+/// <summary>
 /// 결과 확인 도구의 이미지 찾기: 영상들의 모든 프레임에서 검색 영역 안의 템플릿(크롭한 이미지) 유사도를 잰다.
 /// 좌표는 FrameWidth×FrameHeight(크롭한 영상의 원래 크기) 기준 픽셀. 크기가 다른 영상은 그 크기로 늘려 비교.
 /// Template: TemplateWidth×TemplateHeight 회색조(0~255) 픽셀, 한 줄씩
@@ -327,6 +334,8 @@ public static class AgentClientMethods
     public const string TrimVideo = "TrimVideo";
     /// <summary>(string path, bool convert) → VideoPrepareResult. 영상 길이·fps를 읽고, convert면 탐색 가능한 재생용 사본을 만든다 (캐시)</summary>
     public const string PrepareVideo = "PrepareVideo";
+    /// <summary>(string path) → VideoPrepareProgress? 이 영상의 재생 준비 진행 (사본 만드는 중·ffmpeg 받는 중이 아니면 null)</summary>
+    public const string GetPrepareProgress = "GetPrepareProgress";
     /// <summary>(ImageSearchRequest) → string 작업 id. 영상들에서 크롭 이미지 유사도 찾기를 뒤에서 시작 (진행은 GetImageSearch)</summary>
     public const string StartImageSearch = "StartImageSearch";
     /// <summary>(string id, int have) → ImageSearchStatus? (없는 작업이면 null). have: 이미 받은 영상 수</summary>

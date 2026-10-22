@@ -4993,6 +4993,17 @@ th.sortable:hover {
 .rv-video-stage video { width: 100%; max-height: 56vh; object-fit: contain; display: block; }
 .rv-video:fullscreen .rv-video-stage video { max-height: calc(100vh - 80px); }
 .rv-video-empty { padding: 60px 0; color: #aaa; }
+/* 불러오는 중: 화면을 먼저 열고 진행(받는 속도·남은 시간)은 머리글 아래·영상 자리에 따로 */
+.rv-loadbar { flex: none; display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--accent-soft); }
+.rv-loadbar > .ellipsis { flex: 0 1 auto; min-width: 0; max-width: 40%; }
+.rv-progress { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rv-loadbar .rv-progress { flex: 1; }
+.rv-progress progress { flex: none; width: 140px; }
+.rv-progress-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
+.rv-video-wait { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 16px; text-align: center; }
+.rv-video-wait .rv-progress { flex-direction: column; }
+.rv-video-wait .rv-progress progress { width: min(320px, 80%); }
+.rv-video-wait .rv-progress-text { justify-content: center; color: #ddd; }
 .rv-video-error { position: absolute; bottom: 8px; left: 8px; right: 8px; color: #fff; background: rgba(200, 40, 40, 0.8); padding: 4px 8px; border-radius: 4px; }
 .rv-osd {
   position: absolute;
@@ -5665,16 +5676,20 @@ body.rv-open .pip { display: none; }
 .rp-folders dt { color: var(--muted); }
 .rp-folders dd { margin: 0; min-width: 0; }
 .rp-updated { margin: -4px 0 0; }
-.rp-days { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
-.rp-day.active { color: #fff; background: var(--accent); border-color: var(--accent); }
-.rp-day.active .muted { color: inherit; opacity: 0.8; }
-.rp-runs { display: flex; flex-direction: column; border: 1px solid var(--border-light); border-radius: 6px; overflow: hidden; }
+/* Result 파일 목록(왼쪽) · 고른 파일 정보(오른쪽) */
+.rp-browse { flex: 1; min-height: 240px; display: grid; grid-template-columns: minmax(260px, 2fr) minmax(0, 3fr); gap: 8px; }
+.rp-runs { display: flex; flex-direction: column; min-height: 0; overflow: auto; border: 1px solid var(--border-light); border-radius: 6px; }
 .rp-runs > p { margin: 0; padding: 8px; }
-.rp-run { display: grid; grid-template-columns: 76px minmax(120px, 1.4fr) minmax(0, 1fr) 70px 64px; align-items: center; gap: 8px; padding: 4px 8px; cursor: pointer; }
+.rp-run { display: flex; flex-direction: column; gap: 1px; padding: 5px 8px; cursor: pointer; min-width: 0; }
+.rp-run-name { min-width: 0; }
+.rp-run-meta { display: flex; gap: 10px; }
+.rp-info { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; margin: 0; }
+.rp-info dt { color: var(--muted); }
+.rp-info dd { margin: 0; min-width: 0; }
 .rp-run + .rp-run { border-top: 1px solid var(--border-light); }
 .rp-run:hover { background: var(--hover); }
 .rp-run.selected { background: var(--selected); }
-.rp-found { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
+.rp-found { display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow: auto; padding: 8px; border: 1px solid var(--border); border-radius: 6px; }
 .rp-found-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .rp-found p { margin: 0; }
 .rp-files { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 1px; }
@@ -5692,8 +5707,7 @@ body.rv-open .pip { display: none; }
 .rp-picker-list li:hover { background: var(--hover); }
 @media (max-width: 760px) {
   .rp { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 35%) minmax(0, 1fr); }
-  .rp-run { grid-template-columns: 70px minmax(0, 1fr) 60px; }
-  .rp-run > :nth-child(3), .rp-run > :nth-child(5) { display: none; }
+  .rp-browse { grid-template-columns: 1fr; grid-template-rows: minmax(160px, 1fr) auto; }
 }
 
 /* Setting › 에이전트 서버 주소 일괄 변경 */

@@ -4,8 +4,8 @@ import { formatBytes } from '../../format'
 import { displayName } from '../explorer/pcGroups'
 import { projectAgents, remoteSections } from '../remote/remotePcs'
 import { RESULT_MODE_LABEL } from './resultCsv'
-import { buildSource, cachedRuns, type FoundSource, type ResultRun, type RunScan, scanRuns, today } from './resultFinder'
-import { baseName, dirName, openSetup, toMessage } from './resultSessions'
+import { buildSource, cachedRuns, type FoundSource, type ResultRun, type RunScan, scanRuns } from './resultFinder'
+import { dirName, toMessage } from './resultSessions'
 import { openResultTab, type ResultTabRequest } from './resultTab'
 
 interface Props {
@@ -42,24 +42,20 @@ const writeKey = (key: string, value: string) => {
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
-/** 벽시계 ms → HH:MM:SS */
-const clock = (ms: number | null) => {
+/** 벽시계 ms → MM-DD HH:MM:SS (full이면 YYYY-MM-DD HH:MM:SS) */
+const when = (ms: number | null, full = false) => {
   if (ms === null) return ''
   const d = new Date(ms)
-  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
-}
-const WEEKDAY = ['일', '월', '화', '수', '목', '금', '토']
-const dayLabel = (day: string) => {
-  const [y, m, d] = day.split('-').map(Number)
-  return `${m}/${d} (${WEEKDAY[new Date(y, m - 1, d).getDay()]})`
+  const date = `${full ? `${d.getUTCFullYear()}-` : ''}${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
+  return `${date} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
 }
 
 type ScanState = { agentId: string; loading: boolean; error: string | null; scan: RunScan | null }
 type BuildState = { path: string; loading: boolean; error: string | null; found: FoundSource | null }
 
 /**
- * 결과 확인 탭: PC별로 결과 폴더를 미리 정해 두면, 날짜를 고르면 그날 실행을 찾아 영상·이미지까지 채워 연다.
- * PC의 ▶는 가장 최신 결과를 바로 새 탭에서 연다
+ * 결과 확인 탭: PC별로 결과 폴더를 미리 정해 두면, 그 PC의 Result 파일을 최신순 목록으로 보여 주고
+ * 고른 실행의 영상·이미지까지 찾아 채워 연다. PC의 ▶는 가장 최신 결과를 바로 새 탭에서 연다
  */
 export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId, profiles, saveProfile, presets, savePreset, userName }: Props) {
   const sections = useMemo(
@@ -90,7 +86,6 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
 
   // ── 실행 목록
   const [scanState, setScanState] = useState<ScanState | null>(null)
-  const [day, setDay] = useState<string>(today())
   const [runPath, setRunPath] = useState<string | null>(null)
   const [build, setBuild] = useState<BuildState | null>(null)
   const scanSeq = useRef(0)
@@ -107,8 +102,7 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
         const scan = cached && Date.now() - cached.scannedAt < STALE_MS ? cached : await scanRuns(agentId, profile, true)
         if (seq !== scanSeq.current) return
         setScanState({ agentId, loading: false, error: null, scan })
-        // 처음 고르면 가장 최신 날짜의 최신 실행 (보던 날짜에 실행이 있으면 그대로)
-        setDay((d) => (scan.runs.some((r) => r.day === d) ? d : scan.runs[0]?.day ?? today()))
+        // 보던 실행이 있으면 그대로, 없으면 가장 최신
         setRunPath((p) => (p && scan.runs.some((r) => r.path === p) ? p : null))
       } catch (err) {
         if (seq !== scanSeq.current) return
@@ -135,13 +129,8 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
   }, [selectedId, profileKey, online])
 
   const scan = scanState?.agentId === selectedId ? scanState.scan : null
-  const days = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const r of scan?.runs ?? []) m.set(r.day, (m.get(r.day) ?? 0) + 1)
-    return [...m].slice(0, 14)
-  }, [scan])
-  const dayRuns = useMemo(() => (scan?.runs ?? []).filter((r) => r.day === day), [scan, day])
-  const run = dayRuns.find((r) => r.path === runPath) ?? dayRuns[0] ?? null
+  const runs = scan?.runs ?? []
+  const run = runs.find((r) => r.path === runPath) ?? runs[0] ?? null
 
   // ── 고른 실행의 영상·이미지 폴더 찾기
   useEffect(() => {
@@ -280,69 +269,69 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
               </dl>
               {profile.updatedBy && <p className="small muted rp-updated">{`마지막 설정: ${userName(profile.updatedBy) ?? ''}`}</p>}
 
-              <div className="rp-days">
-                <input type="date" value={day} max={today()} onChange={(e) => e.target.value && setDay(e.target.value)} />
-                <button type="button" className="small" onClick={() => setDay(today())}>오늘</button>
-                {days.map(([d, n]) => (
-                  <button key={d} type="button" className={`small rp-day${d === day ? ' active' : ''}`} onClick={() => setDay(d)}>
-                    {dayLabel(d)} <span className="muted">{n}</span>
-                  </button>
-                ))}
-              </div>
               {notice && <p className="error small">{notice}</p>}
               {scanState?.error && <p className="error small">결과 폴더를 읽지 못했습니다: {scanState.error}</p>}
               {scan?.truncated && <p className="small warning-box">Result 파일이 너무 많아 일부만 찾았습니다. 파일 이름 패턴이나 Result 폴더를 좁혀 주세요.</p>}
 
-              <div className="rp-runs">
-                {scanState?.loading && !scan ? <p className="muted small">결과 폴더에서 찾는 중…</p>
-                  : scan && dayRuns.length === 0 ? <p className="muted small">{`${dayLabel(day)}에 실행한 결과가 없습니다.`}</p>
-                    : dayRuns.map((r) => (
-                      <div
-                        key={r.path}
-                        className={`rp-run${r === run ? ' selected' : ''}`}
-                        onClick={() => setRunPath(r.path)}
-                        onDoubleClick={() => openRun(r)}
-                        title={r.path}
-                      >
-                        <span className="mono">{clock(r.time)}{r.timeFrom === 'mtime' && <span className="muted" title="이름에 시각이 없어 수정 시각으로 봤습니다">*</span>}</span>
-                        <span className="ellipsis">{r.name}</span>
-                        <span className="small muted ellipsis">{relDir(r.path)}</span>
-                        <span className="small muted">{r.modified !== null && `~${clock(r.modified)}`}</span>
-                        <span className="small muted">{formatBytes(r.size)}</span>
-                      </div>
-                    ))}
-              </div>
+              {/* 왼쪽: Result 파일 목록(최신순) · 오른쪽: 고른 파일 정보 */}
+              <div className="rp-browse">
+                <div className="rp-runs" role="listbox" aria-label="Result 파일">
+                  {scanState?.loading && !scan ? <p className="muted small">결과 폴더에서 찾는 중…</p>
+                    : scan && runs.length === 0 ? <p className="muted small">Result 파일이 없습니다.</p>
+                      : runs.map((r) => (
+                        <div
+                          key={r.path}
+                          className={`rp-run${r === run ? ' selected' : ''}`}
+                          role="option"
+                          aria-selected={r === run}
+                          onClick={() => setRunPath(r.path)}
+                          onDoubleClick={() => openRun(r)}
+                          title={`${r.path}\n두 번 누르면 엽니다`}
+                        >
+                          <span className="rp-run-name ellipsis">{r.name}</span>
+                          <span className="rp-run-meta small muted">
+                            <span className="mono">{when(r.time)}</span>
+                            <span>{formatBytes(r.size)}</span>
+                            {relDir(r.path) && <span className="ellipsis mono">{relDir(r.path)}</span>}
+                          </span>
+                        </div>
+                      ))}
+                </div>
 
-              {run && (
                 <div className="rp-found">
-                  <div className="rp-found-head">
-                    <strong className="ellipsis" title={run.path}>{baseName(run.path)}</strong>
-                    <span className="rv-spacer" />
-                    <button
-                      type="button"
-                      className="small"
-                      disabled={!found}
-                      title="찾은 경로를 경로 지정 창에서 고친 뒤 엽니다"
-                      onClick={() => found && openSetup(found.source)}
-                    >
-                      경로 확인 후 열기
-                    </button>
-                    <button type="button" className="primary" disabled={!online} onClick={() => openRun(run)}>열기</button>
-                  </div>
-                  {build?.loading && <p className="muted small">영상·이미지 폴더 찾는 중…</p>}
-                  {build?.error && build.path === run.path && <p className="error small">{build.error}</p>}
-                  {found && (
+                  {!run ? <p className="muted small">고른 Result 파일의 정보가 여기에 나옵니다</p> : (
                     <>
-                      <p className="small muted">{found.notes.join(' · ')}</p>
-                      <ul className="rp-files small mono">
-                        {found.source.videoPaths.map((v) => <li key={v} className="ellipsis" title={v}>🎞 {v}</li>)}
-                        {found.source.imageDir && <li className="ellipsis" title={found.source.imageDir}>🖼 {found.source.imageDir}</li>}
-                        {found.source.refDir && <li className="ellipsis" title={found.source.refDir}>📁 원본 · {found.source.refDir}</li>}
-                      </ul>
+                      <div className="rp-found-head">
+                        <strong className="ellipsis" title={run.path}>{run.name}</strong>
+                        <span className="rv-spacer" />
+                        <button type="button" className="primary" disabled={!online} onClick={() => openRun(run)}>열기</button>
+                      </div>
+                      <dl className="rp-info small">
+                        <dt>실행 시작</dt>
+                        <dd>
+                          <span className="mono">{when(run.time, true)}</span>
+                          {run.timeFrom === 'mtime' && <span className="muted"> (이름에 시각이 없어 수정 시각)</span>}
+                        </dd>
+                        {run.modified !== null && <><dt>마지막 기록</dt><dd className="mono">{when(run.modified, true)}</dd></>}
+                        <dt>크기</dt><dd>{formatBytes(run.size)}</dd>
+                        <dt>위치</dt><dd className="mono ellipsis" title={run.path}>{relDir(run.path) || dirName(run.path)}</dd>
+                      </dl>
+                      {build?.loading && <p className="muted small">영상·이미지 폴더 찾는 중…</p>}
+                      {build?.error && build.path === run.path && <p className="error small">{build.error}</p>}
+                      {found && (
+                        <>
+                          <p className="small muted">{found.notes.join(' · ')}</p>
+                          <ul className="rp-files small mono">
+                            {found.source.videoPaths.map((v) => <li key={v} className="ellipsis" title={v}>🎞 {v}</li>)}
+                            {found.source.imageDir && <li className="ellipsis" title={found.source.imageDir}>🖼 {found.source.imageDir}</li>}
+                            {found.source.refDir && <li className="ellipsis" title={found.source.refDir}>📁 원본 · {found.source.refDir}</li>}
+                          </ul>
+                        </>
+                      )}
                     </>
                   )}
                 </div>
-              )}
+              </div>
             </div>
           </>
         )}
@@ -555,7 +544,7 @@ function ProfileForm({ agent, name, initial, presets, savePreset, onSave, onCanc
           void save()
         }}
       >
-        <p className="hint">PC마다 결과가 쌓이는 폴더를 정해 두면, 날짜만 고르면 그날 실행의 Result·영상·이미지를 알아서 찾아 엽니다. 모든 사용자가 같이 씁니다. 같은 구성의 PC는 프리셋을 골라 바로 채우세요.</p>
+        <p className="hint">PC마다 결과가 쌓이는 폴더를 정해 두면, 목록에서 Result 파일을 고르기만 하면 그 실행의 영상·이미지를 알아서 찾아 엽니다. 모든 사용자가 같이 씁니다. 같은 구성의 PC는 프리셋을 골라 바로 채우세요.</p>
         <div className="rp-field">
           <span className="rp-label">프리셋</span>
           <span className="rp-input">

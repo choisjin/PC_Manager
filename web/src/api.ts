@@ -452,6 +452,15 @@ export interface VideoPrepareResult {
   error: string | null
 }
 
+/** 재생 준비 진행. stage: ffmpeg = 테스트 PC가 ffmpeg 받는 중 · convert = 재생용 사본 만드는 중. bytes: 받은·처리한 원본 바이트 */
+export interface VideoPrepareProgress {
+  stage: 'ffmpeg' | 'convert'
+  fraction: number
+  bytes: number
+  totalBytes: number
+  elapsedSeconds: number
+}
+
 /** 이미지 찾기 요청: 좌표는 frameWidth×frameHeight(크롭한 영상 원래 크기) 픽셀, template은 회색조 픽셀 base64 */
 export interface ImageSearchRequest {
   paths: string[]
@@ -883,6 +892,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path, convert }),
     }),
+  /** 재생 준비 진행 (사본 만드는 중·ffmpeg 받는 중이 아니면 undefined) */
+  prepareProgress: (agentId: string, path: string) =>
+    request<VideoPrepareProgress | undefined>(`/api/agents/${agentId}/video/prepare/progress?${query({ path })}`),
   /** 테스트 PC에서 영상들의 프레임마다 크롭 이미지 유사도 재기 시작 → 작업 id */
   startImageSearch: (agentId: string, body: ImageSearchRequest) =>
     request<{ id: string }>(`/api/agents/${agentId}/video/image-search`, { method: 'POST', body: JSON.stringify(body) }),
