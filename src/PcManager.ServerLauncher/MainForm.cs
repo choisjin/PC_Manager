@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
+using System.Net.NetworkInformation;
 using System.Text.RegularExpressions;
 
 namespace PcManager.ServerLauncher;
@@ -44,6 +45,10 @@ internal sealed partial class MainForm : Form
     private readonly CheckBox _autorun = new() { Text = "Windows 로그인 시 런처 실행", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
     private readonly NotifyIcon _tray = new() { Text = "PC Manager 서버 런처" };
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1500 };
+    // HTTPS 인증서 확인: 평소 한 시간마다, 네트워크 주소가 바뀌면 잠잠해진 뒤(15초) 바로
+    private const int CertificateCheckInterval = 60 * 60 * 1000;
+    private const int NetworkSettleDelay = 15_000;
+    private readonly System.Windows.Forms.Timer _certificateTimer = new() { Interval = CertificateCheckInterval };
 
     private Version? _latest;
     private bool _busy;
@@ -143,6 +148,8 @@ internal sealed partial class MainForm : Form
         _tray.DoubleClick += (_, _) => ShowFromTray();
 
         _timer.Tick += async (_, _) => await RefreshAsync();
+        _certificateTimer.Tick += async (_, _) => await RenewCertificateAsync();
+        NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
         RefreshList();
     }
 
@@ -175,6 +182,7 @@ internal sealed partial class MainForm : Form
             return;
         _initialized = true;
         _timer.Start();
+        _certificateTimer.Start();
 
         EnsureCertificate(askTrust: !_startMinimized);
         if (ServerPackage.InstalledVersion() is null)
@@ -667,6 +675,60 @@ internal sealed partial class MainForm : Form
         UpdateButtons();
     }
 
+    // 네트워크 이벤트는 다른 스레드에서, DHCP 갱신 등으로 연달아 온다: 마지막 것부터 15초 뒤에 한 번 확인
+    private void OnNetworkAddressChanged(object? sender, EventArgs e)
+    {
+        if (!IsHandleCreated || IsDisposed)
+            return;
+        BeginInvoke(() =>
+        {
+            if (!_initialized)
+                return;
+            _certificateTimer.Stop();
+            _certificateTimer.Interval = NetworkSettleDelay;
+            _certificateTimer.Start();
+        });
+    }
+
+    /// <summary>
+    /// 서버 PC의 IP가 바뀌어 인증서를 새로 만들었으면 HTTPS 서버를 재시작해 새 인증서를 쓰게 한다
+    /// (서버는 시작할 때 인증서 파일을 읽는다)
+    /// </summary>
+    private async Task RenewCertificateAsync()
+    {
+        _certificateTimer.Interval = CertificateCheckInterval;
+        if (!_instances.Any(i => i.Config.ResolvedHttpsPort > 0))
+            return;
+        // 업데이트·중지 중이면 그게 끝난 뒤 다시
+        if (_busy)
+        {
+            _certificateTimer.Interval = NetworkSettleDelay;
+            return;
+        }
+        bool renewed;
+        try
+        {
+            renewed = ServerCertificate.Ensure();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            SetStatus("HTTPS 인증서를 만들지 못했습니다: " + ex.Message);
+            return;
+        }
+        if (!renewed)
+            return;
+
+        _certificateTrusted = ServerCertificate.IsTrustedHere();
+        var running = _instances.Where(i => i.IsActive && i.Config.ResolvedHttpsPort > 0).ToList();
+        if (running.Count > 0)
+            await RunBusy("IP가 바뀌어 HTTPS 인증서를 새로 만들었습니다. 서버 재시작 중…", () => Task.WhenAll(running.Select(RestartAsync)));
+        SetStatus("IP가 바뀌어 HTTPS 인증서를 새로 만들었습니다. 대시보드 PC는 인증서 설치 도구를 다시 받아 실행해야 합니다"
+            + (_certificateTrusted ? "." : " (이 PC는 [HTTPS 인증서 신뢰(이 PC)])."));
+        _tray.ShowBalloonTip(5000, "PC Manager 서버 런처",
+            "IP가 바뀌어 HTTPS 인증서를 새로 만들고 서버를 재시작했습니다. 대시보드 PC는 인증서 설치 도구를 다시 실행하세요.", ToolTipIcon.Info);
+        UpdateButtons();
+    }
+
     private void TrustCertificate()
     {
         if (ServerCertificate.TryTrustHere(out var error))
@@ -747,6 +809,8 @@ internal sealed partial class MainForm : Form
     {
         if (disposing)
         {
+            NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
+            _certificateTimer.Dispose();
             _timer.Dispose();
             _tray.Dispose();
             _job.Dispose();

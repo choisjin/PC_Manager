@@ -23,8 +23,19 @@ internal static class ServerCertificate
     public static string CerPath => Path.Combine(Directory, "PcManager-Server.cer");
     private static string Subject => $"CN=PC Manager Server ({Environment.MachineName})";
 
-    /// <summary>없거나, 곧 만료되거나, 이 PC의 IP가 바뀌었으면 새로 만든다. 새로 만들었으면 true</summary>
+    private static readonly Lock Gate = new();
+
+    /// <summary>
+    /// 없거나, 곧 만료되거나, 이 PC의 주 IP(기본 게이트웨이가 있는 어댑터)·이름이 빠져 있으면 새로 만든다. 새로 만들었으면 true.
+    /// VPN 등 다른 어댑터 IP가 오가는 것만으로는 다시 만들지 않는다 (만들 때마다 대시보드 PC들이 인증서를 다시 설치해야 하므로)
+    /// </summary>
     public static bool Ensure()
+    {
+        lock (Gate)
+            return EnsureCore();
+    }
+
+    private static bool EnsureCore()
     {
         var names = HostNames();
         var ips = AddressList();
@@ -32,7 +43,9 @@ internal static class ServerCertificate
         {
             using (existing)
             {
-                if (existing.NotAfter > DateTime.Now.AddDays(30) && Covers(existing, names, ips))
+                // 네트워크가 아직 안 잡혔으면(주 IP 없음) 이름만 본다
+                var primary = PrimaryAddress();
+                if (existing.NotAfter > DateTime.Now.AddDays(30) && Covers(existing, names, primary))
                     return false;
             }
         }
@@ -114,15 +127,25 @@ internal static class ServerCertificate
         }
     }
 
-    private static bool Covers(X509Certificate2 certificate, IReadOnlyList<string> names, IReadOnlyList<IPAddress> ips)
+    private static bool Covers(X509Certificate2 certificate, IReadOnlyList<string> names, IPAddress? primary)
     {
         var ext = certificate.Extensions.OfType<X509SubjectAlternativeNameExtension>().FirstOrDefault();
         if (ext is null)
             return false;
         var dns = ext.EnumerateDnsNames().ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var addresses = ext.EnumerateIPAddresses().ToHashSet();
-        return names.All(dns.Contains) && ips.All(addresses.Contains);
+        return names.All(dns.Contains) && (primary is null || ext.EnumerateIPAddresses().Contains(primary));
     }
+
+    /// <summary>기본 게이트웨이가 있는 어댑터의 IPv4 (127.*, 169.254.* 제외). 네트워크가 아직 안 잡혔으면 null</summary>
+    private static IPAddress? PrimaryAddress() =>
+        NetworkInterface.GetAllNetworkInterfaces()
+            .Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType != NetworkInterfaceType.Loopback)
+            .Select(n => n.GetIPProperties())
+            .Where(p => p.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork && !g.Address.Equals(IPAddress.Any)))
+            .SelectMany(p => p.UnicastAddresses)
+            .Select(a => a.Address)
+            .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(a)
+                && !a.ToString().StartsWith("169.254.", StringComparison.Ordinal));
 
     private static List<string> HostNames()
     {
@@ -139,7 +162,7 @@ internal static class ServerCertificate
         return names;
     }
 
-    /// <summary>사용 중인 모든 IPv4 + 127.0.0.1 (어느 주소로 열어도 맞도록)</summary>
+    /// <summary>사용 중인 모든 IPv4 + 127.0.0.1 (만들 때 넣는다: 어느 주소로 열어도 맞도록)</summary>
     private static List<IPAddress> AddressList()
     {
         var list = NetworkInterface.GetAllNetworkInterfaces()
