@@ -499,7 +499,7 @@ export interface ResultSet {
 /** 결과 확인 탭: PC별로 미리 정해 둔 결과 폴더 (모든 사용자 공용) */
 export interface ResultProfile {
   mode: 'ats' | 'rfw'
-  /** Result 파일(CSV)을 찾을 폴더 (하위 폴더까지) */
+  /** Result 파일(CSV)을 찾을 폴더 (ATS는 바로 안과 날짜 폴더 바로 안만, RFW는 하위 폴더까지) */
   resultDir: string
   /** Result 파일 이름 패턴 (비우면 *.csv) */
   pattern: string | null

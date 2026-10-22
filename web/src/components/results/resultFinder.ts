@@ -1,8 +1,8 @@
 // 결과 확인 탭: PC별로 정해 둔 결과 폴더에서 실행(Result 파일)을 찾고, 고른 실행의 영상·결과 이미지 폴더를 알아서 고른다
 //
-//   실행 = Result 폴더(하위 폴더까지)의 Result 파일 하나. 시작 시각은 파일·폴더 이름의 날짜·시각, 없으면 수정 시각
+//   실행 = Result 폴더의 Result 파일 하나 (ATS는 그 폴더와 날짜 폴더 바로 안만, RFW는 하위 폴더까지). 시작 시각은 파일·폴더 이름의 날짜·시각, 없으면 수정 시각
 //   영상 = 영상 폴더에서 실행 시간(Result 첫 행 ~ 마지막 행)에 걸친 것
-//   결과 이미지 폴더 = Result에 적힌 이미지 경로의 폴더 → 이미지 폴더(고정 폴더 / 실행 시각의 날짜 폴더) → Result 옆 폴더
+//   결과 이미지 폴더 = (ATS) 날짜 폴더 안 이미지가 든 하위 폴더 → Result에 적힌 이미지 경로의 폴더 →이미지 폴더(고정 폴더 / 실행 시각의 날짜 폴더) → Result 옆 폴더
 import { api, type FileEntry, type ResultProfile } from '../../api'
 import { isImageFile, isVideoFile } from '../../fileTypes'
 import { decodeText, detectResultMode, formatWall, parseAts, parseRfw, type ResultMode, timeFromName } from './resultCsv'
@@ -80,7 +80,42 @@ function runTime(entry: FileEntry, root: string): { time: number; from: ResultRu
 
 // ── 실행 목록 (PC마다 기억, '새로 고침'으로 다시)
 const scans = new Map<string, { key: string; scan: Promise<RunScan> }>()
-const profileKey = (p: ResultProfile) => JSON.stringify([p.resultDir, p.pattern])
+const profileKey = (p: ResultProfile) => JSON.stringify([p.mode, p.resultDir, p.pattern])
+
+/** 파일 이름 패턴 (에이전트 검색과 같게: * ? 가 없으면 이름에 든 것, 대소문자 무시) */
+function nameMatcher(pattern: string): (name: string) => boolean {
+  const glob = /[*?]/.test(pattern) ? pattern : `*${pattern}*`
+  const re = new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i')
+  return (name) => re.test(name)
+}
+
+const MAX_LIST = 5000
+
+/**
+ * Result 파일 후보
+ *   ATS: Result 폴더 바로 안 + 실행마다 생기는 날짜 폴더(2026-10-12-0922) 바로 안의 파일 (그 아래는 보지 않는다)
+ *   RFW: 하위 폴더까지
+ */
+async function listResultFiles(agentId: string, profile: ResultProfile) {
+  const pattern = profile.pattern?.trim() || DEFAULT_PATTERN
+  if (profile.mode !== 'ats') return api.searchFiles(agentId, profile.resultDir, pattern)
+  const listing = await api.listFiles(agentId, profile.resultDir)
+  const match = nameMatcher(pattern)
+  const files = (entries: FileEntry[]) => entries.filter((e) => !e.isDirectory && match(e.name))
+  const entries = files(listing.entries)
+  let truncated = listing.entries.length >= MAX_LIST
+  const dated = listing.entries.filter((e) => e.isDirectory && stampFromName(e.name) !== null)
+  // 날짜 폴더는 몇 개씩 나눠 읽는다
+  for (let i = 0; i < dated.length; i += 8) {
+    const lists = await Promise.all(dated.slice(i, i + 8).map((d) => api.listFiles(agentId, d.fullPath).catch(() => null)))
+    for (const l of lists) {
+      if (!l || l.error) continue
+      entries.push(...files(l.entries))
+      if (l.entries.length >= MAX_LIST) truncated = true
+    }
+  }
+  return { ...listing, entries, truncated }
+}
 
 export function scanRuns(agentId: string, profile: ResultProfile, refresh = false): Promise<RunScan> {
   const key = profileKey(profile)
@@ -88,7 +123,7 @@ export function scanRuns(agentId: string, profile: ResultProfile, refresh = fals
   if (cached && cached.key === key && !refresh) return cached.scan
   const scan = (async () => {
     const root = profile.resultDir
-    const listing = await api.searchFiles(agentId, root, profile.pattern?.trim() || DEFAULT_PATTERN)
+    const listing = await listResultFiles(agentId, profile)
     if (listing.error && listing.entries.length === 0) throw new Error(listing.error)
     const runs: ResultRun[] = []
     for (const e of listing.entries) {
@@ -167,6 +202,13 @@ async function imageFolderIn(agentId: string, dir: string, prefer: string[]): Pr
 }
 
 async function findImageDir(agentId: string, profile: ResultProfile, run: ResultRun, csv: CsvInfo, start: number, end: number): Promise<{ dir: string | null; how: string }> {
+  // ATS: Result가 든 날짜 폴더(excelrunner_report\2026-10-12-0922) 아래 이미지가 든 하위 폴더
+  if (profile.mode === 'ats') {
+    const subs = (await list(agentId, dirName(run.path)))?.filter((e) => e.isDirectory) ?? []
+    for (const sub of subs) {
+      if (hasImages(await list(agentId, sub.fullPath))) return { dir: sub.fullPath, how: '날짜 폴더 안 이미지 폴더' }
+    }
+  }
   const prefer = [run.name.replace(/\.[^.]+$/, ''), 'Image', 'Images', 'image', 'img']
   // 1) Result에 적힌 결과 이미지가 가장 많이 든 폴더
   const counts = new Map<string, number>()

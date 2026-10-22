@@ -351,12 +351,24 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
 
 type FolderField = 'resultDir' | 'videoDir' | 'imageDir' | 'refDir'
 
-const FIELDS: { key: FolderField; label: string; hint: (ats: boolean) => string }[] = [
-  { key: 'resultDir', label: 'Result 폴더 (필수)', hint: (ats) => (ats ? '예: D:\\excelrunner_report — 하위 폴더까지 Result 파일을 찾습니다' : '예: D:\\RF_TESTLOG — 하위 폴더까지 Result 파일을 찾습니다') },
-  { key: 'videoDir', label: '영상 폴더', hint: () => '실행 시간에 걸친 영상을 고릅니다 (하위 폴더까지)' },
-  { key: 'imageDir', label: '결과 이미지 폴더', hint: () => '캡처가 쌓이는 폴더, 또는 실행마다 날짜 폴더가 생기는 상위 폴더 (비우면 Result에 적힌 경로·Result 옆 폴더)' },
-  { key: 'refDir', label: '원본 이미지 폴더', hint: (ats) => (ats ? '예: D:\\excelrunner_report\\captured_image' : '예: rnavn_project\\Image') },
+// ATS는 영상 폴더만 쓴다 (나머지는 설치 드라이브로 정해진다)
+const FIELDS: { key: FolderField; label: string; hint: string }[] = [
+  { key: 'resultDir', label: 'Result 폴더 (필수)', hint: '예: D:\\RF_TESTLOG — 하위 폴더까지 Result 파일을 찾습니다' },
+  { key: 'videoDir', label: '영상 폴더', hint: '실행 시간에 걸친 영상을 고릅니다 (하위 폴더까지)' },
+  { key: 'imageDir', label: '결과 이미지 폴더', hint: '캡처가 쌓이는 폴더, 또는 실행마다 날짜 폴더가 생기는 상위 폴더 (비우면 Result에 적힌 경로·Result 옆 폴더)' },
+  { key: 'refDir', label: '원본 이미지 폴더', hint: '예: rnavn_project\\Image' },
 ]
+
+// ATS는 설치 드라이브만 고른다: Result = <드라이브>\excelrunner_report(날짜 폴더 안 CSV), 원본 이미지 = 그 안 captured_image,
+// 결과 이미지 = Result가 든 날짜 폴더 안 이미지가 든 하위 폴더
+const ATS_ROOT = 'excelrunner_report'
+const atsDrive = (dir: string) => /^[A-Za-z]:/.exec(dir)?.[0].toUpperCase() ?? null
+const atsDirs = (drive: string) => ({
+  resultDir: `${drive}\\${ATS_ROOT}`,
+  refDir: `${drive}\\${ATS_ROOT}\\captured_image`,
+  imageDir: null,
+  pattern: null,
+})
 
 function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
   agent: Agent
@@ -374,9 +386,42 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
   const [warn, setWarn] = useState<string | null>(null)
   const [picking, setPicking] = useState<FolderField | null>(null)
   const ats = p.mode === 'ats'
+  const [drive, setDrive] = useState<string | null>(() => (initial?.mode === 'ats' ? atsDrive(initial.resultDir) : null))
+  const [drives, setDrives] = useState<string[]>([])
+
+  // 드라이브 목록: 처음 정할 때는 excelrunner_report가 있는 드라이브를 미리 고른다
+  useEffect(() => {
+    if (!agent.online) return
+    let cancelled = false
+    void (async () => {
+      const l = await api.listFiles(agent.id, '').catch(() => null)
+      const found = (l?.entries ?? []).map((e) => atsDrive(e.fullPath)).filter((d): d is string => d !== null)
+      if (cancelled) return
+      setDrives(found)
+      if (drive) return
+      for (const d of found) {
+        const root = await api.listFiles(agent.id, `${d}\\`).catch(() => null)
+        if (cancelled) return
+        if (root?.entries.some((e) => e.isDirectory && e.name.toLowerCase() === ATS_ROOT)) {
+          setDrive((cur) => cur ?? d)
+          return
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // 드라이브는 PC마다 한 번만 찾는다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.id, agent.online])
 
   const save = async () => {
-    if (!p.resultDir.trim()) {
+    if (ats && !drive) {
+      setError('ATS 설치 드라이브를 고르세요.')
+      return
+    }
+    const out: ResultProfile = ats && drive ? { ...p, ...atsDirs(drive) } : p
+    if (!out.resultDir.trim()) {
       setError('Result 폴더를 입력하세요.')
       return
     }
@@ -387,7 +432,7 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
       if (agent.online && !warn) {
         const missing: string[] = []
         for (const f of FIELDS) {
-          const dir = p[f.key]?.trim()
+          const dir = out[f.key]?.trim()
           if (!dir) continue
           const l = await api.listFiles(agent.id, dir).catch(() => null)
           if (!l || l.error) missing.push(f.label.replace(' (필수)', ''))
@@ -397,7 +442,7 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
           return
         }
       }
-      await onSave(p)
+      await onSave(out)
     } catch (err) {
       setError(toMessage(err))
     } finally {
@@ -434,7 +479,34 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
             ))}
           </span>
         </div>
-        {FIELDS.map((f) => (
+        {ats && (
+          <div className="rp-field">
+            <span className="rp-label">ATS 설치 드라이브 (필수)</span>
+            <span className="rp-input">
+              <select
+                aria-label="ATS 설치 드라이브"
+                value={drive ?? ''}
+                onChange={(e) => {
+                  setDrive(e.target.value || null)
+                  setWarn(null)
+                }}
+              >
+                <option value="">드라이브 선택</option>
+                {[...new Set([...drives, ...(drive ? [drive] : [])])].sort().map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </span>
+            {drive && (
+              <dl className="rp-folders small">
+                <dt>Result</dt><dd className="mono ellipsis">{`${drive}\\${ATS_ROOT}\\(날짜 폴더)\\*.csv`}</dd>
+                <dt>원본 이미지</dt><dd className="mono ellipsis">{atsDirs(drive).refDir}</dd>
+                <dt>결과 이미지</dt><dd className="mono ellipsis">{`${drive}\\${ATS_ROOT}\\(날짜 폴더)\\(이미지가 든 하위 폴더)`}</dd>
+              </dl>
+            )}
+          </div>
+        )}
+        {FIELDS.filter((f) => !ats || f.key === 'videoDir').map((f) => (
           <div key={f.key} className="rp-field">
             <span className="rp-label">{f.label}</span>
             <span className="rp-input">
@@ -443,7 +515,7 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
                 aria-label={f.label}
                 value={p[f.key] ?? ''}
                 onChange={(e) => set({ [f.key]: f.key === 'resultDir' ? e.target.value : e.target.value || null })}
-                placeholder={f.hint(ats)}
+                placeholder={f.hint}
               />
               <button type="button" className="small" disabled={!agent.online} onClick={() => setPicking(f.key)}>찾아보기</button>
             </span>
@@ -455,7 +527,7 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
                   aria-label="Result 파일 이름"
                   value={p.pattern ?? ''}
                   onChange={(e) => set({ pattern: e.target.value || null })}
-                  placeholder={ats ? '*.csv' : 'result_*.csv'}
+                  placeholder="result_*.csv"
                 />
                 <span className="small muted">비우면 *.csv · 이름이나 폴더 이름에 날짜·시각이 있으면 그걸로 날짜를 정합니다 (없으면 수정 시각)</span>
               </span>
