@@ -31,5 +31,26 @@ public static class ResultProfileEndpoints
             await dashboard.Clients.All.ResultProfilesChanged(saved);
             return Results.Ok(saved);
         });
+
+        // 결과 폴더 프리셋 (다른 PC에 같은 경로를 골라 바로 적용)
+        api.MapPut("/presets/{presetId}", async (string presetId, ResultPresetView preset, HttpRequest http, ResultProfileStore store,
+            IHubContext<DashboardHub, IDashboardClient> dashboard) =>
+        {
+            if (string.IsNullOrWhiteSpace(preset.Name))
+                return Results.BadRequest("프리셋 이름을 입력하세요.");
+            if (string.IsNullOrWhiteSpace(preset.ResultDir))
+                return Results.BadRequest("Result 폴더를 입력하세요.");
+            var userId = http.Headers["X-User-Id"].ToString() is { Length: > 0 } id ? id : null;
+            var saved = store.SetPreset(presetId, preset, userId);
+            await dashboard.Clients.All.ResultProfilesChanged(saved);
+            return Results.Ok(saved);
+        });
+
+        api.MapDelete("/presets/{presetId}", async (string presetId, ResultProfileStore store, IHubContext<DashboardHub, IDashboardClient> dashboard) =>
+        {
+            var saved = store.SetPreset(presetId, null, null);
+            await dashboard.Clients.All.ResultProfilesChanged(saved);
+            return Results.Ok(saved);
+        });
     }
 }

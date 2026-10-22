@@ -4,7 +4,8 @@ namespace PcManager.Agent.Linux;
 /// 서버가 업데이트를 요청하면 서버의 Linux 에이전트 파일(/api/install/pcmanager-agent-linux)로 실행 파일을 바꾸고
 /// 프로세스를 끝낸다. systemd(Restart=always)가 새 파일로 다시 띄운다. 실행 중인 파일도 이름 바꾸기로 교체할 수 있다
 /// </summary>
-public class LinuxAgentUpdater(AgentSettingsStore settings, ILogger<LinuxAgentUpdater> logger, IHostApplicationLifetime lifetime)
+public class LinuxAgentUpdater(
+    AgentSettingsStore settings, AgentStatusTracker status, ILogger<LinuxAgentUpdater> logger, IHostApplicationLifetime lifetime)
 {
     public const string DownloadPath = "/api/install/pcmanager-agent-linux";
 
@@ -30,7 +31,10 @@ public class LinuxAgentUpdater(AgentSettingsStore settings, ILogger<LinuxAgentUp
             }
             var url = settings.Current.ServerUrl.TrimEnd('/') + DownloadPath;
             logger.LogInformation("에이전트 업데이트 다운로드: {Url}", url);
-            var temp = exe + ".new";
+            // 런처 창에 진행 표시
+            status.SetUpdating(true, "다운로드 중");
+            // 임시 파일은 프로세스마다 다른 이름 (설치 스크립트가 동시에 돌아도 잠금이 겹치지 않게)
+            var temp = $"{exe}.new-{Environment.ProcessId}";
             await using (var source = await Http.GetStreamAsync(url))
             await using (var file = File.Create(temp))
                 await source.CopyToAsync(file);
@@ -43,6 +47,7 @@ public class LinuxAgentUpdater(AgentSettingsStore settings, ILogger<LinuxAgentUp
         catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException or TaskCanceledException)
         {
             logger.LogWarning("에이전트 업데이트 실패: {Message}", ex.Message);
+            status.SetUpdating(false, $"업데이트 실패: {ex.Message}");
         }
         finally
         {

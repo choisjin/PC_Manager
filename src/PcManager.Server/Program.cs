@@ -62,6 +62,16 @@ serverOptions.Portable = portable;
 builder.Services.Configure<ServerOptions>(builder.Configuration.GetSection("Server"));
 builder.Services.PostConfigure<ServerOptions>(o => o.Portable = portable);
 
+// 설치형 HTTPS: 서버 PC IP가 바뀌면 인증서를 새로 만들어 재시작 없이 바꿔 끼운다 (시작할 때와 네트워크 변경 때)
+string? certificateNote = null;
+if (!portable && WindowsServiceHelpers.IsWindowsService()
+    && builder.Configuration["Kestrel:Endpoints:Https:Certificate:Subject"] is { Length: > 0 })
+{
+    certificateNote = builder.UseRenewingCertificate(serverOptions, StoreLocation.LocalMachine,
+        Path.Combine(Path.GetDirectoryName(ServerOptions.InstalledConfigPath)!, InstallPaths.ServerCertificateFile),
+        ServerOptions.InstalledConfigPath);
+}
+
 var paths = new AppPaths(Path.GetFullPath(serverOptions.DataDirectory, builder.Environment.ContentRootPath));
 Directory.CreateDirectory(paths.DataDirectory);
 
@@ -104,6 +114,8 @@ builder.Services.AddHostedService<UpdateRefresher>();
 builder.Services.AddHostedService<AgentAutoUpdater>();
 
 var app = builder.Build();
+if (certificateNote is not null)
+    app.Logger.LogInformation("{Message}", certificateNote);
 
 // TODO: 스키마가 안정되면 EF 마이그레이션으로 전환
 await using (var db = await app.Services.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContextAsync())

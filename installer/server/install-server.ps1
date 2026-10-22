@@ -12,12 +12,13 @@
   .\install-server.ps1
   .\install-server.ps1 -Port 8080 -PublicUrl http://pcmanager.mycompany.local:8080
   .\install-server.ps1 -AgentToken (내부망이 아니라 토큰 인증을 쓰려는 고급 사용자용)
-  .\install-server.ps1 -RenewCertificate   (서버 IP/이름이 바뀌어 HTTPS 인증서를 다시 만들 때)
+  .\install-server.ps1 -RenewCertificate   (HTTPS 인증서를 지금 바로 다시 만들 때. IP가 바뀌면 서버가 알아서 새로 만든다)
 
 .NOTES
   HTTPS: 자체 서명 인증서를 만들어 HTTPS 포트(기본 = HTTP 포트 + 1)도 함께 엽니다.
   원격조작의 키보드 잠금(Alt+Tab·Win 키 전달)과 저지연 디코딩은 브라우저 정책상 HTTPS에서만 동작합니다.
   인증서 신뢰는 자동입니다: 서버는 시작할 때, 에이전트는 서버에 등록될 때 각자 PC의 '신뢰할 수 있는 루트 인증 기관'에 넣습니다.
+  서버 PC의 IP가 바뀌면 서버가 인증서를 새 IP로 다시 만들고(시작할 때·네트워크 변경 때) 옛 IP로 적힌 대시보드 주소도 바꿉니다.
   에이전트가 없는 PC(관리자 워크스테이션)는 대시보드 'PC 추가' 창의 인증서 설치 도구(.cmd)를 한 번 실행하면 됩니다.
 #>
 param(

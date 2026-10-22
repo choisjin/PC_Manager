@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, type Agent, type FileEntry, type Org, type PcGroups, type ResultProfile } from '../../api'
+import { api, type Agent, type FileEntry, type Org, type PcGroups, type ResultPreset, type ResultProfile } from '../../api'
 import { formatBytes } from '../../format'
 import { displayName } from '../explorer/pcGroups'
 import { projectAgents, remoteSections } from '../remote/remotePcs'
@@ -16,6 +16,8 @@ interface Props {
   selfUserId: string | null
   profiles: Record<string, ResultProfile>
   saveProfile: (agentId: string, profile: ResultProfile | null) => Promise<void>
+  presets: Record<string, ResultPreset>
+  savePreset: (presetId: string, preset: ResultPreset | null) => Promise<void>
   userName: (id: string | null | undefined) => string | null
 }
 
@@ -59,7 +61,7 @@ type BuildState = { path: string; loading: boolean; error: string | null; found:
  * 결과 확인 탭: PC별로 결과 폴더를 미리 정해 두면, 날짜를 고르면 그날 실행을 찾아 영상·이미지까지 채워 연다.
  * PC의 ▶는 가장 최신 결과를 바로 새 탭에서 연다
  */
-export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId, profiles, saveProfile, userName }: Props) {
+export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId, profiles, saveProfile, presets, savePreset, userName }: Props) {
   const sections = useMemo(
     () => remoteSections(pcGroups, projectAgents(agents, org, filterProjectId), org, filterProjectId, selfUserId, null).allSections,
     [pcGroups, agents, org, filterProjectId, selfUserId],
@@ -243,6 +245,8 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
             agent={agent}
             name={nameOf(agent)}
             initial={profile}
+            presets={presets}
+            savePreset={savePreset}
             onCancel={profile ? () => setEditing(false) : null}
             onSave={async (p) => {
               await saveProfile(agent.id, p)
@@ -350,46 +354,91 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
 // ─────────────────────────────── 결과 폴더 설정
 
 type FolderField = 'resultDir' | 'videoDir' | 'imageDir' | 'refDir'
+type Mode = ResultProfile['mode']
 
-// ATS는 영상 폴더만 쓴다 (나머지는 설치 드라이브로 정해진다)
-const FIELDS: { key: FolderField; label: string; hint: string }[] = [
-  { key: 'resultDir', label: 'Result 폴더 (필수)', hint: '예: D:\\RF_TESTLOG — 하위 폴더까지 Result 파일을 찾습니다' },
-  { key: 'videoDir', label: '영상 폴더', hint: '실행 시간에 걸친 영상을 고릅니다 (하위 폴더까지)' },
-  { key: 'imageDir', label: '결과 이미지 폴더', hint: '캡처가 쌓이는 폴더, 또는 실행마다 날짜 폴더가 생기는 상위 폴더 (비우면 Result에 적힌 경로·Result 옆 폴더)' },
-  { key: 'refDir', label: '원본 이미지 폴더', hint: '예: rnavn_project\\Image' },
+const FIELDS: { key: FolderField; label: string; hint: Record<Mode, string> }[] = [
+  {
+    key: 'resultDir', label: 'Result 폴더 (필수)',
+    hint: {
+      ats: '예: D:\\excelrunner_report — 바로 안과 날짜 폴더(2026-10-12-0922) 바로 안의 Result 파일',
+      rfw: '예: /home/cdc/workspace/rnavn_project/excel_report — 하위 폴더까지 Result 파일을 찾습니다',
+    },
+  },
+  {
+    key: 'videoDir', label: '영상 폴더',
+    hint: {
+      ats: '실행 시간에 걸친 영상을 고릅니다 (하위 폴더까지)',
+      rfw: '예: /home/cdc/Videos — 실행 시간에 걸친 영상을 고릅니다 (하위 폴더까지)',
+    },
+  },
+  {
+    key: 'imageDir', label: '결과 이미지 폴더',
+    hint: {
+      ats: '비우면 Result가 든 날짜 폴더 안 이미지 폴더 → Result에 적힌 경로',
+      rfw: '예: /home/cdc/workspace/RF_TESTLOG/A_IVI2 — 실행마다 생기는 날짜 폴더 안 Image (고정 폴더도 됨)',
+    },
+  },
+  {
+    key: 'refDir', label: '원본 이미지 폴더',
+    hint: {
+      ats: '예: D:\\excelrunner_report\\captured_image',
+      rfw: '예: /home/cdc/workspace/rnavn_project/Image',
+    },
+  },
 ]
 
-// ATS는 설치 드라이브만 고른다: Result = <드라이브>\excelrunner_report(날짜 폴더 안 CSV), 원본 이미지 = 그 안 captured_image,
-// 결과 이미지 = Result가 든 날짜 폴더 안 이미지가 든 하위 폴더
+// ATS 설치 드라이브로 채우기: Result = <드라이브>\excelrunner_report(날짜 폴더 안 CSV), 원본 이미지 = 그 안 captured_image,
+// 결과 이미지 = (비움) Result가 든 날짜 폴더 안 이미지가 든 하위 폴더
 const ATS_ROOT = 'excelrunner_report'
 const atsDrive = (dir: string) => /^[A-Za-z]:/.exec(dir)?.[0].toUpperCase() ?? null
 const atsDirs = (drive: string) => ({
   resultDir: `${drive}\\${ATS_ROOT}`,
   refDir: `${drive}\\${ATS_ROOT}\\captured_image`,
-  imageDir: null,
-  pattern: null,
 })
 
-function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
+const EMPTY: ResultProfile = { mode: 'ats', resultDir: '', pattern: null, videoDir: null, imageDir: null, refDir: null }
+
+/** 프리셋·PC 설정에서 비교·복사하는 값 (누가 언제 바꿨는지는 빼고) */
+const values = (p: ResultProfile | ResultPreset): ResultProfile => ({
+  mode: p.mode, resultDir: p.resultDir, pattern: p.pattern ?? null,
+  videoDir: p.videoDir ?? null, imageDir: p.imageDir ?? null, refDir: p.refDir ?? null,
+})
+const trimDir = (s: string | null) => (s ?? '').trim().replace(/(?<=.)[\\/]+$/, '').toLowerCase()
+const sameValues = (a: ResultProfile, b: ResultProfile) =>
+  a.mode === b.mode && (a.pattern ?? '').trim() === (b.pattern ?? '').trim()
+  && (['resultDir', 'videoDir', 'imageDir', 'refDir'] as const).every((k) => trimDir(a[k]) === trimDir(b[k]))
+const newPresetId = () => `p-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+const presetLabel = (p: ResultPreset) => `${p.name} · ${RESULT_MODE_LABEL[p.mode]}`
+
+function ProfileForm({ agent, name, initial, presets, savePreset, onSave, onCancel, onRemove }: {
   agent: Agent
   name: string
   initial: ResultProfile | null
+  presets: Record<string, ResultPreset>
+  savePreset: (presetId: string, preset: ResultPreset | null) => Promise<void>
   onSave: (p: ResultProfile) => Promise<void>
   onCancel: (() => void) | null
   onRemove: (() => Promise<void>) | null
 }) {
-  const [p, setP] = useState<ResultProfile>(
-    initial ?? { mode: 'ats', resultDir: '', pattern: null, videoDir: null, imageDir: null, refDir: null },
-  )
+  const [p, setP] = useState<ResultProfile>(() => (initial ? values(initial) : EMPTY))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [warn, setWarn] = useState<string | null>(null)
   const [picking, setPicking] = useState<FolderField | null>(null)
-  const ats = p.mode === 'ats'
-  const [drive, setDrive] = useState<string | null>(() => (initial?.mode === 'ats' ? atsDrive(initial.resultDir) : null))
   const [drives, setDrives] = useState<string[]>([])
+  // 고른 프리셋: 처음엔 지금 값과 같은 프리셋
+  const [presetId, setPresetId] = useState<string | null>(
+    () => (initial ? Object.keys(presets).find((id) => sameValues(values(presets[id]), values(initial))) ?? null : null),
+  )
+  // 프리셋으로 저장: 이름 입력 중이면 문자열
+  const [newPresetName, setNewPresetName] = useState<string | null>(null)
+  const [presetBusy, setPresetBusy] = useState(false)
+  const ats = p.mode === 'ats'
+  const preset = presetId ? presets[presetId] ?? null : null
+  const presetDirty = !!preset && !sameValues(values(preset), p)
+  const presetList = Object.entries(presets).sort(([, a], [, b]) => a.mode.localeCompare(b.mode) || a.name.localeCompare(b.name, 'ko'))
 
-  // 드라이브 목록: 처음 정할 때는 excelrunner_report가 있는 드라이브를 미리 고른다
+  // 드라이브 목록 (ATS 드라이브로 채우기). 처음 정할 때는 excelrunner_report가 있는 드라이브로 미리 채운다
   useEffect(() => {
     if (!agent.online) return
     let cancelled = false
@@ -398,12 +447,12 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
       const found = (l?.entries ?? []).map((e) => atsDrive(e.fullPath)).filter((d): d is string => d !== null)
       if (cancelled) return
       setDrives(found)
-      if (drive) return
+      if (initial) return
       for (const d of found) {
         const root = await api.listFiles(agent.id, `${d}\\`).catch(() => null)
         if (cancelled) return
         if (root?.entries.some((e) => e.isDirectory && e.name.toLowerCase() === ATS_ROOT)) {
-          setDrive((cur) => cur ?? d)
+          setP((cur) => (cur.mode === 'ats' && !cur.resultDir.trim() ? { ...cur, ...atsDirs(d) } : cur))
           return
         }
       }
@@ -415,13 +464,56 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent.id, agent.online])
 
-  const save = async () => {
-    if (ats && !drive) {
-      setError('ATS 설치 드라이브를 고르세요.')
-      return
+  const set = (patch: Partial<ResultProfile>) => {
+    setP((cur) => ({ ...cur, ...patch }))
+    setWarn(null)
+  }
+
+  const applyPreset = (id: string | null) => {
+    setPresetId(id)
+    setNewPresetName(null)
+    setError(null)
+    if (id && presets[id]) set(values(presets[id]))
+  }
+
+  const runPreset = async (action: () => Promise<void>) => {
+    setPresetBusy(true)
+    setError(null)
+    try {
+      await action()
+    } catch (err) {
+      setError(toMessage(err))
+    } finally {
+      setPresetBusy(false)
     }
-    const out: ResultProfile = ats && drive ? { ...p, ...atsDirs(drive) } : p
-    if (!out.resultDir.trim()) {
+  }
+
+  const saveAsPreset = () => runPreset(async () => {
+    const title = newPresetName?.trim()
+    if (!title) throw new Error('프리셋 이름을 입력하세요.')
+    if (!p.resultDir.trim()) throw new Error('Result 폴더를 입력하세요.')
+    const id = newPresetId()
+    await savePreset(id, { ...values(p), name: title })
+    setPresetId(id)
+    setNewPresetName(null)
+  })
+
+  const updatePreset = () => runPreset(async () => {
+    if (!preset || !presetId) return
+    if (!p.resultDir.trim()) throw new Error('Result 폴더를 입력하세요.')
+    if (!window.confirm(`프리셋 '${preset.name}'을 지금 값으로 바꿀까요? (이 프리셋으로 이미 정한 PC는 그대로입니다)`)) return
+    await savePreset(presetId, { ...values(p), name: preset.name })
+  })
+
+  const removePreset = () => runPreset(async () => {
+    if (!preset || !presetId) return
+    if (!window.confirm(`프리셋 '${preset.name}'을 지울까요? (이 프리셋으로 이미 정한 PC는 그대로입니다)`)) return
+    await savePreset(presetId, null)
+    setPresetId(null)
+  })
+
+  const save = async () => {
+    if (!p.resultDir.trim()) {
       setError('Result 폴더를 입력하세요.')
       return
     }
@@ -432,7 +524,7 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
       if (agent.online && !warn) {
         const missing: string[] = []
         for (const f of FIELDS) {
-          const dir = out[f.key]?.trim()
+          const dir = p[f.key]?.trim()
           if (!dir) continue
           const l = await api.listFiles(agent.id, dir).catch(() => null)
           if (!l || l.error) missing.push(f.label.replace(' (필수)', ''))
@@ -442,17 +534,12 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
           return
         }
       }
-      await onSave(out)
+      await onSave(p)
     } catch (err) {
       setError(toMessage(err))
     } finally {
       setBusy(false)
     }
-  }
-
-  const set = (patch: Partial<ResultProfile>) => {
-    setP((cur) => ({ ...cur, ...patch }))
-    setWarn(null)
   }
 
   return (
@@ -468,7 +555,54 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
           void save()
         }}
       >
-        <p className="hint">PC마다 결과가 쌓이는 폴더를 정해 두면, 날짜만 고르면 그날 실행의 Result·영상·이미지를 알아서 찾아 엽니다. 모든 사용자가 같이 씁니다.</p>
+        <p className="hint">PC마다 결과가 쌓이는 폴더를 정해 두면, 날짜만 고르면 그날 실행의 Result·영상·이미지를 알아서 찾아 엽니다. 모든 사용자가 같이 씁니다. 같은 구성의 PC는 프리셋을 골라 바로 채우세요.</p>
+        <div className="rp-field">
+          <span className="rp-label">프리셋</span>
+          <span className="rp-input">
+            <select
+              aria-label="프리셋"
+              value={presetId ?? ''}
+              disabled={presetBusy}
+              onChange={(e) => applyPreset(e.target.value || null)}
+            >
+              <option value="">프리셋 선택 (고르면 아래 폴더를 채웁니다)</option>
+              {presetList.map(([id, x]) => <option key={id} value={id}>{presetLabel(x)}</option>)}
+            </select>
+            {preset && presetDirty && (
+              <button type="button" className="small" disabled={presetBusy} onClick={() => void updatePreset()} title="고친 폴더를 이 프리셋에 저장합니다">
+                프리셋에 반영
+              </button>
+            )}
+            {preset && (
+              <button type="button" className="small danger" disabled={presetBusy} onClick={() => void removePreset()}>프리셋 삭제</button>
+            )}
+            {newPresetName === null && (
+              <button type="button" className="small" disabled={presetBusy} onClick={() => setNewPresetName('')}>새 프리셋으로 저장</button>
+            )}
+          </span>
+          {newPresetName !== null && (
+            <span className="rp-input">
+              <input
+                aria-label="프리셋 이름"
+                autoFocus
+                value={newPresetName}
+                placeholder="프리셋 이름 (예: RFW 2호기)"
+                onChange={(e) => setNewPresetName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void saveAsPreset()
+                  } else if (e.key === 'Escape') {
+                    setNewPresetName(null)
+                  }
+                }}
+              />
+              <button type="button" className="small primary" disabled={presetBusy} onClick={() => void saveAsPreset()}>저장</button>
+              <button type="button" className="small" disabled={presetBusy} onClick={() => setNewPresetName(null)}>취소</button>
+            </span>
+          )}
+          {preset && presetDirty && <span className="small muted">프리셋과 다르게 고쳤습니다 (이 PC에만 저장하려면 아래 '저장')</span>}
+        </div>
         <div className="rp-field">
           <span className="rp-label">결과 형식</span>
           <span className="rv-mode" role="group" aria-label="결과 형식">
@@ -479,34 +613,23 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
             ))}
           </span>
         </div>
-        {ats && (
+        {ats && drives.length > 0 && (
           <div className="rp-field">
-            <span className="rp-label">ATS 설치 드라이브 (필수)</span>
+            <span className="rp-label">ATS 설치 드라이브로 채우기</span>
             <span className="rp-input">
               <select
                 aria-label="ATS 설치 드라이브"
-                value={drive ?? ''}
-                onChange={(e) => {
-                  setDrive(e.target.value || null)
-                  setWarn(null)
-                }}
+                value={atsDrive(p.resultDir) ?? ''}
+                onChange={(e) => e.target.value && set(atsDirs(e.target.value))}
               >
                 <option value="">드라이브 선택</option>
-                {[...new Set([...drives, ...(drive ? [drive] : [])])].sort().map((d) => (
-                  <option key={d} value={d}>{d}</option>
-                ))}
+                {[...new Set(drives)].sort().map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
+              <span className="small muted">{`Result = <드라이브>\\${ATS_ROOT}, 원본 이미지 = 그 안 captured_image (아래에서 고칠 수 있습니다)`}</span>
             </span>
-            {drive && (
-              <dl className="rp-folders small">
-                <dt>Result</dt><dd className="mono ellipsis">{`${drive}\\${ATS_ROOT}\\(날짜 폴더)\\*.csv`}</dd>
-                <dt>원본 이미지</dt><dd className="mono ellipsis">{atsDirs(drive).refDir}</dd>
-                <dt>결과 이미지</dt><dd className="mono ellipsis">{`${drive}\\${ATS_ROOT}\\(날짜 폴더)\\(이미지가 든 하위 폴더)`}</dd>
-              </dl>
-            )}
           </div>
         )}
-        {FIELDS.filter((f) => !ats || f.key === 'videoDir').map((f) => (
+        {FIELDS.map((f) => (
           <div key={f.key} className="rp-field">
             <span className="rp-label">{f.label}</span>
             <span className="rp-input">
@@ -515,7 +638,7 @@ function ProfileForm({ agent, name, initial, onSave, onCancel, onRemove }: {
                 aria-label={f.label}
                 value={p[f.key] ?? ''}
                 onChange={(e) => set({ [f.key]: f.key === 'resultDir' ? e.target.value : e.target.value || null })}
-                placeholder={f.hint}
+                placeholder={f.hint[p.mode]}
               />
               <button type="button" className="small" disabled={!agent.online} onClick={() => setPicking(f.key)}>찾아보기</button>
             </span>

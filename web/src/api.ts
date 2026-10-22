@@ -513,8 +513,23 @@ export interface ResultProfile {
   updatedAt?: string | null
 }
 
+/** 결과 폴더 프리셋: 이름 붙여 저장한 결과 폴더 묶음 (모든 사용자 공용). PC 설정에서 골라 바로 채운다 */
+export interface ResultPreset {
+  name: string
+  mode: 'ats' | 'rfw'
+  resultDir: string
+  pattern: string | null
+  videoDir: string | null
+  imageDir: string | null
+  refDir: string | null
+  updatedBy?: string | null
+  updatedAt?: string | null
+}
+
 export interface ResultProfiles {
   profiles: Record<string, ResultProfile>
+  /** 프리셋 id → 프리셋 (처음엔 서버 기본 ATS·RFW) */
+  presets?: Record<string, ResultPreset> | null
 }
 
 export interface CreateResultSet {
@@ -817,6 +832,10 @@ export const api = {
     request<ResultProfiles>(`/api/result-profiles/${encodeURIComponent(agentId)}`, { method: 'PUT', body: JSON.stringify(profile) }),
   removeResultProfile: (agentId: string) =>
     request<ResultProfiles>(`/api/result-profiles/${encodeURIComponent(agentId)}`, { method: 'DELETE' }),
+  saveResultPreset: (presetId: string, preset: ResultPreset) =>
+    request<ResultProfiles>(`/api/result-profiles/presets/${encodeURIComponent(presetId)}`, { method: 'PUT', body: JSON.stringify(preset) }),
+  removeResultPreset: (presetId: string) =>
+    request<ResultProfiles>(`/api/result-profiles/presets/${encodeURIComponent(presetId)}`, { method: 'DELETE' }),
   resultSetFileUrl: (id: string, path: string) => `/api/result-sets/${id}/file?${query({ path })}`,
   /** 테스트 PC에서 ffmpeg로 영상 구간 자르기 → 원래 영상 폴더에 저장 */
   trimVideo: (agentId: string, path: string, start: number, end: number) =>

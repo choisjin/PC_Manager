@@ -107,6 +107,8 @@ export default function App() {
     saveStateLayout,
     resultProfiles,
     saveResultProfile,
+    resultPresets,
+    saveResultPreset,
     pcStatuses,
     setPcStatus,
     serverHostName,
@@ -432,6 +434,8 @@ export default function App() {
             selfUserId={auth.user.id}
             profiles={resultProfiles}
             saveProfile={saveResultProfile}
+            presets={resultPresets}
+            savePreset={saveResultPreset}
             userName={userName}
           />
         ) : visiblePage === 'settings' ? (

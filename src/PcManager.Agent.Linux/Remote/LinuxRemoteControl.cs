@@ -74,6 +74,28 @@ public record X11Display(string Display, string? XAuthority);
 /// </summary>
 public static class DisplayLocator
 {
+    /// <summary>
+    /// 로그인한 사용자의 데스크톱 세션: 화면(DISPLAY 또는 WAYLAND_DISPLAY)과 세션 D-Bus를 가진 사용자 프로세스(uid ≥ 1000)의
+    /// uid와 환경 변수. 그 사용자 권한으로 창(런처)을 띄울 때 쓴다. 없으면 null
+    /// </summary>
+    public static (int Uid, Dictionary<string, string> Environment)? FindUserSession()
+    {
+        foreach (var dir in SafeEnumerate("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(dir), out _))
+                continue;
+            var uid = OwnerUid(dir);
+            if (uid < 1000)
+                continue;
+            var environment = ReadNullSeparated(Path.Combine(dir, "environ"));
+            var hasScreen = environment.TryGetValue("DISPLAY", out var display) && display.Length > 0
+                || environment.TryGetValue("WAYLAND_DISPLAY", out var wayland) && wayland.Length > 0;
+            if (hasScreen && environment.ContainsKey("DBUS_SESSION_BUS_ADDRESS"))
+                return (uid, environment);
+        }
+        return null;
+    }
+
     public static X11Display? Find()
     {
         // 직접 실행(--console)하면서 DISPLAY가 이미 있으면 그대로

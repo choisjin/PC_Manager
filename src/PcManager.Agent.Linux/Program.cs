@@ -10,6 +10,7 @@ using PcManager.Agent.Linux.Remote;
 //   --uninstall [--purge]     제거 (--purge: 설정·데이터까지)
 //   --set-server URL          서버 주소 변경 후 서비스 재시작 (root 필요)
 //   --remote-session URL [--thumb]  원격조작/썸네일 도우미 (서비스가 X11 세션 환경으로 띄움)
+//   --launcher [--minimized]  런처 창 (로그인 사용자 권한, 로그인 시 자동 실행·독에 표시)
 Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 string? Arg(string name)
@@ -20,6 +21,9 @@ string? Arg(string name)
 
 if (Arg(LinuxRemoteControl.SessionArgument) is { } remoteUrl)
     return RemoteSessionApp.Run(remoteUrl, thumbnail: args.Contains(LinuxRemoteControl.ThumbnailArgument));
+
+if (args.Contains(DesktopIntegration.LauncherArgument))
+    return PcManager.Agent.Linux.Launcher.LauncherApp.Run(minimized: args.Contains(DesktopIntegration.MinimizedArgument));
 
 if (args.Contains("--install"))
     return SystemdInstaller.Install(ServerInfoClient.NormalizeServerUrl(Arg("--server")));

@@ -7,6 +7,9 @@ public static class LocalControl
 {
     public const string PipeName = "PcManager.Agent.Control";
 
+    /// <summary>Linux: 같은 규약을 Unix 소켓으로 (서비스는 root, 런처는 로그인 사용자라 누구나 쓸 수 있게 연다)</summary>
+    public const string UnixSocketPath = "/run/pcmanager-agent/control.sock";
+
     public const string StatusCommand = "status";
     public const string ConnectCommand = "connect";
     public const string DisconnectCommand = "disconnect";

@@ -10,6 +10,7 @@ import {
   type PcStatuses,
   type PcStatusValue,
   type RemoteUsage,
+  type ResultPreset,
   type ResultProfile,
   type ResultProfiles,
   type Thumbnail,
@@ -127,6 +128,12 @@ export function useDashboard() {
   const [stateLayout, setStateLayout] = useState<StateLayout | null>(null)
   // 결과 확인 탭: PC별 결과 폴더 (모든 사용자 공유)
   const [resultProfiles, setResultProfiles] = useState<Record<string, ResultProfile>>({})
+  const [resultPresets, setResultPresets] = useState<Record<string, ResultPreset>>({})
+  // PC별 결과 폴더와 프리셋은 서버가 한 덩어리로 보낸다
+  const applyResultProfiles = useCallback((v: ResultProfiles) => {
+    setResultProfiles(v.profiles)
+    setResultPresets(v.presets ?? {})
+  }, [])
   // 내가 막 저장한 배치의 되울림(끄는 중 보낸 옛 위치)이 화면을 되돌리지 않게
   const lastLayoutSaveRef = useRef(0)
   const onlineUserRef = useRef<string | null>(null)
@@ -210,7 +217,7 @@ export function useDashboard() {
       setStateLayout(layout)
     })
     connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
-    connection.on('ResultProfilesChanged', (v: ResultProfiles) => setResultProfiles(v.profiles))
+    connection.on('ResultProfilesChanged', applyResultProfiles)
     connection.on('RemoteUsageChanged', (v: RemoteUsage) => setRemoteUsage(v.inUseBy))
     // 채팅: 서버는 내가 속한 방의 것만 보낸다
     // 전체 방은 맨 위에 고정, 나머지는 최근 대화 순
@@ -309,7 +316,7 @@ export function useDashboard() {
         connection.invoke('SetPresence', presenceRef.current.userId, presenceRef.current.agentIds).catch(() => {})
       if (onlineUserRef.current) connection.invoke('SetUser', onlineUserRef.current).catch(() => {})
       api.stateLayout().then(setStateLayout, () => {})
-      api.resultProfiles().then((v) => setResultProfiles(v.profiles), () => {})
+      api.resultProfiles().then(applyResultProfiles, () => {})
       for (const jobRunId of loadedJobIds) {
         api
           .job(jobRunId)
@@ -355,7 +362,7 @@ export function useDashboard() {
       connectionRef.current = null
       void connection.stop()
     }
-  }, [upsertRuns, upsertJobs, upsertTargets])
+  }, [upsertRuns, upsertJobs, upsertTargets, applyResultProfiles])
 
   const watchRun = useCallback<WatchRun>((runId, watcher) => {
     watchersRef.current.set(runId, watcher)
@@ -564,8 +571,14 @@ export function useDashboard() {
   /** PC 하나의 결과 폴더 저장 (null이면 지움). 서버가 모두에게 알린다 */
   const saveResultProfile = useCallback(async (agentId: string, profile: ResultProfile | null) => {
     const saved = profile ? await api.saveResultProfile(agentId, profile) : await api.removeResultProfile(agentId)
-    setResultProfiles(saved.profiles)
-  }, [])
+    applyResultProfiles(saved)
+  }, [applyResultProfiles])
+
+  /** 결과 폴더 프리셋 저장 (null이면 지움). 서버가 모두에게 알린다 */
+  const saveResultPreset = useCallback(async (presetId: string, preset: ResultPreset | null) => {
+    const saved = preset ? await api.saveResultPreset(presetId, preset) : await api.removeResultPreset(presetId)
+    applyResultProfiles(saved)
+  }, [applyResultProfiles])
 
   /** 이 대시보드의 사용자를 서버에 알린다 (탭과 상관없이 접속 중으로 보이게) */
   const announceUser = useCallback((userId: string | null) => {
@@ -608,6 +621,8 @@ export function useDashboard() {
     saveStateLayout,
     resultProfiles,
     saveResultProfile,
+    resultPresets,
+    saveResultPreset,
     pcStatuses,
     setPcStatus,
     serverHostName,

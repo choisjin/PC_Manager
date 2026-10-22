@@ -30,8 +30,13 @@ public static class SystemdInstaller
         var self = Environment.ProcessPath!;
         if (!string.Equals(Path.GetFullPath(self), InstalledExe, StringComparison.Ordinal))
         {
-            // 실행 중인 파일도 이름 바꾸기로 교체할 수 있다 (서비스 업그레이드)
-            var temp = InstalledExe + ".new";
+            // 이미 돌고 있는 에이전트를 먼저 멈춘다: 서버 자동 업데이트로 그 에이전트가 같은 폴더에 새 파일을
+            // 받는 중이면 복사가 잠금에 걸리고, 설치 뒤에 그 에이전트가 파일을 다시 덮어쓸 수도 있다
+            if (File.Exists(UnitPath))
+                Run(["systemctl", "stop", "pcmanager-agent"], quiet: true);
+            // 실행 중인 파일도 이름 바꾸기로 교체할 수 있다 (서비스 업그레이드).
+            // 임시 파일은 프로세스마다 다른 이름 (업데이터의 임시 파일과 겹치지 않게)
+            var temp = $"{InstalledExe}.install-{Environment.ProcessId}";
             File.Copy(self, temp, overwrite: true);
             File.SetUnixFileMode(temp, (UnixFileMode)0b111_101_101);
             File.Move(temp, InstalledExe, overwrite: true);
@@ -117,6 +122,9 @@ public static class SystemdInstaller
         Run("systemctl", "daemon-reload");
         if (File.Exists(LinkPath) || new FileInfo(LinkPath).LinkTarget is not null)
             File.Delete(LinkPath);
+        Step("런처 창 닫기·바로 가기 삭제");
+        DesktopIntegration.StopLaunchers();
+        DesktopIntegration.RemoveFiles();
         if (Directory.Exists(InstallDirectory))
             Directory.Delete(InstallDirectory, recursive: true);
         if (purge && Directory.Exists(AgentOptions.DefaultDataDirectory))

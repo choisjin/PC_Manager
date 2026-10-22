@@ -32,9 +32,22 @@ public static class LinuxAgentHost
         builder.Services.AddSingleton<LinuxRemoteControl>();
         builder.Services.AddSingleton<LinuxAgentUpdater>();
         builder.Services.AddHostedService<LinuxAgentWorker>();
+        builder.Services.AddHostedService<LinuxLocalControlServer>();
 
         var host = builder.Build();
-        SystemdInstaller.RepairUnit(host.Services.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(SystemdInstaller)));
+        var installLogger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger(nameof(SystemdInstaller));
+        SystemdInstaller.RepairUnit(installLogger);
+        if (Environment.IsPrivilegedProcess && Environment.ProcessPath == SystemdInstaller.InstalledExe)
+        {
+            // 런처 창 바로 가기·자동 실행을 맞추고, 로그인한 사용자가 있으면 창을 띄운다 (설치·업데이트 직후).
+            // 소켓 서버가 뜬 뒤에 띄우도록 잠시 기다린다
+            DesktopIntegration.EnsureFiles(installLogger);
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3));
+                DesktopIntegration.StartLauncherForSessionUser(installLogger);
+            });
+        }
         host.Run();
         return 0;
     }
