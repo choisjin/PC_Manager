@@ -16,6 +16,7 @@ import { RESULT_TAB_ID } from './components/results/resultTab'
 import { RemoteTabHost } from './components/remote/RemoteTabHost'
 import { REMOTE_TAB_AGENT } from './components/remote/remoteTab'
 import { UpdateDialog } from './components/UpdateDialog'
+import { HttpsBanner } from './components/HttpsBanner'
 import { PinDialog } from './components/PinDialog'
 import { pcLockStore } from './pcLocks'
 import { useDashboard } from './useDashboard'
@@ -370,6 +371,7 @@ export default function App() {
         </button>
         <UserBox user={selfUser} project={project} isAdmin={isAdmin} onLogout={logout} />
       </header>
+      <HttpsBanner />
 
       {showUpdate && (
         <UpdateDialog status={updateStatus} agents={agents} onClose={() => setShowUpdate(false)} />

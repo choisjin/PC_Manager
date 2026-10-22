@@ -5,9 +5,15 @@ import './styles.css'
 import './i18n/engine'
 import './i18n/en'
 import App from './App.tsx'
+import { importMigrated, upgradeToHttps } from './https'
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+// HTTP로 열렸으면 되는 대로 HTTPS로 옮긴다 (옮기는 중이면 그리지 않는다)
+importMigrated()
+void upgradeToHttps().then((moving) => {
+  if (moving) return
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  )
+})

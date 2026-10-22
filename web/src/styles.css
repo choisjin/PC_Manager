@@ -5674,3 +5674,7 @@ body.rv-open .pip { display: none; }
 .as-state { flex: none; max-width: 50%; text-align: right; }
 .as-ok { color: var(--ok); font-weight: 600; }
 .as-bad { color: var(--bad); }
+
+/* HTTP로 열렸을 때 HTTPS 안내 띠 */
+.https-banner { flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 0; }
+.https-banner > span { flex: 1; min-width: 0; }

@@ -35,6 +35,7 @@ public static class AgentHost
         builder.Services.AddSingleton<UserShellIcons>();
         builder.Services.AddSingleton<Remote.RemoteControlService>();
         builder.Services.AddSingleton<ServerCertificateTrust>();
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<ServerCertificateTrust>());
         builder.Services.AddHostedService<AgentWorker>();
         builder.Services.AddHostedService<LocalControlServer>();
         builder.Services.AddHostedService<LauncherSupervisor>();
