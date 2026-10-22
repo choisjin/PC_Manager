@@ -5678,3 +5678,10 @@ body.rv-open .pip { display: none; }
 /* HTTP로 열렸을 때 HTTPS 안내 띠 */
 .https-banner { flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 0; }
 .https-banner > span { flex: 1; min-width: 0; }
+
+/* 에이전트 설치 안내 (로그인 전) */
+.agent-gate { display: flex; flex-direction: column; gap: 8px; }
+.agent-gate-skip { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; font-size: 12px; }
+.agent-gate-skip ul { margin: 0; padding-left: 18px; }
+.agent-gate-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.agent-gate-skip-open { align-self: flex-start; }

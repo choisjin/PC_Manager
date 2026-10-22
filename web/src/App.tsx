@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type LoginResult, type OrgUser, type Project, setCurrentUser } from './api'
 import { FEATURES, type Feature, PermsContext } from './perms'
-import { findSelfAgentId } from './selfAgent'
+import { clientPlatform, findSelfAgentId } from './selfAgent'
 import { FileExplorer } from './components/FileExplorer'
 import { useTransfers } from './components/explorer/useTransfers'
 import { LoginGate } from './components/LoginGate'
@@ -17,6 +17,7 @@ import { RemoteTabHost } from './components/remote/RemoteTabHost'
 import { REMOTE_TAB_AGENT } from './components/remote/remoteTab'
 import { UpdateDialog } from './components/UpdateDialog'
 import { HttpsBanner } from './components/HttpsBanner'
+import { AgentInstallGate } from './components/AgentInstallGate'
 import { PinDialog } from './components/PinDialog'
 import { pcLockStore } from './pcLocks'
 import { useDashboard } from './useDashboard'
@@ -63,6 +64,24 @@ const writeKey = (key: string, value: string | null) => {
 const PAGE_FEATURE: Record<Page, Feature | null> = { files: 'files', state: 'state', results: 'results', transfers: 'history', settings: null }
 const PAGE_ORDER: Page[] = ['files', 'state', 'results', 'transfers', 'settings']
 const SELF_PC_KEY = 'pcm.selfPc'
+
+const SKIP_AGENT_GATE_KEY = 'pcm.noAgent'
+
+/** 주소에 ?noagent 를 붙여 열면 이 브라우저는 에이전트 설치 화면 없이 연다 (에이전트를 설치할 수 없는 PC용, 기억한다) */
+function loadSkipAgentGate(): boolean {
+  try {
+    const url = new URL(window.location.href)
+    if (url.searchParams.has('noagent')) {
+      localStorage.setItem(SKIP_AGENT_GATE_KEY, '1')
+      url.searchParams.delete('noagent')
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash)
+      return true
+    }
+    return localStorage.getItem(SKIP_AGENT_GATE_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 
 /** 에이전트 런처가 연 대시보드면 주소에 ?pc=<이 PC 이름>이 붙는다. 기억해 두고 주소에서는 지운다 */
 function loadSelfPc(): string | null {
@@ -113,6 +132,7 @@ export default function App() {
     pcStatuses,
     setPcStatus,
     serverHostName,
+    agentsLoaded,
     clientIp,
     remoteUsage,
     chatRooms,
@@ -215,6 +235,10 @@ export default function App() {
   }
   const visiblePage: Page = pageAllowed(page) ? page : (PAGE_ORDER.find(pageAllowed) ?? 'settings')
   const [selfPc] = useState(loadSelfPc)
+  const [skipAgentGate, setSkipAgentGate] = useState(loadSkipAgentGate)
+  // 설치 안내를 보여 주는 중인지 → 안내 중에 에이전트가 연결되면 HTTPS로 다시 연다
+  const [agentGateShown, setAgentGateShown] = useState(false)
+  const [agentJustInstalled, setAgentJustInstalled] = useState(false)
   // 대시보드를 연 PC의 에이전트 (온라인일 때만): Setting의 편집 폴더 관리에 쓴다
   const selfAgentOnlineId = useMemo(() => {
     const id = findSelfAgentId(agents, selfPc, clientIp, serverHostName)
@@ -257,6 +281,36 @@ export default function App() {
     ? agents.filter((a) => a.online && cmpVersion(a.agentVersion, updateStatus.currentVersion) < 0).length
     : 0
   const updateAvailable = (updateStatus?.updateAvailable ?? false) || outdatedAgentCount > 0
+
+  // 이 PC에 에이전트가 없으면 설치부터 (서버 PC에서 연 경우·Windows/Linux가 아닌 PC·결과/원격조작 탭·?noagent는 제외)
+  const platform = clientPlatform()
+  const needsAgent = !import.meta.env.DEV && !skipAgentGate && !RESULT_TAB_ID && !REMOTE_TAB_AGENT
+    && platform !== null && clientIp !== null && findSelfAgentId(agents, selfPc, clientIp, serverHostName) === null
+  const showAgentGate = agentsLoaded && needsAgent
+  if (showAgentGate !== agentGateShown) {
+    setAgentGateShown(showAgentGate)
+    // 설치한 에이전트가 연결됨: 에이전트가 서버 인증서를 신뢰 저장소에 넣을 시간을 준 뒤 다시 열면 HTTPS로 옮겨 간다
+    if (!showAgentGate && !skipAgentGate && location.protocol === 'http:') setAgentJustInstalled(true)
+  }
+  useEffect(() => {
+    if (!agentJustInstalled) return
+    const timer = setTimeout(() => location.reload(), 5000)
+    return () => clearTimeout(timer)
+  }, [agentJustInstalled])
+  if (!agentsLoaded && !auth && !import.meta.env.DEV) return <div className="gate muted">확인 중…</div>
+  if (agentJustInstalled) return <div className="gate muted">에이전트가 연결됐습니다. 서버 인증서를 적용해 HTTPS로 다시 여는 중…</div>
+  if (showAgentGate && platform && clientIp) {
+    return (
+      <AgentInstallGate
+        clientIp={clientIp}
+        platform={platform}
+        onSkip={() => {
+          writeKey(SKIP_AGENT_GATE_KEY, '1')
+          setSkipAgentGate(true)
+        }}
+      />
+    )
+  }
 
   if (!auth) {
     if (!authChecked) return <div className="gate muted">확인 중…</div>

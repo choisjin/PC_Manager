@@ -150,6 +150,8 @@ export function useDashboard() {
   const [thumbnails, setThumbnails] = useState<Record<string, Thumbnail>>({})
   const thumbWantsRef = useRef<string[]>([])
   const [connected, setConnected] = useState(false)
+  // 첫 PC 목록·접속 IP를 받았는지 (이 PC의 에이전트 확인용)
+  const [agentsLoaded, setAgentsLoaded] = useState(false)
   const connectionRef = useRef<signalR.HubConnection | null>(null)
   // 재연결 시 다시 알리기 위한 마지막 프레즌스
   const presenceRef = useRef<{ userId: string; agentIds: string[] } | null>(null)
@@ -301,6 +303,7 @@ export function useDashboard() {
       if (rooms) setChatRooms(rooms)
       if (fileFavs) setFileFavoritesState(fileFavs.items)
       setAgents(agentList.sort(byMachineName))
+      setAgentsLoaded(true)
       setRuns(runList)
       setJobs(jobList)
       if (update) setUpdateStatus(update)
@@ -626,6 +629,7 @@ export function useDashboard() {
     pcStatuses,
     setPcStatus,
     serverHostName,
+    agentsLoaded,
     clientIp,
     remoteUsage,
     chatRooms,
