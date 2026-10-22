@@ -20,6 +20,8 @@ import { openResultTab, readResultTab, RESULT_TAB_ID, type ResultTabRequest, upd
 import { findRun } from './resultFinder'
 import { type ColFilters, ColumnFilterMenu, type ColSort } from './ColumnFilter'
 import { VideoTransport } from './VideoTransport'
+import { CropOverlay, ImageSearchPanel } from './ImageSearch'
+import { type SearchVideo, useImageSearch } from './imageSearchState'
 
 type PutSlot = 'result' | 'video' | 'image' | 'ref'
 type Dialog = null | 'save' | 'trim'
@@ -419,6 +421,13 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   const [selected, setSelected] = useState<number | null>(null)
   const [playing, setPlaying] = useState<number | null>(null)
   const [wallNow, setWallNow] = useState<number | null>(null)
+  const [videoNow, setVideoNow] = useState(0)
+  // 이미지 찾기: 크롭한 이미지가 이 실행의 영상들에 나타나는 구간
+  const searchVideos: SearchVideo[] = useMemo(
+    () => rawVideos.map((v) => ({ path: v.path, readPath: v.playPath ?? v.path, name: v.name, duration: v.duration })),
+    [rawVideos],
+  )
+  const search = useImageSearch(source.agentId, searchVideos)
   const [query, setQuery] = useState('')
   const [onlyFail, setOnlyFail] = useState(false)
   const [cycle, setCycle] = useState('')
@@ -540,6 +549,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   }
 
   const onTime = (t: number) => {
+    setVideoNow(t)
     const wall = toRowTime(t, currentVideo, absolute, sync)
     setWallNow(wall)
     if (wall === null) return
@@ -554,6 +564,19 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     }
     if (row && row.index !== playing) setPlaying(row.index)
   }
+
+  /** 영상·위치로 이동 (다른 영상이면 바꾼 뒤) */
+  const seekTo = (path: string, t: number) => {
+    setNotice(null)
+    if (path !== current) {
+      pendingSeek.current = t
+      setCurrent(path)
+    } else seekVideo(t)
+  }
+  const wallOf = useCallback((path: string, t: number) => {
+    if (!absolute) return null
+    return toRowTime(t, videos.find((v) => v.path === path) ?? null, absolute, sync)
+  }, [absolute, videos, sync])
 
   const switchVideo = (step: 1 | -1) => {
     if (videos.length < 2) return
@@ -626,6 +649,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               }
             }}
             onSwitch={videos.length > 1 ? switchVideo : undefined}
+            overlay={<CropOverlay state={search} videoRef={videoRef} currentPath={current} />}
+            marks={search.open ? search.segments.filter((m) => m.path === current).map((m) => ({ start: m.first / m.fps, end: (m.last + 1) / m.fps })) : undefined}
             extra={
               <>
                 {videos.length > 1 && (
@@ -633,6 +658,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
                     {videos.map((v) => <option key={v.path} value={v.path}>{v.name}</option>)}
                   </select>
                 )}
+                <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!currentRaw?.playPath} className={search.open ? 'active' : ''} onClick={() => (search.open ? search.close() : search.start())} title="크롭한 이미지가 이 실행의 영상에 나타나는 구간 찾기 (테스트 PC에서 ffmpeg)">🔍 이미지 찾기</button>
                 <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!current} onClick={() => setDialog('trim')} title="영상 구간 자르기 (테스트 PC에서 ffmpeg, 원래 영상 폴더에 저장)">✂ 자르기</button>
               </>
             }
@@ -649,7 +675,18 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             {wallNow !== null && absolute && <> · 지금 {formatWall(wallNow)}</>}
           </div>
           {notice && <div className="rv-notice small">{notice}</div>}
-          <div className="rv-images">
+          {search.open && (
+            <ImageSearchPanel
+              state={search}
+              videos={searchVideos}
+              currentPath={current}
+              escape={dialog === null}
+              nowSeconds={videoNow}
+              wallOf={wallOf}
+              onSeek={seekTo}
+            />
+          )}
+          <div className="rv-images" hidden={search.open}>
             {pairImages ? (
               <AtsImagePanel
                 row={focusRow}

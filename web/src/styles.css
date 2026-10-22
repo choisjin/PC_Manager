@@ -5007,6 +5007,39 @@ th.sortable:hover {
   pointer-events: none;
 }
 .rv-seek { width: 100%; margin: 0; display: block; }
+/* 이미지 찾기: 탐색 막대 위 찾은 구간 · 영상 위 크롭 · 패널 */
+.rv-seek-marks { position: relative; height: 5px; background: #222; }
+.rv-seek-marks > span { position: absolute; top: 0; bottom: 0; background: #f5a623; }
+.rv-crop { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.rv-crop.drawing { pointer-events: auto; cursor: crosshair; }
+.rv-crop-rect, .rv-crop-area { position: absolute; box-sizing: border-box; pointer-events: none; }
+.rv-crop-rect { border: 2px solid #f5a623; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); }
+.rv-crop-area { border: 2px dashed #4fc3f7; background: rgba(79, 195, 247, 0.08); }
+.rv-crop-hint {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.7); color: #fff; padding: 3px 10px; border-radius: 10px; font-size: 12px; white-space: nowrap;
+}
+.rv-search { padding: 6px 10px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.rv-search .rv-drawer-head { justify-content: flex-start; gap: 8px; margin-bottom: 0; }
+.rv-search-setup { display: flex; gap: 10px; align-items: flex-start; }
+.rv-search-template { margin: 0; width: 96px; flex: none; text-align: center; }
+.rv-search-template img { max-width: 96px; max-height: 72px; image-rendering: pixelated; border: 1px solid var(--border); display: block; margin: 0 auto; }
+.rv-search-template > span { display: block; padding: 18px 4px; border: 1px dashed var(--border); }
+.rv-search-options { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.rv-search-options .rv-inline { flex-wrap: wrap; }
+.rv-search-options label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.rv-search-options select { width: auto; }
+.rv-search-options input[type='range'] { vertical-align: middle; width: 140px; }
+.rv-search progress { vertical-align: middle; width: 160px; }
+.rv-search-axis { position: relative; height: 18px; background: color-mix(in srgb, var(--border) 40%, transparent); border-radius: 3px; }
+.rv-search-span { position: absolute; top: 3px; bottom: 3px; background: color-mix(in srgb, var(--border) 90%, transparent); border-radius: 2px; }
+.rv-search-span.current { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.rv-search-hit { position: absolute; top: 0; bottom: 0; padding: 0; border: 0; border-radius: 1px; background: #f5a623; cursor: pointer; min-width: 3px; }
+.rv-search-hit:hover { background: #ff7a00; }
+.rv-search-now { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--accent); pointer-events: none; }
+.rv-search-list { margin: 0; padding-left: 28px; max-height: 26vh; overflow: auto; }
+.rv-search-list li { display: flex; gap: 8px; align-items: baseline; min-width: 0; padding: 1px 0; }
+.rv-search-list li .ellipsis { max-width: 30%; }
 .rv-transport {
   display: flex;
   align-items: center;

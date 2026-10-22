@@ -16,6 +16,7 @@ public class LinuxAgentWorker(
     CommandRunner runner,
     FileTransferService files,
     VideoTrimmer trimmer,
+    VideoImageSearch imageSearch,
     LinuxRemoteControl remote,
     LinuxAgentUpdater updater,
     OutboundQueue outbound,
@@ -141,6 +142,12 @@ public class LinuxAgentWorker(
             (path, start, end) => trimmer.TrimAsync(path, start, end));
         connection.On<string, bool, VideoPrepareResult>(AgentClientMethods.PrepareVideo,
             (path, convert) => trimmer.PrepareAsync(path, convert));
+        connection.On<ImageSearchRequest, string>(AgentClientMethods.StartImageSearch,
+            request => Task.Run(() => imageSearch.Start(request)));
+        connection.On<string, int, ImageSearchStatus?>(AgentClientMethods.GetImageSearch,
+            (searchId, have) => Task.Run(() => imageSearch.Get(searchId, have)));
+        connection.On<string, bool>(AgentClientMethods.CancelImageSearch,
+            searchId => Task.Run(() => imageSearch.Cancel(searchId)));
         connection.On<string, string, int, DirectoryListing>(AgentClientMethods.SearchFiles,
             (root, query, max) => Task.Run(() => files.SearchFiles(root, query, max)));
         connection.On<string>(nameof(IAgentClient.CancelTransfer), files.CancelTransfer);

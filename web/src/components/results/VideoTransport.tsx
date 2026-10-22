@@ -32,9 +32,13 @@ interface Props {
   durationHint?: number | null
   /** ffmpeg가 읽은 fps (한 프레임 이동 간격) */
   fps?: number | null
+  /** 영상 위에 겹쳐 그릴 것 (이미지 찾기 크롭 등) */
+  overlay?: ReactNode
+  /** 탐색 막대 위에 표시할 구간 (초) */
+  marks?: { start: number; end: number }[]
 }
 
-export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, onSwitch, extra, error, waiting, durationHint, fps }: Props) {
+export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, onSwitch, extra, error, waiting, durationHint, fps, overlay, marks }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
@@ -229,9 +233,17 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
         ) : (
           <div className="rv-video-empty muted">{waiting ?? '영상이 없습니다'}</div>
         )}
+        {src && overlay}
         {osd && <div className="rv-osd">{osd}</div>}
         {error && <div className="rv-video-error">{error}</div>}
       </div>
+      {marks && marks.length > 0 && duration > 0 && (
+        <div className="rv-seek-marks" aria-hidden>
+          {marks.map((m) => (
+            <span key={m.start} style={{ left: `${(m.start / duration) * 100}%`, width: `max(2px, ${((m.end - m.start) / duration) * 100}%)` }} />
+          ))}
+        </div>
+      )}
       <input
         className="rv-seek"
         type="range"

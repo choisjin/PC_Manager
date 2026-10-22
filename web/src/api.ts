@@ -452,6 +452,40 @@ export interface VideoPrepareResult {
   error: string | null
 }
 
+/** 이미지 찾기 요청: 좌표는 frameWidth×frameHeight(크롭한 영상 원래 크기) 픽셀, template은 회색조 픽셀 base64 */
+export interface ImageSearchRequest {
+  paths: string[]
+  frameWidth: number
+  frameHeight: number
+  templateWidth: number
+  templateHeight: number
+  template: string
+  searchX: number
+  searchY: number
+  searchWidth: number
+  searchHeight: number
+}
+
+export interface ImageSearchVideo {
+  path: string
+  /** scores 한 칸 간격 (프레임 i = i/fps초) */
+  fps: number
+  /** 프레임별 유사도 0~200 (= 0~100%) base64 */
+  scores: string
+  error: string | null
+}
+
+export interface ImageSearchStatus {
+  state: 'running' | 'done' | 'failed' | 'canceled'
+  progress: number
+  current: string | null
+  /** 끝난 영상 (요청한 have개 다음부터) */
+  videos: ImageSearchVideo[]
+  /** 넓은 영역을 줄여 훑은 배율 (1 = 원래 크기) */
+  scale: number
+  error: string | null
+}
+
 export interface ResultSetBackup {
   state: 'running' | 'done' | 'failed'
   filesDone: number
@@ -849,6 +883,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path, convert }),
     }),
+  /** 테스트 PC에서 영상들의 프레임마다 크롭 이미지 유사도 재기 시작 → 작업 id */
+  startImageSearch: (agentId: string, body: ImageSearchRequest) =>
+    request<{ id: string }>(`/api/agents/${agentId}/video/image-search`, { method: 'POST', body: JSON.stringify(body) }),
+  /** 진행·끝난 영상 결과. have: 이미 받은 영상 수 */
+  imageSearchStatus: (agentId: string, id: string, have: number) =>
+    request<ImageSearchStatus>(`/api/agents/${agentId}/video/image-search/${id}?${query({ have: String(have) })}`),
+  cancelImageSearch: (agentId: string, id: string) =>
+    request<void>(`/api/agents/${agentId}/video/image-search/${id}`, { method: 'DELETE' }),
   /** '원격 사용 중' 표시가 남았을 때 지우기 */
   clearRemoteUsage: (agentId: string) => request<void>(`/api/remote-usage/${agentId}`, { method: 'DELETE' }),
   /** Linux PC: Wayland를 끄고(Xorg) 재부팅 */

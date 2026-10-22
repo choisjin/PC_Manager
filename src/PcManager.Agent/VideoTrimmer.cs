@@ -91,7 +91,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
 
     private string CacheDirectory => Path.Combine(options.Value.DataDirectory, "video-cache");
 
-    private sealed record Probe(string Format, string? Codec, double? Duration, double? Fps, bool HasAudio, string? AudioCodec);
+    internal sealed record Probe(string Format, string? Codec, double? Duration, double? Fps, bool HasAudio, string? AudioCodec, int Width, int Height);
 
     public async Task<VideoPrepareResult> PrepareAsync(string path, bool convert)
     {
@@ -196,7 +196,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
     }
 
     /// <summary>ffmpeg -i 로 컨테이너·코덱·길이·fps 읽기 (ffprobe 없이)</summary>
-    private static async Task<Probe> ProbeAsync(string ffmpeg, string path)
+    internal static async Task<Probe> ProbeAsync(string ffmpeg, string path)
     {
         var (_, text) = await RunAsync(ffmpeg, ["-hide_banner", "-nostdin", "-i", path], TimeSpan.FromSeconds(30));
         var format = Regex.Match(text, @"Input #0, (.+?), from").Groups[1].Value;
@@ -207,8 +207,15 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
                 + double.Parse(d.Groups[3].Value, CultureInfo.InvariantCulture);
         var video = Regex.Match(text, @"Stream #0:\d+.*?: Video: (\w+)(.*)");
         double? fps = null;
+        int width = 0, height = 0;
         if (video.Success)
         {
+            var size = Regex.Match(video.Groups[2].Value, @", (\d{2,5})x(\d{2,5})");
+            if (size.Success)
+            {
+                width = int.Parse(size.Groups[1].Value);
+                height = int.Parse(size.Groups[2].Value);
+            }
             var f = Regex.Match(video.Groups[2].Value, @", (\d+(?:\.\d+)?) fps");
             if (!f.Success)
                 f = Regex.Match(video.Groups[2].Value, @", (\d+(?:\.\d+)?) tbr");
@@ -217,7 +224,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         }
         var audio = Regex.Match(text, @"Stream #0:\d+.*?: Audio: (\w+)");
         return new Probe(format, video.Success ? video.Groups[1].Value : null, duration is > 0 ? duration : null, fps,
-            audio.Success, audio.Success ? audio.Groups[1].Value : null);
+            audio.Success, audio.Success ? audio.Groups[1].Value : null, width, height);
     }
 
     /// <summary>ffmpeg 실행 → (종료 코드, stderr). 시간 초과면 코드 -1</summary>
@@ -248,7 +255,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         return (process.ExitCode, await errors);
     }
 
-    private async Task<string> FindFfmpegAsync()
+    internal async Task<string> FindFfmpegAsync()
     {
         foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {

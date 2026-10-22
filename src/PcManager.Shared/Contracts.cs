@@ -147,6 +147,26 @@ public record VideoTrimResult(string? OutputPath, string? Error);
 /// </summary>
 public record VideoPrepareResult(string? PlayPath, bool NeedsConvert, double? Duration, double? Fps, string? Note, string? Error);
 
+/// <summary>
+/// 결과 확인 도구의 이미지 찾기: 영상들의 모든 프레임에서 검색 영역 안의 템플릿(크롭한 이미지) 유사도를 잰다.
+/// 좌표는 FrameWidth×FrameHeight(크롭한 영상의 원래 크기) 기준 픽셀. 크기가 다른 영상은 그 크기로 늘려 비교.
+/// Template: TemplateWidth×TemplateHeight 회색조(0~255) 픽셀, 한 줄씩
+/// </summary>
+public record ImageSearchRequest(
+    IReadOnlyList<string> Paths, int FrameWidth, int FrameHeight,
+    int TemplateWidth, int TemplateHeight, byte[] Template,
+    int SearchX, int SearchY, int SearchWidth, int SearchHeight);
+
+/// <param name="Fps">Scores 한 칸의 간격 (프레임 i = i/Fps초)</param>
+/// <param name="Scores">프레임별 유사도 0~200 (= 0~100%, 0.5% 단위)</param>
+public record ImageSearchVideo(string Path, double Fps, byte[] Scores, string? Error);
+
+/// <param name="State">running · done · failed · canceled</param>
+/// <param name="Progress">0~1</param>
+/// <param name="Videos">끝난 영상 (요청의 have개 다음부터)</param>
+/// <param name="Scale">템플릿·검색 영역을 줄인 배율 (계산량 때문에, 1이면 원래 크기)</param>
+public record ImageSearchStatus(string State, double Progress, string? Current, IReadOnlyList<ImageSearchVideo> Videos, int Scale, string? Error);
+
 /// <summary>원격조작 WebSocket 경로</summary>
 public static class AgentRemotePaths
 {
@@ -307,6 +327,12 @@ public static class AgentClientMethods
     public const string TrimVideo = "TrimVideo";
     /// <summary>(string path, bool convert) → VideoPrepareResult. 영상 길이·fps를 읽고, convert면 탐색 가능한 재생용 사본을 만든다 (캐시)</summary>
     public const string PrepareVideo = "PrepareVideo";
+    /// <summary>(ImageSearchRequest) → string 작업 id. 영상들에서 크롭 이미지 유사도 찾기를 뒤에서 시작 (진행은 GetImageSearch)</summary>
+    public const string StartImageSearch = "StartImageSearch";
+    /// <summary>(string id, int have) → ImageSearchStatus? (없는 작업이면 null). have: 이미 받은 영상 수</summary>
+    public const string GetImageSearch = "GetImageSearch";
+    /// <summary>(string id) → bool. 이미지 찾기 멈춤</summary>
+    public const string CancelImageSearch = "CancelImageSearch";
     /// <summary>
     /// (string streamId, string path, long offset, long length) → bool. 파일 구간을 HTTP POST(AgentTransferPaths.MediaStream)로 서버에 흘려보낸다.
     /// 브라우저 영상 재생용: SignalR 조각 중계보다 훨씬 빠르다. 시작하면 바로 true (보내기는 뒤에서), 못 열면 false. 옛 에이전트는 없음 → 조각 중계로

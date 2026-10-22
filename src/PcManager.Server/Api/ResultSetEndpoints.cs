@@ -139,6 +139,46 @@ public static class ResultSetEndpoints
                 return Results.Problem($"에이전트 호출 실패 (에이전트를 업데이트하세요): {ex.Message}", statusCode: StatusCodes.Status502BadGateway);
             }
         });
+
+        // 이미지 찾기: 테스트 PC 에이전트가 영상들에서 크롭 이미지 유사도를 프레임마다 잰다 (시작 → 진행 조회 → 멈춤)
+        app.MapPost("/api/agents/{agentId}/video/image-search", async (string agentId, ImageSearchRequest request, AgentRegistry registry,
+            IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+        {
+            if (request.Paths is not { Count: > 0 } || request.Template is not { Length: > 0 })
+                return Results.BadRequest("영상과 크롭한 이미지가 필요합니다.");
+            return await CallAgent(agentId, registry, agentHub, async proxy =>
+                Results.Ok(new { id = await proxy.InvokeAsync<string>(AgentClientMethods.StartImageSearch, request, ct) }));
+        });
+
+        app.MapGet("/api/agents/{agentId}/video/image-search/{searchId}", async (string agentId, string searchId, int? have,
+            AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            await CallAgent(agentId, registry, agentHub, async proxy =>
+                await proxy.InvokeAsync<ImageSearchStatus?>(AgentClientMethods.GetImageSearch, searchId, have ?? 0, ct) is { } status
+                    ? Results.Ok(status)
+                    : Results.NotFound("찾기 작업이 없습니다 (에이전트가 다시 시작됨)")));
+
+        app.MapDelete("/api/agents/{agentId}/video/image-search/{searchId}", async (string agentId, string searchId,
+            AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            await CallAgent(agentId, registry, agentHub, async proxy =>
+            {
+                await proxy.InvokeAsync<bool>(AgentClientMethods.CancelImageSearch, searchId, ct);
+                return Results.NoContent();
+            }));
+    }
+
+    private static async Task<IResult> CallAgent(string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub,
+        Func<ISingleClientProxy, Task<IResult>> call)
+    {
+        if (!registry.TryGetConnection(agentId, out var connectionId))
+            return Results.Conflict("PC가 오프라인입니다.");
+        try
+        {
+            return await call(agentHub.Clients.Client(connectionId));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return Results.Problem($"에이전트 호출 실패 (에이전트를 업데이트하세요): {ex.Message}", statusCode: StatusCodes.Status502BadGateway);
+        }
     }
 
     private static List<string> MissingFiles(ResultSet set, ResultSetStore store) =>
