@@ -24,7 +24,10 @@ const ITEM_HEIGHT = 20
 const LIST_MAX_HEIGHT = 260
 const MIN_WIDTH = 280
 
-/** 엑셀 자동 필터처럼: 정렬 · 검색 · 값 체크 목록 */
+/**
+ * 엑셀 자동 필터처럼: 정렬 · 검색 · 값 체크 목록.
+ * onSort가 없으면 값 고르기 창 (정렬·필터 지우기 없음, 처음엔 아무것도 안 고름, 고른 값을 그대로 돌려줌)
+ */
 export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onApply, onSort, onClose }: {
   x: number
   y: number
@@ -33,11 +36,12 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
   values: string[]
   label: (v: string) => string
   filter: ColFilter | undefined
-  sort: 'asc' | 'desc' | null
+  sort?: 'asc' | 'desc' | null
   onApply: (f: ColFilter | null) => void
-  onSort: (asc: boolean) => void
+  onSort?: (asc: boolean) => void
   onClose: () => void
 }) {
+  const picking = !onSort
   const ref = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const [search, setSearch] = useState('')
@@ -63,7 +67,7 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
     return [...byText.values()]
   }, [values, filter])
   const valueCount = useMemo(() => groups.reduce((sum, g) => sum + g.values.length, 0), [groups])
-  const [checked, setChecked] = useState<Set<string>>(() => new Set(filter?.values ?? groups.flatMap((g) => g.values)))
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(filter?.values ?? (picking ? [] : groups.flatMap((g) => g.values))))
   const isOn = (g: Group) => g.values.every((v) => checked.has(v))
 
   const q = search.trim().toLowerCase()
@@ -93,8 +97,8 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const target = e.target as Element
-      // 머리글 누름은 머리글이 처리 (같은 머리글 = 닫기, 다른 머리글 = 바꿔 열기)
-      if (ref.current && !ref.current.contains(target) && !target.closest?.('.rv-colhead')) onClose()
+      // 머리글(·이 창을 여는 버튼) 누름은 그쪽이 처리 (같은 머리글 = 닫기, 다른 머리글 = 바꿔 열기)
+      if (ref.current && !ref.current.contains(target) && !target.closest?.('.rv-colhead, [data-colfilter-trigger]')) onClose()
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
@@ -113,7 +117,7 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
   const apply = () => {
     // 검색 중이면 검색에 걸린 값 중 체크한 것만 (엑셀과 같음)
     const picked = (q ? shown : groups).flatMap((g) => g.values).filter((v) => checked.has(v))
-    onApply(!q && picked.length === valueCount ? null : { values: picked })
+    onApply(!picking && !q && picked.length === valueCount ? null : { values: picked })
     onClose()
   }
 
@@ -134,9 +138,13 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
       }}
     >
       <div className="rv-colfilter-title small muted ellipsis" title={title}>{title}</div>
-      <button type="button" className={`rv-colfilter-item${sort === 'asc' ? ' active' : ''}`} onClick={() => { onSort(true); onClose() }}>↑ 오름차순 정렬</button>
-      <button type="button" className={`rv-colfilter-item${sort === 'desc' ? ' active' : ''}`} onClick={() => { onSort(false); onClose() }}>↓ 내림차순 정렬</button>
-      <button type="button" className="rv-colfilter-item" disabled={!filter} onClick={() => { onApply(null); onClose() }}>✕ "{title}" 필터 지우기</button>
+      {onSort && (
+        <>
+          <button type="button" className={`rv-colfilter-item${sort === 'asc' ? ' active' : ''}`} onClick={() => { onSort(true); onClose() }}>↑ 오름차순 정렬</button>
+          <button type="button" className={`rv-colfilter-item${sort === 'desc' ? ' active' : ''}`} onClick={() => { onSort(false); onClose() }}>↓ 내림차순 정렬</button>
+          <button type="button" className="rv-colfilter-item" disabled={!filter} onClick={() => { onApply(null); onClose() }}>✕ "{title}" 필터 지우기</button>
+        </>
+      )}
       <input
         autoFocus
         placeholder="검색"

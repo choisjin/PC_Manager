@@ -179,10 +179,15 @@ public record VideoPrepareProgress(string Stage, double Fraction, long Bytes, lo
 /// 좌표는 FrameWidth×FrameHeight(크롭한 영상의 원래 크기) 기준 픽셀. 크기가 다른 영상은 그 크기로 늘려 비교.
 /// Template: TemplateWidth×TemplateHeight 회색조(0~255) 픽셀, 한 줄씩
 /// </summary>
+/// <param name="Ranges">이 구간들만 훑는다 (고른 스텝 앞뒤 몇 초). null이면 영상 전체. 구간이 없는 영상은 훑지 않는다</param>
 public record ImageSearchRequest(
     IReadOnlyList<string> Paths, int FrameWidth, int FrameHeight,
     int TemplateWidth, int TemplateHeight, byte[] Template,
-    int SearchX, int SearchY, int SearchWidth, int SearchHeight);
+    int SearchX, int SearchY, int SearchWidth, int SearchHeight,
+    IReadOnlyList<ImageSearchRange>? Ranges = null);
+
+/// <summary>이미지 찾기로 훑을 구간: Paths의 Video번째 영상 Start~End초</summary>
+public record ImageSearchRange(int Video, double Start, double End);
 
 /// <param name="Fps">Scores 한 칸의 간격 (프레임 i = i/Fps초)</param>
 /// <param name="Scores">프레임별 유사도 0~200 (= 0~100%, 0.5% 단위)</param>
@@ -193,6 +198,59 @@ public record ImageSearchVideo(string Path, double Fps, byte[] Scores, string? E
 /// <param name="Videos">끝난 영상 (요청의 have개 다음부터)</param>
 /// <param name="Scale">템플릿·검색 영역을 줄인 배율 (계산량 때문에, 1이면 원래 크기)</param>
 public record ImageSearchStatus(string State, double Progress, string? Current, IReadOnlyList<ImageSearchVideo> Videos, int Scale, string? Error);
+
+/// <summary>이미지 찾기 결과 조각: Video번째 영상의 Offset 프레임부터 유사도 (훑는 중인 영상은 확정된 프레임까지)</summary>
+/// <param name="Done">이 영상의 마지막 조각 (다 훑었다)</param>
+public record ImageSearchChunk(int Video, string Path, double Fps, int Offset, byte[] Scores, bool Done, string? Error);
+
+/// <param name="Chunks">요청한 위치(video, offset)부터 이어지는 결과. 서버 SignalR 메시지 한도(2MB) 안에 들게 한 번에 1MB까지</param>
+/// <param name="More">더 받을 결과가 남았다 (곧바로 다시 묻는다)</param>
+public record ImageSearchProgress(string State, double Progress, string? Current, int Scale, string? Error,
+    IReadOnlyList<ImageSearchChunk> Chunks, bool More);
+
+/// <summary>PC 정보 패널의 시스템·디스크 탭</summary>
+/// <param name="Platform">windows · linux</param>
+/// <param name="Os">"Windows 11 Pro" · "Ubuntu 24.04.1 LTS"</param>
+/// <param name="OsVersion">Windows 버전 ("24H2"). Linux는 null</param>
+/// <param name="OsBuild">Windows 빌드 ("26100.4061") · Linux 커널 ("6.8.0-45-generic")</param>
+/// <param name="Bios">BIOS 버전과 날짜</param>
+/// <param name="Cores">물리 코어 수 (모르면 0)</param>
+/// <param name="MemoryBytes">설치된 메모리</param>
+/// <param name="Users">로그인한 사용자 (화면·원격 데스크톱)</param>
+public record PcSystemInfo(string Platform, string MachineName, string Os, string? OsVersion, string OsBuild, string Architecture,
+    string? Manufacturer, string? Model, string? Bios, string Cpu, int Cores, int LogicalProcessors, long MemoryBytes,
+    IReadOnlyList<string> Gpus, DateTime BootTime, IReadOnlyList<string> Users, IReadOnlyList<DriveDetail> Drives);
+
+/// <summary>드라이브 하나 (Linux는 마운트 지점)</summary>
+/// <param name="Type">fixed · removable · network · cdrom · other</param>
+/// <param name="Format">파일 시스템 (NTFS · ext4 …)</param>
+public record DriveDetail(string Name, string? Label, string Type, string? Format, long FreeBytes, long TotalBytes);
+
+/// <param name="Cpu">CPU 사용률 (PC 전체 대비 0~100)</param>
+/// <param name="Memory">Windows: 개인 작업 집합 (작업 관리자의 '메모리'), Linux: 공유 페이지를 뺀 상주 메모리</param>
+public record ProcessEntry(int Id, string Name, double Cpu, long Memory);
+
+/// <param name="Items">프로세스 전부 (System Idle Process·Linux 커널 스레드 제외)</param>
+public record ProcessList(IReadOnlyList<ProcessEntry> Items);
+
+/// <summary>성능 1초 측정값. 사용률은 0~100, 속도는 초당 바이트</summary>
+/// <param name="Seq">측정 번호 (계속 늘어남)</param>
+/// <param name="DiskActive">가장 바쁜 디스크의 활성 시간</param>
+/// <param name="Gpu">GPU 사용률 (가장 바쁜 엔진, Windows만). 모르면 null</param>
+public record PerfSample(long Seq, double Cpu, long MemoryUsed, long MemoryTotal, double DiskRead, double DiskWrite, double DiskActive,
+    double NetReceive, double NetSend, double? Gpu);
+
+/// <param name="Session">측정을 새로 시작할 때마다 바뀐다 (바뀌면 대시보드가 그래프를 새로 그린다)</param>
+/// <param name="Samples">요청의 after 다음 측정값 (최근 60개까지)</param>
+public record PerfHistory(string Session, IReadOnlyList<PerfSample> Samples);
+
+/// <summary>장치 관리자 한 줄</summary>
+/// <param name="Class">종류 (Windows 장치 관리자의 이름 그대로: "디스플레이 어댑터" …)</param>
+/// <param name="Problem">0이면 정상. 장치 관리자 문제 코드 (22 사용 안 함, 28 드라이버 없음 …). Linux는 드라이버가 없으면 28</param>
+/// <param name="Id">장치 인스턴스 ID (USB\VID_046D&amp;PID_C52B\… · Linux는 sysfs 이름)</param>
+public record DeviceEntry(string Class, string Name, string? Manufacturer, int Problem, string? Id);
+
+public record DeviceList(IReadOnlyList<DeviceEntry> Items);
 
 /// <summary>원격조작 WebSocket 경로</summary>
 public static class AgentRemotePaths
@@ -362,10 +420,20 @@ public static class AgentClientMethods
     public const string DeleteVideoCache = "DeleteVideoCache";
     /// <summary>(ImageSearchRequest) → string 작업 id. 영상들에서 크롭 이미지 유사도 찾기를 뒤에서 시작 (진행은 GetImageSearch)</summary>
     public const string StartImageSearch = "StartImageSearch";
-    /// <summary>(string id, int have) → ImageSearchStatus? (없는 작업이면 null). have: 이미 받은 영상 수</summary>
+    /// <summary>(string id, int have) → ImageSearchStatus? (없는 작업이면 null). have: 이미 받은 영상 수. 옛 대시보드용 (긴 영상은 2MB를 넘어 연결이 끊긴다)</summary>
     public const string GetImageSearch = "GetImageSearch";
+    /// <summary>(string id, int video, int offset) → ImageSearchProgress? 진행과 (video, offset)부터의 결과 조각 (한 번에 1MB까지)</summary>
+    public const string GetImageSearchChunks = "GetImageSearchChunks";
     /// <summary>(string id) → bool. 이미지 찾기 멈춤</summary>
     public const string CancelImageSearch = "CancelImageSearch";
+    /// <summary>() → PcSystemInfo. PC 정보 패널: 시스템 정보·드라이브</summary>
+    public const string GetSystemInfo = "GetSystemInfo";
+    /// <summary>() → ProcessList. CPU는 저번 목록과 비교해 잰다 (1.5초 안에 다시 물으면 같은 목록)</summary>
+    public const string GetProcesses = "GetProcesses";
+    /// <summary>(long after) → PerfHistory. 첫 요청에 1초 간격 측정을 시작하고, 10초 동안 묻지 않으면 멈춘다</summary>
+    public const string GetPerformance = "GetPerformance";
+    /// <summary>() → DeviceList. 장치 관리자 목록 (숨긴 장치 제외)</summary>
+    public const string GetDevices = "GetDevices";
     /// <summary>
     /// (string streamId, string path, long offset, long length) → bool. 파일 구간을 HTTP POST(AgentTransferPaths.MediaStream)로 서버에 흘려보낸다.
     /// 브라우저 영상 재생용: SignalR 조각 중계보다 훨씬 빠르다. 시작하면 바로 true (보내기는 뒤에서), 못 열면 false. 옛 에이전트는 없음 → 조각 중계로

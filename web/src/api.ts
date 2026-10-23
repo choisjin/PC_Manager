@@ -506,6 +506,8 @@ export interface ImageSearchRequest {
   searchY: number
   searchWidth: number
   searchHeight: number
+  /** 이 구간들만 훑는다 (paths의 video번째 영상 start~end초). 없으면 영상 전체 */
+  ranges?: { video: number; start: number; end: number }[]
 }
 
 export interface ImageSearchVideo {
@@ -526,6 +528,105 @@ export interface ImageSearchStatus {
   /** 넓은 영역을 줄여 훑은 배율 (1 = 원래 크기) */
   scale: number
   error: string | null
+}
+
+/** 이미지 찾기 결과 조각: video번째 영상의 offset 프레임부터 유사도 (훑는 중인 영상은 확정된 프레임까지) */
+export interface ImageSearchChunk {
+  video: number
+  path: string
+  fps: number
+  offset: number
+  /** 프레임별 유사도 0~200 base64 */
+  scores: string
+  /** 이 영상의 마지막 조각 */
+  done: boolean
+  error: string | null
+}
+
+export interface ImageSearchProgress {
+  state: 'running' | 'done' | 'failed' | 'canceled'
+  progress: number
+  current: string | null
+  scale: number
+  error: string | null
+  /** 요청한 위치부터 이어지는 결과 (한 번에 1MB까지) */
+  chunks: ImageSearchChunk[]
+  /** 더 받을 결과가 남았다 → 곧바로 다시 묻는다 */
+  more: boolean
+}
+
+/** PC 정보 패널: 시스템·디스크 탭 */
+export interface PcSystemInfo {
+  platform: 'windows' | 'linux'
+  machineName: string
+  /** "Windows 11 Pro" · "Ubuntu 24.04.1 LTS" */
+  os: string
+  /** Windows 버전 ("24H2"), Linux는 null */
+  osVersion: string | null
+  /** Windows 빌드 · Linux 커널 */
+  osBuild: string
+  architecture: string
+  manufacturer: string | null
+  model: string | null
+  bios: string | null
+  cpu: string
+  /** 물리 코어 (모르면 0) */
+  cores: number
+  logicalProcessors: number
+  memoryBytes: number
+  gpus: string[]
+  /** UTC ISO */
+  bootTime: string
+  users: string[]
+  drives: DriveDetail[]
+}
+
+export interface DriveDetail {
+  name: string
+  label: string | null
+  type: 'fixed' | 'removable' | 'network' | 'cdrom' | 'other'
+  format: string | null
+  freeBytes: number
+  totalBytes: number
+}
+
+/** cpu: PC 전체 대비 % · memory: 바이트 (Windows 개인 작업 집합) */
+export interface ProcessEntry {
+  id: number
+  name: string
+  cpu: number
+  memory: number
+}
+
+/** 성능 1초 측정값. 사용률 %, 속도 초당 바이트 */
+export interface PerfSample {
+  seq: number
+  cpu: number
+  memoryUsed: number
+  memoryTotal: number
+  diskRead: number
+  diskWrite: number
+  /** 가장 바쁜 디스크의 활성 시간 % */
+  diskActive: number
+  netReceive: number
+  netSend: number
+  /** Windows만 (모르면 null) */
+  gpu: number | null
+}
+
+export interface PerfHistory {
+  /** 측정을 새로 시작하면 바뀐다 → 그래프를 새로 */
+  session: string
+  samples: PerfSample[]
+}
+
+/** 장치 관리자 한 줄. problem: 0 정상, 장치 관리자 문제 코드 (22 사용 안 함, 28 드라이버 없음 …) */
+export interface DeviceEntry {
+  class: string
+  name: string
+  manufacturer: string | null
+  problem: number
+  id: string | null
 }
 
 export interface ResultSetBackup {
@@ -697,7 +798,8 @@ async function request<T>(url: string, init?: RequestInit, retried = false): Pro
     if (!retried && agentId && lockedHandler && (await lockedHandler(agentId))) return request<T>(url, init, true)
     throw new Error(errorMessage(res.status, body))
   }
-  if (!res.ok) throw new Error(errorMessage(res.status, await res.text()))
+  // status: 호출한 쪽이 404(없음)와 일시적인 실패를 가를 수 있게
+  if (!res.ok) throw Object.assign(new Error(errorMessage(res.status, await res.text())), { status: res.status })
   const text = await res.text()
   return (text ? JSON.parse(text) : undefined) as T
 }
@@ -925,6 +1027,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path, convert }),
     }),
+  /** PC 정보 패널 (패널을 열어 그 탭을 볼 때만 부른다) */
+  pcSystemInfo: (agentId: string) => request<PcSystemInfo>(`/api/agents/${agentId}/info/system`),
+  pcProcesses: (agentId: string) => request<{ items: ProcessEntry[] }>(`/api/agents/${agentId}/info/processes`),
+  /** after: 이미 받은 마지막 측정 번호 */
+  pcPerformance: (agentId: string, after: number) =>
+    request<PerfHistory>(`/api/agents/${agentId}/info/performance?${query({ after })}`),
+  pcDevices: (agentId: string) => request<{ items: DeviceEntry[] }>(`/api/agents/${agentId}/info/devices`),
   /** 테스트 PC 드라이브 남은 공간 · 재생용 사본 목록 */
   videoStorage: (agentId: string) => request<VideoStorageInfo>(`/api/agents/${agentId}/video/storage`),
   /** 재생용 사본 지우기 (원본은 그대로) */
@@ -942,6 +1051,9 @@ export const api = {
   /** 진행·끝난 영상 결과. have: 이미 받은 영상 수 */
   imageSearchStatus: (agentId: string, id: string, have: number) =>
     request<ImageSearchStatus>(`/api/agents/${agentId}/video/image-search/${id}?${query({ have: String(have) })}`),
+  /** 진행과 (video, offset)부터의 결과 조각 (긴 영상도 1MB씩 나눠 받는다) */
+  imageSearchChunks: (agentId: string, id: string, video: number, offset: number) =>
+    request<ImageSearchProgress>(`/api/agents/${agentId}/video/image-search/${id}?${query({ video, offset })}`),
   cancelImageSearch: (agentId: string, id: string) =>
     request<void>(`/api/agents/${agentId}/video/image-search/${id}`, { method: 'DELETE' }),
   /** '원격 사용 중' 표시가 남았을 때 지우기 */

@@ -216,6 +216,7 @@ app.MapDownloadLinkApi();
 app.MapInstallApi(serverOptions);
 app.MapLauncherApi();
 app.MapResultSetApi();
+app.MapPcInfoApi();
 app.MapResultProfileApi();
 app.MapAgentServerApi();
 

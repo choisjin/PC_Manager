@@ -15,14 +15,26 @@ namespace PcManager.Agent;
 public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> logger)
 {
     private const double MaxFps = 60;
+    // 한 번에 돌려주는 유사도 (base64로 1.4MB: 서버 SignalR 메시지 한도 2MB를 넘으면 서버가 에이전트 연결을 끊는다. 20시간 60fps 영상은 4MB)
+    private const int ChunkBytes = 1_000_000;
     // 끝난 작업을 남겨 두는 시간 · 웹이 이만큼 진행을 묻지 않으면 버려진 것으로 보고 멈춘다
     private static readonly TimeSpan Keep = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan Abandoned = TimeSpan.FromMinutes(2);
 
+    /// <summary>영상 하나의 결과. Scores에는 확정된 프레임만 (훑는 중에는 다시 잴 수 있는 마지막 Step개 전까지)</summary>
+    private sealed class VideoResult(string path, double fps)
+    {
+        public readonly string Path = path;
+        public readonly double Fps = fps;
+        public readonly List<byte> Scores = [];
+        public bool Done;
+        public string? Error;
+    }
+
     private sealed class Job
     {
         public readonly CancellationTokenSource Cancel = new();
-        public readonly List<ImageSearchVideo> Videos = [];
+        public readonly List<VideoResult> Results = [];
         public string State = "running";
         public double Progress;
         public string? Current;
@@ -76,6 +88,7 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         return id;
     }
 
+    /// <summary>옛 대시보드: 끝난 영상을 통째로</summary>
     public ImageSearchStatus? Get(string id, int have)
     {
         if (!_jobs.TryGetValue(id, out var job))
@@ -83,7 +96,45 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         lock (job)
         {
             job.Polled = DateTime.UtcNow;
-            return new ImageSearchStatus(job.State, job.Progress, job.Current, job.Videos.Skip(Math.Max(0, have)).ToList(), job.Scale, job.Error);
+            var videos = job.Results.Where(r => r.Done).Skip(Math.Max(0, have))
+                .Select(r => new ImageSearchVideo(r.Path, r.Fps, r.Scores.ToArray(), r.Error)).ToList();
+            return new ImageSearchStatus(job.State, job.Progress, job.Current, videos, job.Scale, job.Error);
+        }
+    }
+
+    /// <summary>진행과 video번째 영상의 offset 프레임부터 이어지는 결과 (한 번에 ChunkBytes까지, 훑는 중인 영상은 확정된 프레임까지)</summary>
+    public ImageSearchProgress? GetChunks(string id, int video, int offset)
+    {
+        if (!_jobs.TryGetValue(id, out var job))
+            return null;
+        lock (job)
+        {
+            job.Polled = DateTime.UtcNow;
+            var chunks = new List<ImageSearchChunk>();
+            var budget = ChunkBytes;
+            var more = false;
+            for (var v = Math.Max(0, video); v < job.Results.Count; v++)
+            {
+                var r = job.Results[v];
+                var from = v == video ? Math.Clamp(offset, 0, r.Scores.Count) : 0;
+                var count = Math.Min(r.Scores.Count - from, budget);
+                var done = r.Done && from + count == r.Scores.Count;
+                if (count > 0 || done)
+                    chunks.Add(new ImageSearchChunk(v, r.Path, r.Fps, from, r.Scores.GetRange(from, count).ToArray(), done, done ? r.Error : null));
+                budget -= count;
+                // 영상은 차례로 훑으므로 끝나지 않은 영상 뒤는 아직 없다
+                if (!done)
+                {
+                    more = from + count < r.Scores.Count;
+                    break;
+                }
+                if (budget <= 0)
+                {
+                    more = v + 1 < job.Results.Count;
+                    break;
+                }
+            }
+            return new ImageSearchProgress(job.State, job.Progress, job.Current, job.Scale, job.Error, chunks, more);
         }
     }
 
@@ -117,22 +168,33 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         var probes = new List<VideoTrimmer.Probe?>();
         foreach (var path in r.Paths)
             probes.Add(File.Exists(path) ? await VideoTrimmer.ProbeAsync(ffmpeg, path) : null);
-        var total = Math.Max(1, probes.Sum(p => p is null ? 0 : p.Duration ?? 60));
+        // 영상마다 훑을 프레임 구간 (영상 전체면 null) · 진행률은 훑을 시간의 합 기준
+        var plans = probes.Select((p, i) => FrameRanges(r.Ranges, i, FpsOf(p), p?.Duration)).ToList();
+        var seconds = probes.Select((p, i) => p is null ? 0 : plans[i] is { } plan ? plan.Sum(x => x.Count) / FpsOf(p) : p.Duration ?? 60).ToList();
+        var total = Math.Max(1, seconds.Sum());
         double before = 0;
 
-        logger.LogInformation("이미지 찾기: 영상 {Count}개, 템플릿 {Tw}x{Th}, 영역 {Sw}x{Sh}+{Sx}+{Sy}, 배율 1/{K}, 전체 검색 {Step}프레임마다",
-            r.Paths.Count, tw, th, sw, sh, sx, sy, matcher.Scale, matcher.Step);
+        logger.LogInformation("이미지 찾기: 영상 {Count}개 ({Ranges}), 템플릿 {Tw}x{Th}, 영역 {Sw}x{Sh}+{Sx}+{Sy}, 배율 1/{K}, 전체 검색 {Step}프레임마다",
+            r.Paths.Count, r.Ranges is null ? "전체" : $"구간 {plans.Sum(p => p?.Count ?? 0)}개 · {total:0}초", tw, th, sw, sh, sx, sy, matcher.Scale, matcher.Step);
         foreach (var (path, index) in r.Paths.Select((p, i) => (p, i)))
         {
             job.Cancel.Token.ThrowIfCancellationRequested();
             var probe = probes[index];
-            var fps = Math.Min(MaxFps, probe?.Fps ?? 30);
+            var fps = FpsOf(probe);
+            var result = new VideoResult(path, fps);
             lock (job)
-                job.Current = Path.GetFileName(path);
-            if (probe is null)
             {
+                job.Current = Path.GetFileName(path);
+                job.Results.Add(result);
+            }
+            if (probe is null || plans[index] is { Count: 0 })
+            {
+                // 파일이 없거나, 고른 스텝이 이 영상에는 없다
                 lock (job)
-                    job.Videos.Add(new ImageSearchVideo(path, fps, [], "영상 파일이 없습니다"));
+                {
+                    result.Error = probe is null ? "영상 파일이 없습니다" : null;
+                    result.Done = true;
+                }
                 continue;
             }
 
@@ -143,23 +205,89 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
             filter.Add($"crop={sw}:{sh}:{sx}:{sy}");
             filter.Add("format=gray");
 
-            var duration = probe.Duration ?? 60;
+            var span = seconds[index];
             var start = before;
-            var (scores, error) = await ScanAsync(ffmpeg, path, string.Join(",", filter), matcher, job, frames =>
+            var (scores, error) = await ScanAsync(ffmpeg, path, string.Join(",", filter), matcher, job, result, fps, plans[index], frames =>
             {
                 lock (job)
-                    job.Progress = Math.Min(1, (start + Math.Min(duration, frames / fps)) / total);
+                    job.Progress = Math.Min(1, (start + Math.Min(span, frames / fps)) / total);
             });
-            before += duration;
+            before += span;
             lock (job)
-                job.Videos.Add(new ImageSearchVideo(path, fps, scores, error));
+            {
+                // 다시 잴 수 있어 남겨 둔 마지막 프레임들까지
+                result.Scores.AddRange(scores.Skip(result.Scores.Count));
+                result.Error = error;
+                result.Done = true;
+            }
         }
         lock (job)
             job.Progress = 1;
     }
 
-    private async Task<(byte[] Scores, string? Error)> ScanAsync(
-        string ffmpeg, string path, string filter, Matcher matcher, Job job, Action<int> progress)
+    /// <summary>영상의 프레임 간격 (가변 프레임 영상도 이 간격으로 고정)</summary>
+    private static double FpsOf(VideoTrimmer.Probe? probe) => Math.Min(MaxFps, probe?.Fps ?? 30);
+
+    /// <summary>
+    /// 이 영상에서 훑을 프레임 구간 [First, First+Count): 요청 구간(초)을 프레임으로 바꾸고, 겹치거나 1초 안으로 붙은 것은 합친다
+    /// (구간마다 ffmpeg를 띄우므로). 구간 요청이 없으면 null = 영상 전체
+    /// </summary>
+    private static List<(int First, int Count)>? FrameRanges(IReadOnlyList<ImageSearchRange>? ranges, int video, double fps, double? duration)
+    {
+        if (ranges is null)
+            return null;
+        var end = duration is { } d ? (int)Math.Ceiling(d * fps) : int.MaxValue;
+        var frames = ranges
+            .Where(x => x.Video == video)
+            .Select(x => (First: Math.Max(0, (int)Math.Floor(x.Start * fps)), Last: Math.Min(end, (int)Math.Ceiling(x.End * fps))))
+            .Where(x => x.Last > x.First)
+            .OrderBy(x => x.First);
+        var gap = (int)Math.Ceiling(fps);
+        var merged = new List<(int First, int Count)>();
+        foreach (var (first, last) in frames)
+        {
+            if (merged.Count > 0 && first <= merged[^1].First + merged[^1].Count + gap)
+            {
+                var (prevFirst, prevCount) = merged[^1];
+                merged[^1] = (prevFirst, Math.Max(prevFirst + prevCount, last) - prevFirst);
+            }
+            else
+                merged.Add((first, last - first));
+        }
+        return merged;
+    }
+
+    /// <summary>영상 전체(ranges가 null) 또는 프레임 구간들만 훑는다. 훑지 않은 프레임은 0</summary>
+    private async Task<(byte[] Scores, string? Error)> ScanAsync(string ffmpeg, string path, string filter, Matcher matcher, Job job,
+        VideoResult result, double fps, List<(int First, int Count)>? ranges, Action<int> progress)
+    {
+        var scores = new List<byte>();
+        string? error = null;
+        var scanned = 0;
+        foreach (var (first, count) in ranges ?? [(0, -1)])
+        {
+            while (scores.Count < first)
+                scores.Add(0);
+            var (frames, failure) = await ScanRangeAsync(ffmpeg, path, filter, matcher, job, result, fps, first, count, scores,
+                n => progress(scanned + n));
+            scanned += frames;
+            error ??= failure;
+            // 끝난 구간은 다시 재지 않는다 → 모두 확정
+            lock (job)
+            {
+                for (var k = result.Scores.Count; k < scores.Count; k++)
+                    result.Scores.Add(scores[k]);
+            }
+        }
+        return (scores.ToArray(), scanned == 0 ? error : null);
+    }
+
+    /// <summary>
+    /// 프레임 first부터 count개(-1이면 끝까지)를 읽어 scores에 이어 쓴다 (부르기 전 scores.Count == first).
+    /// 구간이면 ffmpeg가 그 자리로 건너뛰어(앞 키프레임부터 디코딩) 필요한 만큼만 읽는다
+    /// </summary>
+    private async Task<(int Frames, string? Error)> ScanRangeAsync(string ffmpeg, string path, string filter, Matcher matcher, Job job,
+        VideoResult result, double fps, int first, int count, List<byte> scores, Action<int> progress)
     {
         var info = new ProcessStartInfo(ffmpeg)
         {
@@ -168,11 +296,16 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
             RedirectStandardError = true,
             RedirectStandardOutput = true,
         };
-        foreach (var arg in new[]
-        {
-            "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-an", "-sn", "-dn",
-            "-vf", filter, "-f", "rawvideo", "-pix_fmt", "gray", "-",
-        })
+        var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
+        if (first > 0)
+            args.AddRange(["-ss", Seconds(first / fps)]);
+        if (count >= 0)
+            args.AddRange(["-t", Seconds(count / fps + 1)]);
+        args.AddRange(["-i", path, "-an", "-sn", "-dn", "-vf", filter]);
+        if (count >= 0)
+            args.AddRange(["-frames:v", count.ToString(CultureInfo.InvariantCulture)]);
+        args.AddRange(["-f", "rawvideo", "-pix_fmt", "gray", "-"]);
+        foreach (var arg in args)
             info.ArgumentList.Add(arg);
 
         using var process = Process.Start(info) ?? throw new InvalidOperationException("ffmpeg를 시작하지 못했습니다.");
@@ -182,11 +315,11 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         var ring = new byte[matcher.Step][];
         var current = matcher.NewPlane();
         var history = matcher.NewPlane();
-        var scores = new List<byte>();
         (int X, int Y)? last = null;
+        var frames = 0;
         try
         {
-            for (var i = 0; ; i++)
+            for (var i = first; count < 0 || i < first + count; i++)
             {
                 var frame = ring[i % matcher.Step] ??= new byte[matcher.Width * matcher.Height];
                 var read = await stdout.ReadAtLeastAsync(frame, frame.Length, throwOnEndOfStream: false, job.Cancel.Token);
@@ -199,7 +332,7 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
                 {
                     (score, at) = matcher.Full(current);
                     if (last is { } before && (Math.Abs(before.X - at.X) > matcher.Scale || Math.Abs(before.Y - at.Y) > matcher.Scale))
-                        for (var j = i - 1; j >= Math.Max(0, i - matcher.Step + 1); j--)
+                        for (var j = i - 1; j >= Math.Max(first, i - matcher.Step + 1); j--)
                         {
                             history.Load(ring[j % matcher.Step]);
                             scores[j] = Math.Max(scores[j], ToByte(matcher.Local(history, at).Score));
@@ -209,28 +342,40 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
                     (score, at) = matcher.Local(current, last.Value);
                 last = at;
                 scores.Add(ToByte(score));
-                if (scores.Count % 30 == 0)
+                frames++;
+                if (frames % 30 == 0)
                 {
-                    progress(scores.Count);
+                    progress(frames);
                     lock (job)
+                    {
+                        // 위에서 다시 재는 건 마지막 Step개 안쪽뿐 → 그 앞은 확정이라 훑는 중에도 웹이 받아 간다
+                        for (var k = result.Scores.Count; k < scores.Count - matcher.Step; k++)
+                            result.Scores.Add(scores[k]);
                         if (DateTime.UtcNow - job.Polled > Abandoned)
                             job.Cancel.Cancel();
+                    }
                 }
             }
-            await process.WaitForExitAsync(job.Cancel.Token);
+            // 구간은 -frames:v로 곧 끝나므로 기다리지 않고 정리, 영상 전체는 끝날 때까지
+            if (count < 0)
+                await process.WaitForExitAsync(job.Cancel.Token);
         }
         finally
         {
             if (!process.HasExited)
                 process.Kill(entireProcessTree: true);
         }
-        if (process.ExitCode != 0 && scores.Count == 0)
-        {
-            var tail = string.Join(" ", (await errors).Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(3));
-            return ([], $"ffmpeg 실패 (코드 {process.ExitCode}): {tail}");
-        }
-        return (scores.ToArray(), null);
+        progress(frames);
+        if (frames > 0)
+            return (frames, null);
+        await process.WaitForExitAsync();
+        if (process.ExitCode == 0)
+            return (0, null);
+        var tail = string.Join(" ", (await errors).Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(3));
+        return (0, $"ffmpeg 실패 (코드 {process.ExitCode}): {tail}");
     }
+
+    private static string Seconds(double value) => value.ToString("0.######", CultureInfo.InvariantCulture);
 
     private static byte ToByte(double score) => (byte)Math.Round(Math.Clamp(score, 0, 1) * 200);
 

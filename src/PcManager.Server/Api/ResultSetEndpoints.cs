@@ -170,12 +170,30 @@ public static class ResultSetEndpoints
                 Results.Ok(new { id = await proxy.InvokeAsync<string>(AgentClientMethods.StartImageSearch, request, ct) }));
         });
 
+        // video·offset을 주면 그 위치부터 결과 조각 (1MB씩, 훑는 중인 영상도), 없으면 옛 대시보드 방식 (have: 끝난 영상 통째로)
         app.MapGet("/api/agents/{agentId}/video/image-search/{searchId}", async (string agentId, string searchId, int? have,
-            AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            int? video, int? offset, AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
             await CallAgent(agentId, registry, agentHub, async proxy =>
-                await proxy.InvokeAsync<ImageSearchStatus?>(AgentClientMethods.GetImageSearch, searchId, have ?? 0, ct) is { } status
-                    ? Results.Ok(status)
-                    : Results.NotFound("찾기 작업이 없습니다 (에이전트가 다시 시작됨)")));
+            {
+                if (video is not { } from)
+                    return await proxy.InvokeAsync<ImageSearchStatus?>(AgentClientMethods.GetImageSearch, searchId, have ?? 0, ct) is { } status
+                        ? Results.Ok(status)
+                        : Results.NotFound("찾기 작업이 없습니다 (에이전트가 다시 시작됨)");
+                ImageSearchProgress? progress;
+                try
+                {
+                    progress = await proxy.InvokeAsync<ImageSearchProgress?>(AgentClientMethods.GetImageSearchChunks, searchId, from, offset ?? 0, ct);
+                }
+                catch (HubException)
+                {
+                    // 옛 에이전트(조각 받기 없음): 끝난 영상을 통째로 받아 같은 모양으로 (아주 긴 영상은 2MB를 넘을 수 있다 → 에이전트 업데이트)
+                    progress = await proxy.InvokeAsync<ImageSearchStatus?>(AgentClientMethods.GetImageSearch, searchId, from, ct) is { } old
+                        ? new ImageSearchProgress(old.State, old.Progress, old.Current, old.Scale, old.Error,
+                            old.Videos.Select((v, i) => new ImageSearchChunk(from + i, v.Path, v.Fps, 0, v.Scores, true, v.Error)).ToList(), false)
+                        : null;
+                }
+                return progress is not null ? Results.Ok(progress) : Results.NotFound("찾기 작업이 없습니다 (에이전트가 다시 시작됨)");
+            }));
 
         app.MapDelete("/api/agents/{agentId}/video/image-search/{searchId}", async (string agentId, string searchId,
             AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
@@ -186,7 +204,7 @@ public static class ResultSetEndpoints
             }));
     }
 
-    private static async Task<IResult> CallAgent(string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub,
+    internal static async Task<IResult> CallAgent(string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub,
         Func<ISingleClientProxy, Task<IResult>> call)
     {
         if (!registry.TryGetConnection(agentId, out var connectionId))

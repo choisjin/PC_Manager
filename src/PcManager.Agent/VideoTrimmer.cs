@@ -402,7 +402,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
     }
 
     // Linux: 장치·가상 파일 시스템 마운트는 빼고 디스크만
-    private static readonly string[] SkipMounts = ["/snap", "/var/snap", "/run", "/sys", "/proc", "/dev", "/boot"];
+    internal static readonly string[] SkipMounts = ["/snap", "/var/snap", "/run", "/sys", "/proc", "/dev", "/boot"];
 
     private static List<DriveSpace> Drives()
     {

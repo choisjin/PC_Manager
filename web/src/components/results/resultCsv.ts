@@ -64,6 +64,8 @@ export interface ParsedResult {
   rows: ResultRow[]
   /** 형식이 정해진 결과(ATS·RFW): 열을 그대로 보여 주는 표 설정. 없으면 자동 판별 표 */
   table?: TableSpec
+  /** 계획한 Cycle 수 (RFW 'Cycle Total'). 모르면 없음 */
+  cycleTotal?: number | null
 }
 
 /** 고정 열 표: 열 폭(grid, # 열 제외) · 가운데 정렬 열 · 결과 색 열 · 실패일 때만 색 칠할 열 · 시각 열 */
@@ -600,7 +602,10 @@ export function parseRfw(text: string): ParsedResult {
     expandColumns: '178px 30px 72px 40px 44px 48px 40px',
   }
   attachRfwImages(rows, all.slice(1))
-  return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_SHOWN, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table }
+  // 계획한 Cycle 수: 'Cycle Total' 열의 가장 큰 값
+  const totalAt = head.indexOf('Cycle Total')
+  const cycleTotal = all.slice(1).reduce((max, r) => Math.max(max, Number(unq(r[totalAt] ?? '')) || 0), 0) || null
+  return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_SHOWN, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table, cycleTotal }
 }
 
 /** 내용으로 형식 판별: 첫 줄이 RFW 열 이름이면 RFW, 7번째 줄이 [시각]으로 시작하면 ATS, 모르면 null */

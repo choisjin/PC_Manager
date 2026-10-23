@@ -13,6 +13,7 @@ import { FileFavorites } from './explorer/FileFavorites'
 import { newFileFavorite } from './explorer/fileFavorite'
 import { Icon } from './explorer/Icon'
 import type { PaneController } from './explorer/paneController'
+import { PcInfoPanel } from './explorer/PcInfoPanel'
 import { PcTree } from './explorer/PcTree'
 import { AGENT_MIME, displayName, type FileClipboard, newId } from './explorer/pcGroups'
 
@@ -216,6 +217,10 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
     }
   }
 
+  // PC 정보 패널: 활성 창의 PC (아직 누른 창이 없으면 마지막에 연 창). 공유 서버 창이면 없음
+  const infoPane = panes.find((p) => p.paneId === activePaneId) ?? panes[panes.length - 1]
+  const infoAgent = infoPane ? agentById.get(infoPane.agentId) ?? null : null
+
   const resizePane = (paneId: string, w: number, h: number) =>
     updatePanes(panes.map((p) => (p.paneId === paneId ? { ...p, w, h } : p)))
 
@@ -268,6 +273,8 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
             selfAgentId={selfOnline ? selfAgentId : null}
           />
         }
+        infoAgentId={infoAgent?.id ?? null}
+        infoPanel={<PcInfoPanel agent={infoAgent} name={infoAgent ? displayName(infoAgent, pcGroups) : null} />}
       />
 
       <div className="explorer-main">

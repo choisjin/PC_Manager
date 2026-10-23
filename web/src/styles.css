@@ -3558,6 +3558,157 @@ tr.drop-into > td,
 .file-fav-notice { margin: 4px 4px 2px; padding: 4px 6px; border-radius: 6px; background: var(--surface2); cursor: pointer; }
 .file-fav-notice.error { color: var(--bad); }
 
+/* PC 정보 패널 (PC 목록 아래): 시스템 · 디스크 · 프로세스 · 성능 · 장치 */
+.pc-info {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.pc-info-resizer {
+  position: absolute;
+  top: -4px;
+  right: 0;
+  left: 0;
+  z-index: 1;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.pc-info-resizer:hover {
+  background: linear-gradient(transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px);
+}
+
+.pc-info-head {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 24px;
+  padding: 2px 4px;
+}
+
+.pc-info-toggle {
+  flex: none;
+  display: inline-flex;
+  gap: 3px;
+  padding: 1px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: 0;
+}
+
+.pc-info-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.pc-info-tabs {
+  display: flex;
+  padding: 0 4px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.pc-info-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 6px 6px;
+  font-size: 11px;
+}
+
+.pc-info-kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 0; }
+.pc-info-kv dt { color: var(--muted); white-space: nowrap; }
+.pc-info-kv dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+
+.pc-info-tools { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; }
+.pc-info-tools input[type='search'] { flex: 1; min-width: 0; padding: 2px 5px; font-size: 11px; }
+.pc-info-tools .segmented button { padding: 1px 6px; font-size: 10px; }
+.pc-info-tools .check { white-space: nowrap; }
+.pc-info-summary { display: flex; gap: 8px; margin: 0 0 3px; }
+
+.pc-drives,
+.pc-proc-list,
+.pc-device-groups,
+.pc-device-list { margin: 0; padding: 0; list-style: none; }
+.pc-drives li { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; border-bottom: 1px solid var(--border-light); }
+.pc-drive-head,
+.pc-drive-foot { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.pc-drives meter { width: 100%; height: 8px; }
+
+.pc-proc-list li { display: grid; grid-template-columns: minmax(0, 1fr) 40px 56px; gap: 4px; padding: 1px 2px; border-radius: 4px; }
+.pc-proc-list li:hover { background: var(--hover); }
+.pc-proc-list .mono { text-align: right; }
+
+.pc-perf { display: flex; flex-direction: column; gap: 6px; }
+.pc-perf-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pc-perf-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; min-width: 0; }
+.pc-perf-label { min-width: 46px; font-weight: 600; }
+.pc-perf-value,
+.pc-perf-sub { white-space: nowrap; }
+.pc-spark { width: 100%; height: 34px; background: var(--surface2); border-radius: 4px; }
+.pc-spark polyline { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.pc-spark polygon { fill: var(--accent); stroke: none; opacity: 0.12; }
+.pc-spark .s1 polyline { stroke: var(--warn); }
+.pc-spark .s1 polygon { fill: var(--warn); }
+.pc-perf.wide { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.pc-perf.wide .pc-spark { height: 96px; }
+.pc-perf.wide > p { grid-column: 1 / -1; }
+
+.pc-device-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 1px 2px;
+  font-size: inherit;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+}
+.pc-device-group:hover { background: var(--hover); }
+.pc-device-list { padding-left: 14px; }
+.pc-device-list li { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 1px 2px; }
+.pc-device-list li .ellipsis { flex: 1; min-width: 0; }
+.pc-problem { flex: none; padding: 0 4px; font-size: 10px; color: var(--bad); border: 1px solid currentColor; border-radius: 4px; }
+.pc-problem.disabled { color: var(--muted); }
+.pc-problem-dot,
+.pc-problem-count { color: var(--bad); }
+.pc-device-list li.problem .ellipsis,
+.pc-device-table tr.problem td:first-child { color: var(--bad); }
+
+/* PC 정보 크게 보기 */
+.pc-info-dialog { width: min(1100px, calc(100vw - 32px)); height: min(760px, calc(100vh - 48px)); }
+.pc-info-dialog[open] { display: flex; flex-direction: column; }
+.pc-info-dialog .dialog-head { gap: 12px; }
+.pc-info-dialog .dialog-head h2 { flex: 0 1 auto; min-width: 0; }
+.pc-info-dialog .pc-info-tabs { flex: 1; border: 0; }
+.pc-info-dialog .side-tabs button { padding: 2px 8px 3px; font-size: 12px; }
+.pc-info-dialog-actions { display: flex; gap: 4px; }
+.pc-info-dialog-body { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; font-size: 12px; }
+.pc-info-dialog-body .pc-info-kv { gap: 4px 16px; }
+.pc-info-dialog-body .pc-info-tools { max-width: 520px; }
+
+.pc-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.pc-table th,
+.pc-table td { padding: 2px 6px; text-align: left; border-bottom: 1px solid var(--border-light); }
+.pc-table th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+.pc-table th button { padding: 0; font: inherit; font-weight: 600; color: var(--text); background: none; border: 0; }
+.pc-table .num { text-align: right; white-space: nowrap; }
+.pc-device-table { width: calc(100% - 14px); margin: 2px 0 6px 14px; }
+.pc-device-table td:nth-child(4) { word-break: break-all; }
+
+/* PC 정보 패널이 보여 주는 PC */
+.tree-agent.info-target { background: var(--selected); }
+
 /* ===== 윈도우 11 스타일 통합 툴바 (활성 창에 적용) ===== */
 .win-toolbar {
   display: flex;
@@ -5045,6 +5196,13 @@ th.sortable:hover {
 .rv-search-options label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .rv-search-options select { width: auto; }
 .rv-search-options input[type='range'] { vertical-align: middle; width: 140px; }
+.rv-search-options input[type='number'] { width: 58px; }
+/* 고른 스텝 앞뒤: 값 고르기 버튼 · 훑을 구간 요약 · 시간축의 훑은 구간 */
+.rv-search-pick { display: inline-flex; align-items: center; gap: 3px; max-width: 260px; }
+.rv-search-pick .ellipsis { min-width: 0; }
+.rv-search-plan { display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.rv-search-warn { color: var(--warn); }
+.rv-search-window { position: absolute; top: 0; bottom: 0; min-width: 2px; background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 1px; pointer-events: none; }
 .rv-search progress { vertical-align: middle; width: 160px; }
 .rv-search-axis { position: relative; height: 18px; background: color-mix(in srgb, var(--border) 40%, transparent); border-radius: 3px; }
 .rv-search-span { position: absolute; top: 3px; bottom: 3px; background: color-mix(in srgb, var(--border) 90%, transparent); border-radius: 2px; }
@@ -5267,6 +5425,46 @@ body.rv-open .pip { display: none; }
 .rv-modal-box { width: min(500px, 94vw); max-height: 90vh; overflow: auto; padding: 14px 16px; }
 .rv-modal-box.wide { width: min(780px, 94vw); }
 .rv-modal-box progress { width: 100%; }
+
+/* 표 머리글 위: 테스트 시작 · 종료 · 총 시간 · Cycle */
+.rv-run-info { display: flex; flex-wrap: wrap; gap: 2px 14px; padding: 3px 8px; border-bottom: 1px solid var(--border); }
+.rv-run-info .muted { margin-right: 2px; }
+
+/* 영상 자르기: 시작·끝 스텝 · 앞뒤 여유 · 미리보기 */
+.rv-trim-steps { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.rv-trim-step { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; }
+.rv-trim-label { font-size: 12px; color: var(--muted); }
+.rv-trim-value { display: flex; flex-direction: column; min-width: 0; font-size: 12px; }
+.rv-trim-margins { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; }
+.rv-trim-margins label { display: inline-flex; align-items: center; gap: 4px; }
+.rv-trim-margins input { width: 64px; }
+.rv-trim-preview { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; }
+.rv-trim-preview video { width: 100%; max-height: 300px; background: #000; border-radius: 4px; }
+.rv-steplist { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+.rv-steplist-items { position: relative; overflow: auto; }
+.rv-steplist-item {
+  position: absolute;
+  right: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: 58px 92px minmax(0, 1fr) 58px;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: var(--text);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+}
+.rv-steplist-item:hover:not(:disabled) { background: var(--hover); }
+.rv-steplist-item.active { background: var(--selected); }
+.rv-steplist-item:disabled { color: var(--muted); cursor: not-allowed; opacity: 0.5; }
+.rv-steplist-status.ok { color: var(--ok); }
+.rv-steplist-status.bad { color: var(--bad); }
+.rv-steplist-status.warn { color: var(--warn); }
 .rv-sets { list-style: none; margin: 0; padding: 0; }
 .rv-sets li { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--border); }
 .rv-preview {

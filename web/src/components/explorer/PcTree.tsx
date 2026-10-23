@@ -39,12 +39,16 @@ interface Props {
   onModeChange: (mode: 'browser' | 'remote') => void
   /** 공유 서버 옆 탭에 보일 내용 (파일 즐겨찾기) */
   fileFavorites?: ReactNode
+  /** PC 목록 아래 PC 정보 패널 */
+  infoPanel?: ReactNode
+  /** PC 정보 패널이 보여 주는 PC (목록에 표시) */
+  infoAgentId?: string | null
 }
 
 type SideTab = 'shares' | 'favorites'
 const SIDE_TAB_KEY = 'pcm.tree.sideTab'
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange, fileFavorites }: Props) {
+export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange, fileFavorites, infoPanel, infoAgentId }: Props) {
   const pcLocks = usePcLocks()
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
@@ -197,7 +201,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
     return (
       <li
         key={agent.id}
-        className={`tree-agent${agent.online ? '' : ' offline'}`}
+        className={`tree-agent${agent.online ? '' : ' offline'}${agent.id === infoAgentId ? ' info-target' : ''}`}
         style={{ paddingLeft: agentPad(depth) }}
         draggable
         onDragStart={(e) => {
@@ -437,6 +441,8 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
 
         {agents.length === 0 && <li className="placeholder small">등록된 PC가 없습니다</li>}
       </ul>
+
+      {infoPanel}
 
       {showAddShare && <AddShareModal onConfirm={addShare} onClose={() => setShowAddShare(false)} />}
 

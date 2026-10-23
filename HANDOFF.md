@@ -1,6 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-22 · 최신 릴리스 **v0.8.90** (영상 바로 재생 · 변환은 승인 후 · 저장 공간 관리, 아래 1절)
+작성: 2026-10-23 · 최신 릴리스 **v0.8.91** (PC 정보 패널 · 이미지 찾기 긴 영상 끊김 수정·스텝 앞뒤만 찾기 ·
+결과 확인 표 위 요약·영상 자르기 스텝 선택 · SignalR 10.0.13, 아래 1절의 0.8.91 항목)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**).
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -12,7 +13,7 @@
 
 ---
 
-## 1. 지금 상태 (2026-10-22 두 번째 대화)
+## 1. 지금 상태 (2026-10-22 두 번째 대화 ~ 10-23)
 
 ### 결과 확인 탭: 크롭 이미지가 나타나는 구간 찾기 — **0.8.88로 릴리스**
 
@@ -64,6 +65,69 @@
   에이전트 `GetVideoStorage`/`DeleteVideoCache`, 서버 `GET /api/agents/{id}/video/storage`, `POST …/video/cache/delete`.
 - 원본 교체(변환 후 원본 삭제)는 **하지 않기로 보류** (바로 재생으로 변환 자체가 드물어짐).
 - 옛 에이전트: 늘 '변환 필요'로 나오고 [변환 시작]·[원본 재생]은 그대로 동작, 저장 공간은 "에이전트를 업데이트하세요".
+
+### 0.8.91: PC 정보 패널 (PC 목록 아래)
+
+사용자 요청: PC를 고르면 PC 목록 사이드바 아래 정보창에 시스템 정보 · 디스크 용량 · 프로세스 · 성능 · 장치 관리자. 테스트 PC 부하를 물어 재 보고 진행.
+- 대상 PC = **활성 탐색 창의 PC** (아직 누른 창이 없으면 마지막에 연 창, 공유 서버 창이면 없음). 트리에서 그 PC를 강조(`info-target`).
+- 웹 `components/explorer/PcInfoPanel.tsx`(패널·[크게 보기] `<dialog>`·탭별 화면) + `pcInfo.ts`(`usePcInfo`, 문제 코드 설명).
+  `PcTree`의 `infoPanel`·`infoAgentId` 속성, `FileExplorer`가 넘긴다. 접기·탭·높이(위 가장자리 끌기)는 localStorage.
+  보기만 함 (프로세스 끝내기·장치 사용 안 함은 넣지 않음).
+- **부하**: 보고 있는 탭만, 패널을 펼쳤을 때만, 브라우저 탭이 보일 때만 묻는다 (시스템·디스크 30초 · 프로세스 2초 · 성능 1초 · 장치는 열 때/새로 고침).
+  에이전트 `SystemMonitor`: 성능은 첫 요청에 1초 측정을 시작해 **10초 동안 요청이 없으면 멈춤**(최근 60개 보관, 여러 명이 봐도 한 번), 프로세스는 1.5초 안이면 저번 목록.
+  이 PC(24코어·프로세스 456개)에서 잰 1회 CPU: 성능 0.75ms · 프로세스 6ms · 장치 76ms(열 때만) · 메모리 +약 12MB.
+  `NetworkInterface.GetAllNetworkInterfaces()`는 1회 22ms라 30초마다만 다시 읽음.
+- 에이전트: `SystemMonitor.cs`(공통, Linux 링크) + `SystemMonitor.Windows.cs`(레지스트리 · `NtQuerySystemInformation`(보호된 프로세스도 CPU 시간) ·
+  PDH 영어 카운터(디스크 _Total 읽기/쓰기·가장 바쁜 디스크 활성, GPU Engine 엔진별 합의 최댓값) · SetupAPI(장치 관리자가 숨기는 장치·NoDisplayClass 제외))
+  + `src/PcManager.Agent.Linux/SystemMonitor.Linux.cs`(/proc · /sys, lspci 있으면 이름, 없으면 PCI 번호, `who`, 커널 스레드 제외).
+  Windows 11인데 ProductName이 "Windows 10"이면 빌드 22000 이상으로 고침. `AgentClientMethods.GetSystemInfo/GetProcesses/GetPerformance/GetDevices`.
+- 서버 `Api/PcInfoEndpoints.cs`: `GET /api/agents/{id}/info/system|processes|performance?after=|devices` (시간 제한 10~30초 → 504 "PC가 응답하지 않습니다").
+  PIN 잠금 미들웨어가 그대로 막는다(`/api/agents/{agentId}/…`). `ResultSetEndpoints.CallAgent`는 internal로.
+- 확인: 로컬 서버+Windows 에이전트+Playwright로 탭 5개·크게 보기·English·접으면 요청 0·높이 조절,
+  Linux 에이전트는 Docker `ubuntu:24.04` 컨테이너(`--console --server http://host.docker.internal:5063`)에서 4개 API 확인 (컨테이너라 프로세스 1개·드라이브 /app만).
+- 옛 에이전트: 패널에 "에이전트 호출 실패 (에이전트를 업데이트하세요): …".
+
+### 0.8.91: 이미지 찾기 — 긴 영상에서 연결 끊김 수정 · 찾는 중에도 구간 표시
+사용자 보고: 20시간 영상에서 찾기가 진행되다 "에이전트 호출 실패 (에이전트를 업데이트하세요): Connection '…' disconnected."
+- 원인: 영상 하나를 다 훑으면 프레임별 유사도(1프레임 1바이트, 20시간 60fps = 435만 바이트)를 **한 메시지로** 보냈고,
+  base64로 2MB를 넘으면 서버 SignalR `MaximumReceiveMessageSize`(2MB)에 걸려 **서버가 에이전트 연결을 끊음**
+  (에이전트 로그 "The server closed the connection … Connection closed with an error", 서버 로그엔 Info로 안 남음).
+  재현: 32×18 60fps 7.5시간 영상(162만 프레임)을 ffmpeg lavfi로 24초 만에 만들어 같은 502.
+- 수정: 에이전트 `VideoImageSearch.GetChunks(id, video, offset)` (`GetImageSearchChunks`) → `ImageSearchProgress`(조각 목록 + More).
+  한 번에 1MB(`ChunkBytes`)까지, 훑는 중인 영상도 **확정된 프레임**(다시 잴 수 있는 마지막 Step개 전)까지 → 웹이 찾는 중에도 구간을 보여 준다.
+  서버 GET `…/image-search/{id}?video=&offset=` (없으면 옛 `have` 방식), 옛 에이전트면 `HubException`을 잡아 옛 `GetImageSearch`로 받아 같은 모양으로.
+  웹 `imageSearchState.ts`: (영상, 프레임) 커서로 이어 받고 More면 바로 다시, 묻기 실패는 30번(약 30초)까지 다시 물음(404면 바로 그만) +
+  "테스트 PC 연결이 잠깐 끊겨 다시 묻는 중…". `request()` 오류에 `status`를 붙임.
+- 확인: 7.5시간 영상 162만 프레임을 111번에 나눠 받고 구간 45개 첫 프레임 정확(0·600·1200초…), 화면에서도 찾는 중 구간 4→45개,
+  옛 0.8.90 에이전트(임시 git worktree로 빌드) + 새 서버에서도 10분 영상 정상.
+
+### 0.8.91: 이미지 찾기 범위 — 고른 스텝 앞뒤 몇 초만
+사용자 요청: 영상 전체가 아니라 특정 스텝을 골라 앞뒤 몇 초만 비교(빠르게). 스텝은 **머리글을 먼저 고르고 그 열의 값에서** 고른다.
+- 웹 패널(`ImageSearch.tsx`): [찾을 범위: 영상 전체 | 고른 스텝 앞뒤] → [머리글 ▾] → [값 고르기 ▾](머리글 거르기와 같은 `ColumnFilterMenu`,
+  `onSort`가 없으면 '고르기' 모드: 정렬·필터 지우기 없음, 처음엔 아무것도 안 고름) → 앞 N초 · 뒤 M초 (기본 2·5).
+  요약 "스텝 n개 → 구간 k개 · 길이 · 영상의 x% · 영상 밖 m개 뺌". 결과 목록에 가장 가까운 스텝 "스텝 #N +1.00초", 시간축에 훑은 구간.
+  상태는 `useImageSearch`(scope·stepColumn·stepValues·before·after·searched), 구간 계산 `stepWindows`(겹치면 합침, 영상 길이로 자름).
+  스텝 → 영상 위치는 ResultViewer `stepSource.position` (= 표에서 스텝 누를 때와 같은 `videoForRow` + `videoTimeOf`, 보정·배율 반영).
+- 에이전트: `ImageSearchRequest.Ranges`(영상 번호·시작·끝 초). `FrameRanges`가 프레임 구간으로 바꾸고 1초 안으로 붙은 것은 합침,
+  `ScanRangeAsync`가 구간마다 ffmpeg `-ss`(키프레임부터) `-t` `-frames:v`로 그 부분만 읽음, 훑지 않은 프레임은 0, 구간마다 추적 상태 새로.
+  옛 에이전트는 `Ranges`를 몰라 영상 전체를 훑지만, 웹이 구간 안에서 시작한 것만 보여 줘서 결과는 같다 (느릴 뿐).
+- 확인: API로 7.5시간 영상의 4구간 1.6초(전체 112초), 600.000·1800.000초 정확. 화면: Reference RFW Result + 스텝 시각에 맞춰 만든 1시간 영상
+  (`KW Name` = Here Navi-in-Cluster 7스텝 +1초에 사각형, 1800초에 무관한 사각형) → 스텝 모드 2.6초 7개 모두 "+1.00초", 전체 모드 16.7초 8개.
+
+### 0.8.91: 결과 확인 — 표 위 요약 · 영상 자르기를 스텝으로
+사용자 요청: 표 머리글 위에 시작·종료·총 시간·Cycle / 자르기 창의 [지금 위치]를 [스텝 선택]으로, 끝 스텝은 시작보다 앞을 못 고르게, [초기화],
+시작·끝이 정해지면 미리보기, 초 대신 실제 타임스탬프, 창을 닫아도 고른 스텝 유지 (껐다 켜며 조절).
+- 표 위 `RunSummary`: 시작 = 첫 스텝 시각, 종료 = 스텝 시각 + 걸린 시간의 최댓값(마지막 스텝이 끝난 시각), 둘 다 날짜까지 · 총 시간 h:mm:ss,
+  Cycle = 돈 횟수(Cycle 값 종류 수) / 계획(RFW 'Cycle Total' 최댓값 → `ParsedResult.cycleTotal`). 경과 시간 Result는 총 시간·Cycle만.
+- `TrimDialog` (웹만, 에이전트 `TrimVideo` 그대로): 고른 스텝은 Viewer 상태 `trimSel`(시작·끝 행 번호 + 시작 앞·끝 뒤 여유 초)이라 창을 닫아도 남는다.
+  구간 = 시작 스텝 시각 − 앞 여유 ~ 끝 스텝이 끝난 시각(걸린 시간, 없으면 다음 스텝까지) + 뒤 여유, 영상 위치는 이미지 찾기와 같은 `stepSource.position`.
+  `StepList`: 시각순 · 검색 · 보이는 줄만 그림(1만 6천 행), 끝 스텝은 시작 스텝 차례 앞이 disabled, 열면 고른 스텝 근처로.
+  시작을 끝보다 뒤로 바꾸면 끝을 비움. 서로 다른 영상·영상 밖이면 안내. 미리보기 `<video>`(재생 준비된 사본 주소)로 구간 시작부터 재생, 끝에서 멈춤.
+- 확인: Reference RFW Result(시작 13:07:34 · 종료 16:44:36 · 3:37:02 · Cycle 10/10, CSV 계산과 같음), 스텝 #129~#129 + 뒤 여유 2초를 잘라 5.53초 파일.
+
+### 0.8.91: SignalR 보안 업데이트
+NuGet 경고 NU1903 (GHSA-334f-vvp4-7g6p, CVE-2026-70159, SignalR stateful reconnect DoS). 우리는 stateful reconnect를 안 써서 실제 영향 없음,
+서버는 self-contained라 CI의 SDK 10.0.402(런타임 10.0.13)로 이미 패치됨. 경고를 없애려고 Microsoft 패키지 10.0.12 → **10.0.13** (에이전트 2개 + 서버).
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

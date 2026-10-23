@@ -15,6 +15,7 @@ public class AgentWorker(
     FileTransferService files,
     VideoTrimmer trimmer,
     VideoImageSearch imageSearch,
+    SystemMonitor monitor,
     LocalEditService edits,
     UserShellIcons shellIcons,
     AgentUpdater updater,
@@ -164,8 +165,15 @@ public class AgentWorker(
             request => Task.Run(() => imageSearch.Start(request)));
         connection.On<string, int, ImageSearchStatus?>(AgentClientMethods.GetImageSearch,
             (searchId, have) => Task.Run(() => imageSearch.Get(searchId, have)));
+        connection.On<string, int, int, ImageSearchProgress?>(AgentClientMethods.GetImageSearchChunks,
+            (searchId, video, offset) => Task.Run(() => imageSearch.GetChunks(searchId, video, offset)));
         connection.On<string, bool>(AgentClientMethods.CancelImageSearch,
             searchId => Task.Run(() => imageSearch.Cancel(searchId)));
+        // PC 정보 패널 (대시보드가 보고 있을 때만 묻는다)
+        connection.On(AgentClientMethods.GetSystemInfo, () => Task.Run(monitor.GetSystemInfo));
+        connection.On(AgentClientMethods.GetProcesses, () => Task.Run(monitor.GetProcessesAsync));
+        connection.On<long, PerfHistory>(AgentClientMethods.GetPerformance, after => Task.Run(() => monitor.GetPerformance(after)));
+        connection.On(AgentClientMethods.GetDevices, () => Task.Run(monitor.GetDevices));
         connection.On<string, string, int, DirectoryListing>(AgentClientMethods.SearchFiles,
             (root, query, max) => Task.Run(() => files.SearchFiles(root, query, max)));
         connection.On<string>(nameof(IAgentClient.CancelTransfer), files.CancelTransfer);

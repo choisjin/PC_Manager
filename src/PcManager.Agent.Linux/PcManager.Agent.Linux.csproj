@@ -29,10 +29,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.12" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Systemd" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>
@@ -52,6 +52,7 @@
     <Compile Include="..\PcManager.Agent\ServerInfoClient.cs" Link="Shared\ServerInfoClient.cs" />
     <Compile Include="..\PcManager.Agent\VideoTrimmer.cs" Link="Shared\VideoTrimmer.cs" />
     <Compile Include="..\PcManager.Agent\VideoImageSearch.cs" Link="Shared\VideoImageSearch.cs" />
+    <Compile Include="..\PcManager.Agent\SystemMonitor.cs" Link="Shared\SystemMonitor.cs" />
     <Compile Include="..\PcManager.Agent\ArchiveFormats.cs" Link="Shared\ArchiveFormats.cs" />
   </ItemGroup>
 </Project>

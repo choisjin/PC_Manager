@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { formatDuration } from '../../format'
+import { ColumnFilterMenu } from './ColumnFilter'
 import { formatWall } from './resultCsv'
 import { toMessage } from './resultSessions'
-import { type AreaMode, areaOf, type ImageSearchState, type Rect, type SearchVideo, type Segment } from './imageSearchState'
+import {
+  type AreaMode, areaOf, type ImageSearchState, type Rect, type SearchScope, type SearchVideo, type Segment, type StepSource, stepWindows,
+} from './imageSearchState'
 
 // 결과 확인 이미지 찾기 화면: 영상 위 크롭·영역 드래그(CropOverlay) · 설정·진행·찾은 구간(ImageSearchPanel). 상태·찾기 작업은 imageSearchState
 
@@ -157,9 +161,11 @@ export function CropOverlay({ state, videoRef, currentPath }: {
 
 // ─────────────────────────────── 패널: 설정·진행·찾은 구간
 
-export function ImageSearchPanel({ state, videos, currentPath, escape, nowSeconds, wallOf, onSeek }: {
+export function ImageSearchPanel({ state, videos, steps, currentPath, escape, nowSeconds, wallOf, onSeek }: {
   state: ImageSearchState
   videos: SearchVideo[]
+  /** 찾을 범위를 고른 스텝 앞뒤로 할 때 쓰는 Result 표 */
+  steps: StepSource
   currentPath: string | null
   /** Esc를 이 패널이 받을지 (자르기·저장 창이 열려 있으면 false: 그 창이 닫히게) */
   escape: boolean
@@ -170,19 +176,46 @@ export function ImageSearchPanel({ state, videos, currentPath, escape, nowSecond
   onSeek: (path: string, seconds: number) => void
 }) {
   const { template, threshold, setThreshold, gap, setGap, found, status, error, running, segments } = state
+  // 스텝 값 고르기 창 (머리글 거르기와 같은 창)
+  const [picker, setPicker] = useState<{ x: number; y: number } | null>(null)
 
-  // Esc: 그리는 중이면 그리기만, 아니면 패널 닫기 (결과 확인 창이 닫히지 않게 먼저 받는다)
+  // Esc: 값 고르기 창 → 그리기 → 패널 닫기 순 (결과 확인 창이 닫히지 않게 먼저 받는다)
   useEffect(() => {
     if (!escape) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.stopPropagation()
-      if (state.drawing) state.setDrawing(null)
+      if (picker) setPicker(null)
+      else if (state.drawing) state.setDrawing(null)
       else state.close()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [state, escape])
+  }, [state, escape, picker])
+
+  // 고른 스텝: 머리글(열) 하나를 고르고 그 열의 값으로 → 스텝 시각 앞뒤 구간 (겹치면 합침)
+  const column = state.stepColumn
+  const pickerValues = useMemo(() => (column === null ? [] : steps.rows.map((r) => r.cells[column] ?? '')), [steps.rows, column])
+  const pickerFilter = useMemo(() => (state.stepValues.length > 0 ? { values: state.stepValues } : undefined), [state.stepValues])
+  const chosen = useMemo(() => {
+    if (column === null) return []
+    const values = new Set(state.stepValues)
+    return steps.rows.filter((r) => r.time !== null && values.has(r.cells[column] ?? ''))
+  }, [steps.rows, column, state.stepValues])
+  const plan = useMemo(() => stepWindows(chosen, steps, videos, state.before, state.after), [chosen, steps, videos, state.before, state.after])
+  const planSeconds = plan.windows.reduce((n, w) => n + w.end - w.start, 0)
+  const videoSeconds = videos.reduce((n, v) => n + (v.duration ?? 0), 0)
+  const valueText = (v: string) => (column === null ? v : steps.label(column, v)) || '(빈 값)'
+  const pickedText = state.stepValues.length === 0 ? '값 고르기'
+    : state.stepValues.length === 1 ? valueText(state.stepValues[0])
+      : `${valueText(state.stepValues[0])} 외 ${state.stepValues.length - 1}개`
+  const stepScope = state.scope === 'steps'
+  /** 찾은 구간과 가장 가까운 고른 스텝 (스텝 앞뒤로 찾았을 때) */
+  const stepOf = (s: Segment) => {
+    const t = s.first / s.fps
+    const w = state.searched?.find((x) => x.path === s.path && s.first >= Math.floor(x.start * s.fps) && t < x.end)
+    return w ? w.steps.reduce((a, b) => (Math.abs(b.at - t) < Math.abs(a.at - t) ? b : a)) : null
+  }
 
   // 한 시간축: 모든 영상의 시작 시각을 알면 벽시계, 아니면 영상을 순서대로 이어 붙인다
   const axis = useMemo(() => {
@@ -258,6 +291,68 @@ export function ImageSearchPanel({ state, videos, currentPath, escape, nowSecond
             <span className="muted small">{template ? areaText : ''}</span>
           </div>
           <div className="rv-inline">
+            <label className="small" title="영상 전체를 훑거나, 고른 스텝의 앞뒤 몇 초만 훑습니다 (훨씬 빠름)">
+              찾을 범위{' '}
+              <select value={state.scope} onChange={(e) => state.setScope(e.target.value as SearchScope)}>
+                <option value="all">영상 전체</option>
+                <option value="steps">고른 스텝 앞뒤</option>
+              </select>
+            </label>
+            {stepScope && (
+              <>
+                <select
+                  value={column ?? ''}
+                  title="스텝을 고를 머리글"
+                  onChange={(e) => {
+                    state.setStepColumn(e.target.value === '' ? null : Number(e.target.value))
+                    state.setStepValues([])
+                    setPicker(null)
+                  }}
+                >
+                  <option value="">머리글 고르기</option>
+                  {steps.headers.map((h, i) => <option key={i} value={i}>{h || `열 ${i + 1}`}</option>)}
+                </select>
+                <button
+                  type="button"
+                  className="rv-search-pick"
+                  data-colfilter-trigger
+                  disabled={column === null}
+                  title="이 머리글의 값 중에서 찾을 스텝 고르기"
+                  onClick={(e) => {
+                    if (picker) return setPicker(null)
+                    const r = e.currentTarget.getBoundingClientRect()
+                    setPicker({ x: r.left, y: r.bottom + 2 })
+                  }}
+                >
+                  <span className="ellipsis">{pickedText}</span> ▾
+                </button>
+                <label className="small" title="스텝 시각보다 이만큼 앞부터">
+                  앞
+                  <input type="number" min={0} max={3600} step={0.5} value={state.before} onChange={(e) => state.setBefore(Math.max(0, Number(e.target.value) || 0))} />
+                  초
+                </label>
+                <label className="small" title="스텝 시각보다 이만큼 뒤까지">
+                  뒤
+                  <input type="number" min={0} max={3600} step={0.5} value={state.after} onChange={(e) => state.setAfter(Math.max(0, Number(e.target.value) || 0))} />
+                  초
+                </label>
+              </>
+            )}
+          </div>
+          {stepScope && (
+            <div className="rv-search-plan small muted">
+              {column === null ? <span>머리글을 고르고, 그 열의 값 중에서 찾을 스텝을 고르세요</span>
+                : chosen.length === 0 ? <span>찾을 스텝의 값을 고르세요</span>
+                  : (
+                    <>
+                      <span>{`스텝 ${chosen.length}개 → 구간 ${plan.windows.length}개 · ${formatDuration(planSeconds * 1000)}`}</span>
+                      {videoSeconds > 0 && <span>{`영상의 ${((planSeconds / videoSeconds) * 100).toFixed(1)}%`}</span>}
+                      {plan.outside > 0 && <span className="rv-search-warn" title="영상 시작 시각을 모르거나 영상 밖의 스텝">{`영상 밖 ${plan.outside}개 뺌`}</span>}
+                    </>
+                  )}
+            </div>
+          )}
+          <div className="rv-inline">
             <label className="small" title="이 값 이상이면 나타난 것으로 봅니다. 바꾸면 다시 찾지 않고 바로 다시 나눕니다">
               유사도 기준{' '}
               <input type="range" min={50} max={100} step={0.5} value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} />
@@ -272,7 +367,16 @@ export function ImageSearchPanel({ state, videos, currentPath, escape, nowSecond
             <span className="rv-spacer" />
             {running
               ? <button type="button" onClick={state.stop}>멈춤</button>
-              : <button type="button" className="primary" disabled={!area || videos.length === 0 || state.drawing !== null} onClick={() => area && void state.run(area)}>찾기</button>}
+              : (
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!area || videos.length === 0 || state.drawing !== null || (stepScope && plan.windows.length === 0)}
+                  onClick={() => area && void state.run(area, stepScope ? plan.windows : undefined)}
+                >
+                  찾기
+                </button>
+              )}
           </div>
         </div>
       </div>
@@ -283,6 +387,7 @@ export function ImageSearchPanel({ state, videos, currentPath, escape, nowSecond
           {status && status.scale > 1 && ` · 영역이 넓어 1/${status.scale}로 훑은 뒤 원래 크기로 확인`}
         </div>
       )}
+      {running && state.retrying && <p className="small muted">테스트 PC 연결이 잠깐 끊겨 다시 묻는 중… (찾기는 테스트 PC에서 계속됩니다)</p>}
       {error && <p className="error small">{error}</p>}
       {found.filter((f) => f.error).map((f) => <p key={f.path} className="error small">{`${nameOf(f.path)}: ${f.error}`}</p>)}
       {found.length > 0 && (
@@ -296,6 +401,10 @@ export function ImageSearchPanel({ state, videos, currentPath, escape, nowSecond
                 title={s.name}
               />
             ))}
+            {state.searched?.map((w, i) => {
+              const left = posOf(w.path, w.start)
+              return <div key={`w${i}`} className="rv-search-window" style={{ left: `${left}%`, width: `max(2px, ${posOf(w.path, w.end) - left}%)` }} />
+            })}
             {ordered.map((s) => (
               <button
                 key={`${s.path}:${s.first}`}
@@ -315,10 +424,18 @@ export function ImageSearchPanel({ state, videos, currentPath, escape, nowSecond
             {ordered.map((s) => {
               const t = s.first / s.fps
               const wall = wallOf(s.path, t)
+              const step = stepOf(s)
+              const row = step ? steps.rows.find((r) => r.index === step.index) : undefined
               return (
                 <li key={`${s.path}:${s.first}`}>
                   <button type="button" className="link mono" onClick={() => seek(s)}>{formatFrameTime(t)}</button>
                   {wall !== null && axis.useWall && <span className="mono small">{formatWall(wall)}</span>}
+                  {step && (
+                    <span className="small" title={row && column !== null ? valueText(row.cells[column] ?? '') : undefined}>
+                      <span>{`스텝 #${step.index + 1}`}</span>{' '}
+                      <span className="muted mono">{`${t >= step.at ? '+' : '−'}${Math.abs(t - step.at).toFixed(2)}초`}</span>
+                    </span>
+                  )}
                   {videos.length > 1 && <span className="small muted ellipsis" title={s.path}>{nameOf(s.path)}</span>}
                   <span className="small muted">{`프레임 ${s.first} · ${((s.last - s.first + 1) / s.fps).toFixed(2)}초 · 최고 ${(s.peak / 2).toFixed(1)}%`}</span>
                 </li>
@@ -326,6 +443,18 @@ export function ImageSearchPanel({ state, videos, currentPath, escape, nowSecond
             })}
           </ol>
         </>
+      )}
+      {picker && column !== null && (
+        <ColumnFilterMenu
+          x={picker.x}
+          y={picker.y}
+          title={steps.headers[column] || `열 ${column + 1}`}
+          values={pickerValues}
+          label={(v) => steps.label(column, v)}
+          filter={pickerFilter}
+          onApply={(f) => state.setStepValues(f?.values ?? [])}
+          onClose={() => setPicker(null)}
+        />
       )}
     </div>
   )
