@@ -519,23 +519,7 @@ async function listImages(agentId: string, dir: string, set: ResultSet | null): 
   }
 }
 
-// ── 알림: 화면 안 알림 + (창이 뒤에 있으면) 윈도우 알림 + 짧은 소리
-let audioCtx: AudioContext | null = null
-function beep() {
-  try {
-    audioCtx ??= new AudioContext()
-    const o = audioCtx.createOscillator()
-    const g = audioCtx.createGain()
-    o.frequency.value = 660
-    g.gain.value = 0.08
-    o.connect(g).connect(audioCtx.destination)
-    o.start()
-    o.stop(audioCtx.currentTime + 0.2)
-  } catch {
-    // 소리 못 내면 무시
-  }
-}
-
+// ── 알림: 화면 안 알림 + (창이 뒤에 있으면) 윈도우 알림. 소리는 내지 않는다
 function announce(id: string, failed: boolean) {
   const s = find(id)
   if (!s) return
@@ -544,7 +528,6 @@ function announce(id: string, failed: boolean) {
   const toast: Toast = { id: newId(), sessionId: id, text, failed }
   emit({ toasts: [...state.toasts.filter((t) => t.sessionId !== id), toast] })
   window.setTimeout(() => dismissToast(toast.id), 12_000)
-  beep()
   if ((document.hidden || !document.hasFocus()) && 'Notification' in window && Notification.permission === 'granted') {
     try {
       const n = new Notification(text, { body: s.source.machineName ?? '', tag: `pcm-result-${id}`, silent: true })

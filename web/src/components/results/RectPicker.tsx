@@ -4,7 +4,7 @@ import type { FrameShot, Rect } from './imageSearchState'
 import { type PickerView, type PickerViewState, usePickerView } from './pickerView'
 
 // 영역 고르기 창 (직사각형): 지금 프레임을 크게 띄워 확대해 픽셀 단위로 사각형을 고른다 (프레임은 grabFrame으로 떠 둔 것).
-// 이미지 찾기(찾을 이미지 크롭·검색 영역)가 쓴다. 꼭짓점을 하나씩 옮기는 사각형(영상 분석의 화면·베젤)은 QuadPicker,
+// 이미지 찾기(찾을 이미지 크롭·검색 영역)가 쓴다. 꼭짓점을 하나씩 옮기는 사각형(영상 분석의 화면 영역)은 QuadPicker,
 // 보기 칸(확대·이동·그리기)은 pickerView
 
 /** 고른 사각형을 바꾸는 곳: 테두리·모서리(n·s·e·w 조합) 또는 안쪽(옮기기) */

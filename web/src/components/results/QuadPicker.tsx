@@ -4,7 +4,7 @@ import type { FrameShot, Rect } from './imageSearchState'
 import { usePickerView } from './pickerView'
 import { PickerHead, PickerTools } from './RectPicker'
 
-// 영역 고르기 창 (꼭짓점): 비스듬히 찍힌 화면·베젤에 맞춰 네 꼭짓점을 하나씩 옮긴다 (영상 분석).
+// 영역 고르기 창 (꼭짓점): 비스듬히 찍힌 화면에 맞춰 네 꼭짓점을 하나씩 옮긴다 (영상 분석의 화면 영역).
 // 드래그하면 직사각형으로 시작하고 꼭짓점을 끌어 사다리꼴로 맞춘다. 미리 보기는 반듯하게 편 모습 (에이전트도 이렇게 펴서 잰다).
 // 보기 칸(확대·이동·그리기)은 pickerView, 창 머리·도구 줄은 RectPicker와 같다
 
@@ -31,18 +31,12 @@ function boundsOf(p: Point[]): Rect {
   return { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y }
 }
 
-export function QuadPickerDialog({ frame, title, confirmLabel, initial, reference, mustContain = false, variant, onApply, onCancel }: {
+export function QuadPickerDialog({ frame, title, confirmLabel, initial, onApply, onCancel }: {
   frame: FrameShot
   title: string
   confirmLabel: string
   /** 처음 꼭짓점 넷 (프레임 픽셀, 왼쪽 위부터 시계 방향) */
   initial: Point[] | null
-  /** 함께 보여 줄 사각형 (프레임 픽셀): 베젤을 고를 때 화면, 화면을 고를 때 베젤 */
-  reference?: Point[] | null
-  /** reference를 감싸야 한다 (베젤) */
-  mustContain?: boolean
-  /** 테두리: screen 빨강 · bezel 노랑 */
-  variant: 'screen' | 'bezel'
   /** 확인: 문제가 있으면 안내 문구를 돌려준다 (창을 닫지 않고 보여 줌) */
   onApply: (corners: Point[]) => string | null
   onCancel: () => void
@@ -76,8 +70,7 @@ export function QuadPickerDialog({ frame, title, confirmLabel, initial, referenc
   const convex = pts !== null && convexQuad(pts)
   const sides = pts ? sidesOf(pts) : null
   const big = sides !== null && sides.w >= MIN_SIDE && sides.h >= MIN_SIDE
-  const encloses = !mustContain || !reference || (pts !== null && quadContains(pts, reference))
-  const valid = convex && big && encloses
+  const valid = convex && big
 
   // 반듯하게 편 미리 보기 (에이전트가 perspective로 펴는 것과 같은 모양)
   useLayoutEffect(() => {
@@ -204,7 +197,7 @@ export function QuadPickerDialog({ frame, title, confirmLabel, initial, referenc
   return (
     <dialog
       ref={dialogRef}
-      className={`dialog rv-cropper ${variant}`}
+      className="dialog rv-cropper screen"
       aria-label={title}
       onClose={onCancel}
       onKeyDown={onKeyDown}
@@ -227,7 +220,6 @@ export function QuadPickerDialog({ frame, title, confirmLabel, initial, referenc
           {v && size && (
             <svg className="rv-quad-svg" width={size.w} height={size.h}>
               {pts && <path className="rv-quad-dim" fillRule="evenodd" d={`M0 0H${size.w}V${size.h}H0Z M${line(pts).replaceAll(' ', 'L')}Z`} />}
-              {reference && <polygon className="rv-quad-ref" points={line(reference)} />}
               {pts && <polygon className="rv-quad-line" points={line(pts)} />}
             </svg>
           )}
@@ -262,7 +254,6 @@ export function QuadPickerDialog({ frame, title, confirmLabel, initial, referenc
           </div>
           {pts && !convex && <p className="error">꼭짓점 차례가 꼬였습니다. 볼록한 사각형이 되게 옮기세요</p>}
           {pts && convex && !big && <p className="error">8×8 픽셀보다 크게 고르세요</p>}
-          {pts && convex && big && !encloses && <p className="error">베젤 외곽이 화면(빨강)을 감싸야 합니다</p>}
           {error && <p className="error">{error}</p>}
           <ul className="rv-cropper-help muted">
             <li>드래그: 새로 고르기 (직사각형)</li>

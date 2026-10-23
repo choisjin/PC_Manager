@@ -23,8 +23,9 @@ import { copyTable } from './tableExport'
 import { VideoTransport } from './VideoTransport'
 import { CropOverlay, ImageSearchPanel } from './ImageSearch'
 import { grabFrame, type SearchVideo, type StepSource, useImageSearch } from './imageSearchState'
-import { AnalysisOverlay, VideoAnalysisPanel } from './VideoAnalysis'
+import { AnalysisOverlay, ExcludeBar, VideoAnalysisPanel, VideoAnalysisResults } from './VideoAnalysis'
 import { MARK_COLOR, useVideoAnalysis } from './videoAnalysisState'
+import { applyExclusions, type ExclusionDraft, mergeSpans, spansOf } from './videoExclude'
 
 type PutSlot = 'result' | 'video' | 'image' | 'ref'
 type Dialog = null | 'save' | 'trim'
@@ -437,6 +438,9 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   const search = useImageSearch(source.agentId, searchVideos)
   // 영상 분석: 검은 화면·깜박임·정지 구간·화면 전환 (이미지 찾기와 같은 자리, 하나만 연다)
   const analysis = useVideoAnalysis(source.agentId, searchVideos)
+  // 영상 분석 제외 구간: 고르는 중인 시작·끝 스텝 (자르기처럼 표에서)
+  const [exDraft, setExDraft] = useState<ExclusionDraft>({ start: null, end: null, everyCycle: true })
+  const mainRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
   const [onlyFail, setOnlyFail] = useState(false)
   const [cycle, setCycle] = useState('')
@@ -655,6 +659,66 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   }, [trimMode])
   const clipNow = trimMode && trim.clip && trim.clip.path === current ? trim.clip : null
 
+  // 영상 분석: 이미지 찾기와 같은 자리 (자르기 중에는 닫힘). 열려 있으면 결과 표 아래에 검출 목록
+  const vaOpen = analysis.open && !search.open && !trimMode
+  // 제외 구간 → Result 시각 구간 → 영상마다 영상 안 초 구간 (검출·그래프·탐색 막대에서 뺀다)
+  const excludeWall = useMemo(() => mergeSpans(analysis.excludes.flatMap((ex) => spansOf(ex, sortedRows))), [analysis.excludes, sortedRows])
+  const excludeSpans = useMemo(() => searchVideos.map((sv) => {
+    const video = videos.find((v) => v.path === sv.path) ?? null
+    const at = (time: number) => {
+      const base = baseSeconds(time, video, absolute)
+      return base === null ? null : toVideoTime(base, sync)
+    }
+    return mergeSpans(excludeWall.flatMap(([a, b]): [number, number][] => {
+      const t0 = at(a)
+      const t1 = at(b)
+      return t0 === null || t1 === null || t1 <= 0 || (video?.duration != null && t0 >= video.duration) ? [] : [[Math.max(0, t0), t1]]
+    }))
+  }), [excludeWall, searchVideos, videos, absolute, sync])
+  const shown = useMemo(
+    () => analysis.results.map((r, i) => applyExclusions(r, excludeSpans[i] ?? [], analysis.staticS)),
+    [analysis.results, excludeSpans, analysis.staticS],
+  )
+  const shownResults = useMemo(() => shown.map((x) => x.result), [shown])
+  const removedCount = shown.reduce((n, x) => n + x.removed, 0)
+  // 제외 구간에 드는 행 (표에 빗금): 둘 다 시각순이라 한 번 훑는다
+  const excludedRows = useMemo(() => {
+    if (!vaOpen || !excludeWall.length) return null
+    const rowsIn = new Set<number>()
+    let k = 0
+    for (const r of sortedRows) {
+      while (k < excludeWall.length && excludeWall[k][1] <= r.time!) k++
+      if (k < excludeWall.length && r.time! >= excludeWall[k][0]) rowsIn.add(r.index)
+    }
+    return rowsIn
+  }, [vaOpen, excludeWall, sortedRows])
+  const draftRow = (index: number | null) => (index === null ? null : sortedRows[trim.order.get(index) ?? -1] ?? null)
+
+  // 영상 분석을 열면 결과 표 아래 검출 탭 줄을 영상 조작 줄(재생·이동…)과 같은 높이에 맞춘다
+  useLayoutEffect(() => {
+    const main = mainRef.current
+    if (!vaOpen || !main) return
+    const bar = main.querySelector<HTMLElement>('.rv-left .rv-transport')
+    if (!bar) return
+    const measure = () => {
+      const m = main.getBoundingClientRect()
+      const r = bar.getBoundingClientRect()
+      main.style.setProperty('--va-top', `${Math.round(r.top - m.top)}px`)
+      main.style.setProperty('--va-bar', `${Math.round(r.height)}px`)
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(main)
+    observer.observe(bar)
+    const video = main.querySelector('.rv-left .rv-video')
+    if (video) observer.observe(video)
+    return () => {
+      observer.disconnect()
+      main.style.removeProperty('--va-top')
+      main.style.removeProperty('--va-bar')
+    }
+  }, [vaOpen])
+
   const switchVideo = (step: 1 | -1) => {
     if (videos.length < 2) return
     const i = videos.findIndex((v) => v.path === current)
@@ -701,8 +765,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
       <ViewerHead session={session} sessions={sessions} onBack={onBack} setDialog={setDialog} />
       {(session.state === 'loading' || converting) && <LoadingBar session={session} converting={converting} />}
       {/* RFW는 열이 11개라 표 쪽을 넓게 */}
-      <div className={`rv-main${parsed?.table && !ats ? ' wide' : ''}`}>
-        <section className={`rv-left${pairImages ? ' fit' : ''}`}>
+      <div ref={mainRef} className={`rv-main${parsed?.table && !ats ? ' wide' : ''}`}>
+        <section className={`rv-left${pairImages || vaOpen ? ' fit' : ''}`}>
           <VideoTransport
             src={currentRaw?.prep === 'ready' && currentRaw.playPath ? fileUrl(currentRaw.playPath) : null}
             waiting={currentRaw && (
@@ -740,7 +804,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             )}
             marks={search.open ? search.segments.filter((m) => m.path === current).map((m) => ({ start: m.first / m.fps, end: (m.last + 1) / m.fps }))
               // 영상 분석: 지금 영상의 검출 구간 (종류별 색)
-              : analysis.open ? (analysis.results[searchVideos.findIndex((v) => v.path === current)]?.segments ?? [])
+              : analysis.open ? (shownResults[searchVideos.findIndex((v) => v.path === current)]?.segments ?? [])
                 .map((m) => ({ start: m.start, end: m.end, color: MARK_COLOR[m.kind] }))
                 : undefined}
             extra={
@@ -827,16 +891,17 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               onSeek={seekTo}
             />
           )}
-          {analysis.open && !search.open && !trimMode && (
+          {vaOpen && (
             <VideoAnalysisPanel
               state={analysis}
+              results={shownResults}
+              excluded={excludeSpans}
               videos={searchVideos}
               steps={stepSource}
               currentPath={current}
               grab={() => grabFrame(videoRef.current, current)}
               escape={dialog === null}
               nowSeconds={videoNow}
-              wallOf={wallOf}
               onSeek={seekTo}
             />
           )}
@@ -882,71 +947,89 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             )}
           </div>
         </section>
-        <section className="rv-right">
-          {trimMode && (
-            <div className="rv-trim-bar">
-              <strong className="small">✂ 자르기</strong>
-              <span className="small muted ellipsis" translate="no">
-                {selectedRow ? `#${selectedRow.index + 1} ${selectedRow.name}` : ''}
-              </span>
-              <span className="small muted">{selectedRow ? '고른 행을' : '표에서 행을 고르세요'}</span>
-              <button type="button" className="primary" disabled={!selectedRow} onClick={() => pickTrim('start')} title="표에서 고른 행을 시작 스텝으로">
-                시작 스텝
-              </button>
-              <button
-                type="button"
-                className="primary"
-                disabled={!canEnd}
-                onClick={() => pickTrim('end')}
-                title={!trim.startRow ? '시작 스텝을 먼저 정하세요' : selectedRow && !canEnd ? '시작 스텝보다 앞 행은 끝 스텝으로 고를 수 없습니다' : '표에서 고른 행을 끝 스텝으로'}
-              >
-                끝 스텝
-              </button>
-              <span className="rv-spacer" />
-              <button type="button" onClick={() => setDialog(null)} title="원래 화면으로 (Esc) — 고른 스텝은 남습니다">자르기 종료</button>
-            </div>
-          )}
-          {parsed?.table ? (Object.keys(colFilters).length > 0 || colSort) && (
-            // ATS·RFW: 거르기·정렬은 머리글에서, 표는 항상 재생 중인 스텝을 따라간다
-            <div className="rv-filters">
-              <button type="button" className="link small" onClick={() => {
-                setColFilters({})
-                setColSort(null)
-              }}>
-                머리글 필터·정렬 지우기 ({Object.keys(colFilters).length})
-              </button>
-            </div>
-          ) : (
-            <div className="rv-filters">
-              <input placeholder="검색 (모든 열)" value={query} onChange={(e) => setQuery(e.target.value)} />
-              <select value={cycle} onChange={(e) => setCycle(e.target.value)} title="회차">
-                <option value="">전체 회차</option>
-                {cycles.map((c) => <option key={c} value={c}>회차 {c}</option>)}
-              </select>
-              <label className="small"><input type="checkbox" checked={onlyFail} onChange={(e) => setOnlyFail(e.target.checked)} /> 실패만</label>
-              <label className="small" title="재생 중인 스텝으로 표를 따라 움직임"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> 따라가기</label>
-              <span className="muted small">{visible.length.toLocaleString()} / {rows.length.toLocaleString()}행</span>
-            </div>
-          )}
-          {runInfo && <RunSummary info={runInfo} />}
-          {!parsed ? <p className="muted rv-loading">Result 읽는 중…</p> : (
-            <RowTable
-              headers={parsed.table ? parsed.headers : null}
-              spec={parsed.table ?? null}
-              filtered={colFilters}
-              sort={colSort}
-              onHeader={(col, rect) => setFilterMenu((m) => (m?.col === col ? null : { col, x: rect.left, y: rect.bottom + 2 }))}
-              rows={visible}
-              selected={selected}
-              playing={playing}
-              trim={trimMode ? { start: trim.startRow, end: trim.endRow } : null}
-              follow={!!parsed.table || follow}
-              anchors={sync.anchors}
-              videoTime={(row) => {
-                const t = videoTimeOf(row, videoForRow(row, videos, currentVideo, absolute))
-                return t === null ? '' : formatSeconds(t)
-              }}
-              onPick={seekToRow}
+        <section className={`rv-right${vaOpen ? ' va' : ''}`}>
+          <div className="rv-right-top">
+            {vaOpen && analysis.excludeEdit && (
+              <ExcludeBar state={analysis} rows={sortedRows} selected={selectedRow} draft={exDraft} setDraft={setExDraft} />
+            )}
+            {trimMode && (
+              <div className="rv-trim-bar">
+                <strong className="small">✂ 자르기</strong>
+                <span className="small muted ellipsis" translate="no">
+                  {selectedRow ? `#${selectedRow.index + 1} ${selectedRow.name}` : ''}
+                </span>
+                <span className="small muted">{selectedRow ? '고른 행을' : '표에서 행을 고르세요'}</span>
+                <button type="button" className="primary" disabled={!selectedRow} onClick={() => pickTrim('start')} title="표에서 고른 행을 시작 스텝으로">
+                  시작 스텝
+                </button>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!canEnd}
+                  onClick={() => pickTrim('end')}
+                  title={!trim.startRow ? '시작 스텝을 먼저 정하세요' : selectedRow && !canEnd ? '시작 스텝보다 앞 행은 끝 스텝으로 고를 수 없습니다' : '표에서 고른 행을 끝 스텝으로'}
+                >
+                  끝 스텝
+                </button>
+                <span className="rv-spacer" />
+                <button type="button" onClick={() => setDialog(null)} title="원래 화면으로 (Esc) — 고른 스텝은 남습니다">자르기 종료</button>
+              </div>
+            )}
+            {parsed?.table ? (Object.keys(colFilters).length > 0 || colSort) && (
+              // ATS·RFW: 거르기·정렬은 머리글에서, 표는 항상 재생 중인 스텝을 따라간다
+              <div className="rv-filters">
+                <button type="button" className="link small" onClick={() => {
+                  setColFilters({})
+                  setColSort(null)
+                }}>
+                  머리글 필터·정렬 지우기 ({Object.keys(colFilters).length})
+                </button>
+              </div>
+            ) : (
+              <div className="rv-filters">
+                <input placeholder="검색 (모든 열)" value={query} onChange={(e) => setQuery(e.target.value)} />
+                <select value={cycle} onChange={(e) => setCycle(e.target.value)} title="회차">
+                  <option value="">전체 회차</option>
+                  {cycles.map((c) => <option key={c} value={c}>회차 {c}</option>)}
+                </select>
+                <label className="small"><input type="checkbox" checked={onlyFail} onChange={(e) => setOnlyFail(e.target.checked)} /> 실패만</label>
+                <label className="small" title="재생 중인 스텝으로 표를 따라 움직임"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> 따라가기</label>
+                <span className="muted small">{visible.length.toLocaleString()} / {rows.length.toLocaleString()}행</span>
+              </div>
+            )}
+            {runInfo && <RunSummary info={runInfo} />}
+            {!parsed ? <p className="muted rv-loading">Result 읽는 중…</p> : (
+              <RowTable
+                headers={parsed.table ? parsed.headers : null}
+                spec={parsed.table ?? null}
+                filtered={colFilters}
+                sort={colSort}
+                onHeader={(col, rect) => setFilterMenu((m) => (m?.col === col ? null : { col, x: rect.left, y: rect.bottom + 2 }))}
+                rows={visible}
+                selected={selected}
+                playing={playing}
+                trim={trimMode ? { start: trim.startRow, end: trim.endRow }
+                  : vaOpen && analysis.excludeEdit ? { start: draftRow(exDraft.start), end: draftRow(exDraft.end) } : null}
+                excluded={excludedRows}
+                follow={!!parsed.table || follow}
+                anchors={sync.anchors}
+                videoTime={(row) => {
+                  const t = videoTimeOf(row, videoForRow(row, videos, currentVideo, absolute))
+                  return t === null ? '' : formatSeconds(t)
+                }}
+                onPick={seekToRow}
+              />
+            )}
+          </div>
+          {vaOpen && (
+            <VideoAnalysisResults
+              state={analysis}
+              results={shownResults}
+              removed={removedCount}
+              videos={searchVideos}
+              steps={stepSource}
+              wallOf={wallOf}
+              onSeek={seekTo}
             />
           )}
         </section>
@@ -1269,7 +1352,7 @@ function AtsImageCard({ title, path, url, onPreview, empty, tools }: {
 /** 선택한 칸: row = ResultRow.index, col = 열 번호 (-1 = # 열, 행 전체) */
 type CellPos = { row: number; col: number }
 
-function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, playing, trim, follow, anchors, videoTime, onPick }: {
+function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, playing, trim, excluded, follow, anchors, videoTime, onPick }: {
   /** ATS·RFW: 이 열 이름으로 행의 칸을 그대로 보여 준다 (null이면 자동 판별 공통 열) */
   headers: string[] | null
   spec: TableSpec | null
@@ -1280,8 +1363,10 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   rows: ResultRow[]
   selected: number | null
   playing: number | null
-  /** 자르기 모드: 시작·끝 스텝과 그 사이를 표시 */
+  /** 자르기 모드·제외 구간 고르기: 시작·끝 스텝과 그 사이를 표시 */
   trim?: { start: ResultRow | null; end: ResultRow | null } | null
+  /** 영상 분석 제외 구간에 드는 행 (빗금) */
+  excluded?: Set<number> | null
   follow: boolean
   anchors: Anchor[]
   videoTime: (row: ResultRow) => string
@@ -1515,7 +1600,7 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
             <div
               key={row.index}
               data-pos={pos}
-              className={`rv-row${row.index === selected ? ' selected' : ''}${row.index === playing ? ' playing' : ''} tone-${statusTone(row.status) || 'none'}${trimClass}`}
+              className={`rv-row${row.index === selected ? ' selected' : ''}${row.index === playing ? ' playing' : ''} tone-${statusTone(row.status) || 'none'}${trimClass}${excluded?.has(row.index) ? ' excluded' : ''}`}
               style={{ position: 'absolute', top: pos * ROW_HEIGHT, left: 0, right: 0, height: ROW_HEIGHT, ...grid }}
               onClick={() => onPick(row)}
               title="누르면 영상의 이 시점으로"
