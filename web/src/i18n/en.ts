@@ -1191,7 +1191,7 @@ const EXACT: Record<string, string> = {
   "방향키: 1픽셀 옮기기 (Shift 10) · Ctrl+방향키: 크기": "Arrow keys: move 1 px (Shift 10) · Ctrl+arrows: resize",
   "이 부분으로 크롭": "Crop this",
   "이 영역으로 지정": "Use this area",
-  "유사도 기준": "Similarity threshold",
+  "유사도": "Similarity",
   "이 값 이상이면 나타난 것으로 봅니다. 바꾸면 다시 찾지 않고 바로 다시 나눕니다": "At or above this value counts as present. Changing it re-splits the segments right away without searching again",
   "끊김 무시": "Ignore gaps",
   "기준 아래로 이 시간 이하 끊긴 것은 한 번 나타난 것으로 봅니다 (깜빡임·인코딩 잡음)": "Drops below the threshold up to this long still count as one appearance (flicker, encoding noise)",
@@ -1389,6 +1389,10 @@ const EXACT: Record<string, string> = {
   "표를 복사했습니다 (엑셀에 붙여 넣기)": "Table copied (paste into Excel)",
   "내보낼 열 (누르면 뺌)": "Exported column (click to leave out)",
   "내보내지 않는 열 (누르면 넣음)": "Not exported (click to include)",
+  "슬라이드 쇼": "Slideshow",
+  "슬라이드 쇼 멈춤 (Esc)": "Stop the slideshow (Esc)",
+  "찾은 프레임을 목록 차례로 한 장씩 보여 줍니다 (누른 줄부터)": "Shows the found frames one at a time in list order (from the clicked row)",
+  "한 장을 보여 주는 시간 (프레임이 화면에 나온 뒤부터)": "How long each frame is shown (counted from when it appears)",
 }
 
 const TEMPLATES: [string, string][] = [
@@ -1737,6 +1741,8 @@ const TEMPLATES: [string, string][] = [
   ["스텝 #{0}", "step #{0}"],
   ["열 {0}", "column {0}"],
   ["길이 {0}", "Length {0}"],
+  ["영상 {0}개 · {1}", "{0} videos · {1}"],
+  ["영상 {0}개", "{0} videos"],
 ]
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

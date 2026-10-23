@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { formatDuration } from '../../format'
 import { tr } from '../../i18n/engine'
 import { ColumnFilterMenu } from './ColumnFilter'
@@ -493,12 +493,37 @@ const fileStamp = (d: Date) => {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
 }
 
-export function ImageSearchPanel({ state, videos, steps, currentPath, grab, escape, nowSeconds, wallOf, onSeek }: {
+// 슬라이드 쇼: 프레임이 이만큼 지나도 안 나오면(영상을 열지 못함) 다음 줄로
+const SLIDE_WAIT_MS = 10_000
+
+/** 초 입력 칸: 쓰는 동안은 쓴 그대로 두고(비워도 됨) 숫자면 min~max로 바로 반영, 칸을 떠나면 반영된 값을 보여 준다 */
+function SecondsField({ value, min, max, onChange }: { value: number; min: number; max: number; onChange: (seconds: number) => void }) {
+  return (
+    <input
+      type="number"
+      min={min}
+      max={max}
+      step={0.5}
+      defaultValue={value}
+      onChange={(e) => {
+        const n = e.target.valueAsNumber
+        if (Number.isFinite(n)) onChange(clamp(n, min, max))
+      }}
+      onBlur={(e) => {
+        e.target.value = String(value)
+      }}
+    />
+  )
+}
+
+export function ImageSearchPanel({ state, videos, steps, currentPath, videoRef, grab, escape, nowSeconds, wallOf, onSeek }: {
   state: ImageSearchState
   videos: SearchVideo[]
   /** 찾을 범위를 고른 스텝 앞뒤로 할 때 쓰는 Result 표 */
   steps: StepSource
   currentPath: string | null
+  /** 영상 요소 (슬라이드 쇼: 시작하면 멈추고, 재생하면 슬라이드 쇼를 끝낸다) */
+  videoRef: React.RefObject<HTMLVideoElement | null>
   /** 크롭 창에 띄울 지금 프레임 (아직 보이는 프레임이 없으면 null) */
   grab: () => FrameShot | null
   /** Esc를 이 패널이 받을지 (자르기·저장 창이 열려 있으면 false: 그 창이 닫히게) */
@@ -512,15 +537,19 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, grab, esca
   const { template, threshold, setThreshold, gap, setGap, found, status, error, running, segments } = state
   // 스텝 값 고르기 창 (머리글 거르기와 같은 창)
   const [picker, setPicker] = useState<{ x: number; y: number } | null>(null)
+  // 슬라이드 쇼 중 (패널을 닫으면 끝)
+  const [sliding, setSliding] = useState(false)
   // 크롭 창 열기: 지금 프레임을 떠서 (영상이 아직 안 보이면 안내)
   const [grabError, setGrabError] = useState<string | null>(null)
   const openCrop = (kind: CropTarget['kind']) => {
     const frame = grab()
     setGrabError(frame ? null : '영상 프레임을 아직 읽지 못했습니다. 영상이 보이면 다시 누르세요')
-    if (frame) state.setCrop({ kind, frame })
+    if (!frame) return
+    setSliding(false)
+    state.setCrop({ kind, frame })
   }
 
-  // Esc: 크롭 창 → 값 고르기 창 → 패널 닫기 순 (결과 확인 창이 닫히지 않게 먼저 받는다)
+  // Esc: 크롭 창 → 값 고르기 창 → 슬라이드 쇼 → 패널 닫기 순 (결과 확인 창이 닫히지 않게 먼저 받는다)
   useEffect(() => {
     if (!escape) return
     const onKey = (e: KeyboardEvent) => {
@@ -528,11 +557,12 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, grab, esca
       e.stopPropagation()
       if (state.crop) state.setCrop(null)
       else if (picker) setPicker(null)
+      else if (sliding) setSliding(false)
       else state.close()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [state, escape, picker])
+  }, [state, escape, picker, sliding])
 
   // 고른 스텝: 머리글(열) 하나를 고르고 그 열의 값으로 → 스텝 시각 앞뒤 구간 (겹치면 합침)
   const column = state.stepColumn
@@ -631,6 +661,43 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, grab, esca
     () => [...segments].sort((a, b) => posOf(a.path, a.first / a.fps) - posOf(b.path, b.first / b.fps)),
     [segments, posOf],
   )
+
+  // 슬라이드 쇼: 누른 줄부터 목록 차례로 첫 프레임을 slideSeconds초씩 (영상은 멈춘 채, 끝 줄에서 멈춤).
+  // 시간은 그 프레임이 화면에 나온 뒤부터 센다 (테스트 PC에서 받는 영상은 옮겨 가는 데 시간이 걸린다). 줄을 누르면 거기서 이어 간다
+  const slideIndex = sliding ? ordered.findIndex((s) => keyOf(s) === state.picked) : -1
+  const slide = slideIndex >= 0 ? ordered[slideIndex] : null
+  // 찾는 중에는 목록을 계속 다시 만들므로 구간 객체 대신 키로 본다
+  const slideKey = slide ? keyOf(slide) : null
+  const shown = slide !== null && slide.path === currentPath && Math.abs(nowSeconds - (slide.first + 0.5) / slide.fps) < 0.5 / slide.fps
+  const nextSlide = useEffectEvent(() => {
+    const i = ordered.findIndex((s) => keyOf(s) === state.picked)
+    if (i < 0 || i === ordered.length - 1) setSliding(false)
+    else pick(ordered[i + 1])
+  })
+  useEffect(() => {
+    if (!sliding) return
+    // 보던 줄이 목록에서 없어졌으면(다시 찾음·기준 바꿈) 바로 끝
+    const id = window.setTimeout(nextSlide, slideKey === null ? 0 : shown ? state.slideSeconds * 1000 : SLIDE_WAIT_MS)
+    return () => window.clearTimeout(id)
+  }, [sliding, slideKey, shown, state.slideSeconds])
+  // 영상을 재생하면 슬라이드 쇼는 끝 (Space·▶)
+  useEffect(() => {
+    if (!sliding) return
+    const onPlay = (e: Event) => {
+      if (e.target === videoRef.current) setSliding(false)
+    }
+    window.addEventListener('play', onPlay, true)
+    return () => window.removeEventListener('play', onPlay, true)
+  }, [sliding, videoRef])
+  const toggleSlides = () => {
+    if (sliding) return setSliding(false)
+    if (ordered.length === 0) return
+    const i = ordered.findIndex((s) => keyOf(s) === state.picked)
+    videoRef.current?.pause()
+    // 마지막 줄을 보고 있었으면 처음부터
+    pick(ordered[i >= 0 && i < ordered.length - 1 ? i : 0])
+    setSliding(true)
+  }
   // 내보내기: 머리글에서 체크한 열만, 목록과 같은 차례
   const canExport = ordered.length > 0 && columns.some((c) => state.exportColumns.includes(c))
   const exportLines = () => {
@@ -657,136 +724,137 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, grab, esca
 
   return (
     <div className="rv-search">
-      <div className="rv-drawer-head">
-        <strong>이미지 찾기</strong>
-        <span className="muted small">{`이 실행의 영상 ${videos.length}개에서 크롭한 이미지가 나타나는 구간의 첫 프레임`}</span>
-        <span className="rv-spacer" />
-        <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc)" onClick={state.close}>✕</button>
-      </div>
-      <div className="rv-search-setup">
-        <figure className="rv-search-template" title={template ? `크롭: ${template.path.split(/[\\/]/).pop()} ${formatFrameTime(template.time)}` : undefined}>
-          {template ? <img src={template.preview} alt="" /> : <span className="muted small">[크롭]으로 고르기</span>}
-          <figcaption className="small muted">
-            {template ? `${template.rect.w}×${template.rect.h}` : ''}
-          </figcaption>
-        </figure>
-        <div className="rv-search-options">
-          <div className="rv-inline">
-            <button type="button" onClick={() => openCrop('template')} title="지금 프레임을 크게 띄워 찾을 이미지를 고릅니다 (확대해 픽셀 단위로)">
-              {template ? '다시 크롭' : '크롭'}
+      {/* 옵션 두 줄 (좁으면 무리 단위로 줄바꿈): 찾을 이미지·검색 영역·유사도·끊김·찾기 | 찾을 범위 */}
+      <div className="rv-search-bar">
+        <strong title={`이 실행의 영상 ${videos.length}개에서 크롭한 이미지가 나타나는 구간의 첫 프레임`}>이미지 찾기</strong>
+        <span className="rv-search-group">
+          {template
+            ? (
+              <img
+                className="rv-search-thumb"
+                src={template.preview}
+                alt=""
+                title={`크롭: ${template.rect.w}×${template.rect.h} · ${template.path.split(/[\\/]/).pop()} ${formatFrameTime(template.time)}`}
+              />
+            )
+            : <span className="muted small">[크롭]으로 고르기</span>}
+          <button type="button" onClick={() => openCrop('template')} title="지금 프레임을 크게 띄워 찾을 이미지를 고릅니다 (확대해 픽셀 단위로)">
+            {template ? '다시 크롭' : '크롭'}
+          </button>
+        </span>
+        <span className="rv-search-group">
+          <label className="small" title="이 영역 안에서 크롭한 이미지와 비슷한 곳을 찾습니다">
+            검색 영역
+            <select
+              value={state.areaMode}
+              disabled={!template}
+              onChange={(e) => {
+                const mode = e.target.value as AreaMode
+                state.setAreaMode(mode)
+                if (mode === 'custom' && !state.customArea) openCrop('area')
+              }}
+            >
+              <option value="same">크롭 위치 그대로</option>
+              <option value="custom">직접 지정</option>
+              <option value="full">화면 전체</option>
+            </select>
+          </label>
+          {state.areaMode === 'custom' && (
+            <button type="button" disabled={!template} onClick={() => openCrop('area')} title="지금 프레임을 크게 띄워 검색할 영역을 고릅니다">
+              영역 지정
             </button>
-            <label className="small" title="이 영역 안에서 크롭한 이미지와 비슷한 곳을 찾습니다">
-              검색 영역{' '}
-              <select
-                value={state.areaMode}
-                disabled={!template}
-                onChange={(e) => {
-                  const mode = e.target.value as AreaMode
-                  state.setAreaMode(mode)
-                  if (mode === 'custom' && !state.customArea) openCrop('area')
-                }}
+          )}
+          {template && areaText && <span className="muted small mono">{areaText}</span>}
+        </span>
+        <label className="small" title="이 값 이상이면 나타난 것으로 봅니다. 바꾸면 다시 찾지 않고 바로 다시 나눕니다">
+          유사도
+          <input type="range" min={50} max={100} step={0.5} value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} />
+          <span className="mono">{threshold.toFixed(1)}%</span>
+        </label>
+        <label className="small" title="기준 아래로 이 시간 이하 끊긴 것은 한 번 나타난 것으로 봅니다 (깜빡임·인코딩 잡음)">
+          끊김 무시
+          <select value={gap} onChange={(e) => setGap(Number(e.target.value))}>
+            {[0, 0.1, 0.3, 0.5, 1, 2].map((g) => <option key={g} value={g}>{g}초</option>)}
+          </select>
+        </label>
+        <span className="rv-search-go">
+          {running
+            ? <button type="button" onClick={state.stop}>멈춤</button>
+            : (
+              <button
+                type="button"
+                className="primary"
+                disabled={!area || videos.length === 0 || state.crop !== null || (stepScope && plan.windows.length === 0)}
+                onClick={() => area && void state.run(area, stepScope ? plan.windows : undefined)}
               >
-                <option value="same">크롭 위치 그대로</option>
-                <option value="custom">직접 지정</option>
-                <option value="full">화면 전체</option>
-              </select>
-            </label>
-            {state.areaMode === 'custom' && (
-              <button type="button" disabled={!template} onClick={() => openCrop('area')} title="지금 프레임을 크게 띄워 검색할 영역을 고릅니다">
-                영역 지정
+                찾기
               </button>
             )}
-            <span className="muted small">{template ? areaText : ''}</span>
-          </div>
-          <div className="rv-inline">
-            <label className="small" title="영상 전체를 훑거나, 고른 스텝의 앞뒤 몇 초만 훑습니다 (훨씬 빠름)">
-              찾을 범위{' '}
-              <select value={state.scope} onChange={(e) => state.setScope(e.target.value as SearchScope)}>
-                <option value="all">영상 전체</option>
-                <option value="steps">고른 스텝 앞뒤</option>
-              </select>
-            </label>
-            {stepScope && (
-              <>
-                <select
-                  value={column ?? ''}
-                  title="스텝을 고를 머리글"
-                  onChange={(e) => {
-                    state.setStepColumn(e.target.value === '' ? null : Number(e.target.value))
-                    state.setStepValues([])
-                    setPicker(null)
-                  }}
-                >
-                  <option value="">머리글 고르기</option>
-                  {steps.headers.map((h, i) => <option key={i} value={i}>{h || `열 ${i + 1}`}</option>)}
-                </select>
-                <button
-                  type="button"
-                  className="rv-search-pick"
-                  data-colfilter-trigger
-                  disabled={column === null}
-                  title="이 머리글의 값 중에서 찾을 스텝 고르기"
-                  onClick={(e) => {
-                    if (picker) return setPicker(null)
-                    const r = e.currentTarget.getBoundingClientRect()
-                    setPicker({ x: r.left, y: r.bottom + 2 })
-                  }}
-                >
-                  <span className="ellipsis">{pickedText}</span> ▾
-                </button>
-                <label className="small" title="스텝 시각보다 이만큼 앞부터">
-                  앞
-                  <input type="number" min={0} max={3600} step={0.5} value={state.before} onChange={(e) => state.setBefore(Math.max(0, Number(e.target.value) || 0))} />
-                  초
-                </label>
-                <label className="small" title="스텝 시각보다 이만큼 뒤까지">
-                  뒤
-                  <input type="number" min={0} max={3600} step={0.5} value={state.after} onChange={(e) => state.setAfter(Math.max(0, Number(e.target.value) || 0))} />
-                  초
-                </label>
-              </>
-            )}
-          </div>
-          {stepScope && (
-            <div className="rv-search-plan small muted">
-              {column === null ? <span>머리글을 고르고, 그 열의 값 중에서 찾을 스텝을 고르세요</span>
-                : chosen.length === 0 ? <span>찾을 스텝의 값을 고르세요</span>
-                  : (
-                    <>
-                      <span>{`스텝 ${chosen.length}개 → 구간 ${plan.windows.length}개 · ${formatDuration(planSeconds * 1000)}`}</span>
-                      {videoSeconds > 0 && <span>{`영상의 ${((planSeconds / videoSeconds) * 100).toFixed(1)}%`}</span>}
-                      {plan.outside > 0 && <span className="rv-search-warn" title="영상 시작 시각을 모르거나 영상 밖의 스텝">{`영상 밖 ${plan.outside}개 뺌`}</span>}
-                    </>
-                  )}
-            </div>
-          )}
-          <div className="rv-inline">
-            <label className="small" title="이 값 이상이면 나타난 것으로 봅니다. 바꾸면 다시 찾지 않고 바로 다시 나눕니다">
-              유사도 기준{' '}
-              <input type="range" min={50} max={100} step={0.5} value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} />
-              {' '}<span className="mono">{threshold.toFixed(1)}%</span>
-            </label>
-            <label className="small" title="기준 아래로 이 시간 이하 끊긴 것은 한 번 나타난 것으로 봅니다 (깜빡임·인코딩 잡음)">
-              끊김 무시{' '}
-              <select value={gap} onChange={(e) => setGap(Number(e.target.value))}>
-                {[0, 0.1, 0.3, 0.5, 1, 2].map((g) => <option key={g} value={g}>{g}초</option>)}
-              </select>
-            </label>
-            <span className="rv-spacer" />
-            {running
-              ? <button type="button" onClick={state.stop}>멈춤</button>
-              : (
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={!area || videos.length === 0 || state.crop !== null || (stepScope && plan.windows.length === 0)}
-                  onClick={() => area && void state.run(area, stepScope ? plan.windows : undefined)}
-                >
-                  찾기
-                </button>
-              )}
-          </div>
-        </div>
+          <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc)" onClick={state.close}>✕</button>
+        </span>
+      </div>
+      <div className="rv-search-bar">
+        <label className="small" title="영상 전체를 훑거나, 고른 스텝의 앞뒤 몇 초만 훑습니다 (훨씬 빠름)">
+          찾을 범위
+          <select value={state.scope} onChange={(e) => state.setScope(e.target.value as SearchScope)}>
+            <option value="all">영상 전체</option>
+            <option value="steps">고른 스텝 앞뒤</option>
+          </select>
+        </label>
+        {stepScope && (
+          <>
+            <select
+              value={column ?? ''}
+              title="스텝을 고를 머리글"
+              onChange={(e) => {
+                state.setStepColumn(e.target.value === '' ? null : Number(e.target.value))
+                state.setStepValues([])
+                setPicker(null)
+              }}
+            >
+              <option value="">머리글 고르기</option>
+              {steps.headers.map((h, i) => <option key={i} value={i}>{h || `열 ${i + 1}`}</option>)}
+            </select>
+            <button
+              type="button"
+              className="rv-search-pick"
+              data-colfilter-trigger
+              disabled={column === null}
+              title="이 머리글의 값 중에서 찾을 스텝 고르기"
+              onClick={(e) => {
+                if (picker) return setPicker(null)
+                const r = e.currentTarget.getBoundingClientRect()
+                setPicker({ x: r.left, y: r.bottom + 2 })
+              }}
+            >
+              <span className="ellipsis">{pickedText}</span> ▾
+            </button>
+            <span className="rv-search-group">
+              <label className="small" title="스텝 시각보다 이만큼 앞부터">
+                앞
+                <SecondsField value={state.before} min={0} max={3600} onChange={state.setBefore} />
+                초
+              </label>
+              <label className="small" title="스텝 시각보다 이만큼 뒤까지">
+                뒤
+                <SecondsField value={state.after} min={0} max={3600} onChange={state.setAfter} />
+                초
+              </label>
+            </span>
+          </>
+        )}
+        <span className="rv-search-plan small muted">
+          {!stepScope ? <span>{`영상 ${videos.length}개${videoSeconds > 0 ? ` · ${formatDuration(videoSeconds * 1000)}` : ''}`}</span>
+            : column === null ? <span>머리글을 고르고, 그 열의 값 중에서 찾을 스텝을 고르세요</span>
+              : chosen.length === 0 ? <span>찾을 스텝의 값을 고르세요</span>
+                : (
+                  <>
+                    <span>{`스텝 ${chosen.length}개 → 구간 ${plan.windows.length}개 · ${formatDuration(planSeconds * 1000)}`}</span>
+                    {videoSeconds > 0 && <span>{`영상의 ${((planSeconds / videoSeconds) * 100).toFixed(1)}%`}</span>}
+                    {plan.outside > 0 && <span className="rv-search-warn" title="영상 시작 시각을 모르거나 영상 밖의 스텝">{`영상 밖 ${plan.outside}개 뺌`}</span>}
+                  </>
+                )}
+        </span>
       </div>
       {running && (
         <div className="small muted">
@@ -829,6 +897,22 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, grab, esca
           <div className="rv-search-summary small">
             <span className="muted">{`찾은 구간 ${ordered.length}개`}{running ? ' (찾는 중)' : ''}{' · 누르면 그 구간의 첫 프레임으로 이동'}</span>
             <span className="rv-spacer" />
+            <span className="rv-search-slide">
+              <button
+                type="button"
+                className={`small-btn${sliding ? ' active' : ''}`}
+                disabled={!sliding && ordered.length === 0}
+                onClick={toggleSlides}
+                title={sliding ? '슬라이드 쇼 멈춤 (Esc)' : '찾은 프레임을 목록 차례로 한 장씩 보여 줍니다 (누른 줄부터)'}
+              >
+                {sliding ? '❚❚' : '▶'} 슬라이드 쇼
+              </button>
+              <label title="한 장을 보여 주는 시간 (프레임이 화면에 나온 뒤부터)">
+                <SecondsField value={state.slideSeconds} min={0.5} max={60} onChange={state.setSlideSeconds} />
+                초
+              </label>
+              {slide && <span className="mono muted">{`${slideIndex + 1}/${ordered.length}`}</span>}
+            </span>
             {exportNotice && <span className="muted">{exportNotice}</span>}
             <button type="button" className="small-btn" disabled={!canExport} onClick={exportXlsx} title="머리글에서 체크한 열만 엑셀 파일(.xlsx)로">
               엑셀로 내보내기

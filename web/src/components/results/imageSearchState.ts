@@ -8,6 +8,7 @@ import { toMessage } from './resultSessions'
 //   2) 검색 영역: 크롭 위치 그대로 · 직접 지정(크롭 창) · 화면 전체
 //   3) 테스트 PC 에이전트가 이 실행의 모든 영상을 프레임마다 재 유사도 시계열을 돌려준다
 //   4) 유사도 기준 이상이 이어지는 구간마다 첫 프레임만 표시 (기준을 바꾸면 다시 찾지 않고 바로 다시 나눔)
+//   5) 찾은 프레임은 목록에서 누르거나 슬라이드 쇼(정한 초마다 다음 줄)로 차례로 본다
 
 /** 영상 원래 크기 기준 픽셀 */
 export interface Rect {
@@ -149,6 +150,8 @@ export function useImageSearch(agentId: string, videos: SearchVideo[]) {
   const [picked, setPicked] = useState<string | null>(null)
   // 내보낼 열 (목록 머리글의 체크)
   const [exportColumns, setExportColumns] = useState<ResultColumn[]>([...RESULT_COLUMNS])
+  // 슬라이드 쇼에서 한 장을 보여 주는 시간(초)
+  const [slideSeconds, setSlideSeconds] = useState(2)
   const [found, setFound] = useState<Found[]>([])
   const [status, setStatus] = useState<ImageSearchProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -275,7 +278,7 @@ export function useImageSearch(agentId: string, videos: SearchVideo[]) {
     open, start, close, template, setTemplate, crop, setCrop, areaMode, setAreaMode, customArea, setCustomArea,
     threshold, setThreshold, gap, setGap, found, status, error, running, retrying, run, stop, segments,
     scope, setScope, stepColumn, setStepColumn, stepValues, setStepValues, before, setBefore, after, setAfter, searched,
-    picked, setPicked, exportColumns, setExportColumns,
+    picked, setPicked, exportColumns, setExportColumns, slideSeconds, setSlideSeconds,
   }
 }
 

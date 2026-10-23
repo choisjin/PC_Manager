@@ -20,9 +20,19 @@ interface Group {
   count: number
 }
 
-const ITEM_HEIGHT = 20
-const LIST_MAX_HEIGHT = 260
-const MIN_WIDTH = 280
+const ITEM_HEIGHT = 22
+// 값 목록 칸: 값이 적어도 8줄 높이, 많으면 이 높이까지 스크롤 (화면이 낮으면 줄어든다)
+const LIST_MIN_HEIGHT = 8 * ITEM_HEIGHT
+const LIST_MAX_HEIGHT = 440
+const MIN_WIDTH = 300
+// CSS와 같게: 목록 칸 안 여백·테두리(4px·1px 양쪽) · 창 여백·테두리(6px·1px 양쪽)
+const LIST_CHROME = 10
+const MENU_CHROME = 14
+// 스크롤 막대 자리: 세로는 늘 비워 두고(scrollbar-gutter), 가로는 화면보다 긴 값일 때 높이에 더한다 (Windows 기본 막대 15px)
+const SCROLLBAR = 17
+// 목록 칸을 뺀 창 높이 (제목·정렬 셋·검색·버튼, 값 고르기 창은 정렬 없음): 화면 아래로 넘치지 않게 놓을 때
+const CHROME_HEIGHT = 184
+const PICK_CHROME_HEIGHT = 100
 
 /**
  * 엑셀 자동 필터처럼: 정렬 · 검색 · 값 체크 목록.
@@ -79,18 +89,19 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
   const textWidth = useMemo(() => {
     const context = document.createElement('canvas').getContext('2d')
     if (!context) return 0
-    context.font = `12px ${getComputedStyle(document.body).fontFamily}`
+    context.font = `13px ${getComputedStyle(document.body).fontFamily}`
     let widest = 0
     for (const g of groups) widest = Math.max(widest, context.measureText(g.text).width + context.measureText(String(g.count)).width)
     return Math.ceil(widest)
   }, [groups])
-  // 체크 상자 · 칸 사이 · 목록 여백 · 세로 스크롤 막대
-  const width = Math.min(window.innerWidth - 8, Math.max(MIN_WIDTH, textWidth + 64))
+  // 한 줄: 체크 상자 · 칸 사이 · 값 · 개수
   const rowWidth = textWidth + 40
+  const width = Math.min(window.innerWidth - 8, Math.max(MIN_WIDTH, rowWidth + LIST_CHROME + MENU_CHROME + SCROLLBAR))
+  const scrollX = rowWidth > width - LIST_CHROME - MENU_CHROME - SCROLLBAR
 
-  // 0번 줄은 (모두 선택)
+  // 0번 줄은 (모두 선택). 높이는 전체 값 수로 (검색하는 동안 창 크기가 바뀌지 않게), 가로 스크롤 막대가 마지막 줄을 가리지 않게
   const total = shown.length + 1
-  const listHeight = Math.min(LIST_MAX_HEIGHT, total * ITEM_HEIGHT + 8)
+  const listHeight = Math.min(LIST_MAX_HEIGHT, Math.max(LIST_MIN_HEIGHT, (groups.length + 1) * ITEM_HEIGHT)) + LIST_CHROME + (scrollX ? SCROLLBAR : 0)
   const first = Math.max(0, Math.floor(scroll / ITEM_HEIGHT) - 5)
   const last = Math.min(total, Math.ceil((scroll + listHeight) / ITEM_HEIGHT) + 5)
 
@@ -121,15 +132,16 @@ export function ColumnFilterMenu({ x, y, title, values, label, filter, sort, onA
     onClose()
   }
 
-  // 화면 오른쪽·아래로 넘치지 않게
+  // 화면 오른쪽·아래로 넘치지 않게 (그래도 낮으면 목록 칸이 줄어든다)
   const left = Math.max(4, Math.min(x, window.innerWidth - width - 4))
-  const top = Math.max(4, Math.min(y, window.innerHeight - 440))
+  const top = Math.max(4, Math.min(y, window.innerHeight - 4 - (picking ? PICK_CHROME_HEIGHT : CHROME_HEIGHT) - listHeight))
+  const maxHeight = window.innerHeight - 4 - top
 
   return (
     <div
       ref={ref}
       className="rv-colfilter panel"
-      style={{ left, top, width }}
+      style={{ left, top, width, maxHeight }}
       onKeyDown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation()

@@ -769,6 +769,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               videos={searchVideos}
               steps={stepSource}
               currentPath={current}
+              videoRef={videoRef}
               grab={() => grabFrame(videoRef.current, current)}
               escape={dialog === null}
               nowSeconds={videoNow}
