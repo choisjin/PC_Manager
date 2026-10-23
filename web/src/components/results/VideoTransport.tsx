@@ -36,9 +36,11 @@ interface Props {
   overlay?: ReactNode
   /** 탐색 막대 위에 표시할 구간 (초) */
   marks?: { start: number; end: number }[]
+  /** 이 구간(초)만 보여 준다: 탐색 막대·시간은 0~구간 길이, 재생도 그 안에서 (자르기 미리보기) */
+  clip?: { start: number; end: number } | null
 }
 
-export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, onSwitch, extra, error, waiting, durationHint, fps, overlay, marks }: Props) {
+export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, onSwitch, extra, error, waiting, durationHint, fps, overlay, marks, clip }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
@@ -47,6 +49,9 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
   const [mediaDuration, setMediaDuration] = useState(0)
   // 브라우저가 길이를 모르면(Infinity) ffmpeg가 읽은 길이
   const duration = Number.isFinite(mediaDuration) && mediaDuration > 0 ? mediaDuration : (durationHint ?? 0)
+  // 보여 주는 범위: 구간 미리보기면 그 구간, 아니면 영상 전체
+  const lo = clip?.start ?? 0
+  const hi = clip ? clip.end : duration
   const [osd, setOsd] = useState<string | null>(null)
   const [helpOpen, setHelpOpen] = useState(false)
   const helpRef = useRef<HTMLSpanElement>(null)
@@ -82,6 +87,31 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
     setTime(0)
     setMediaDuration(0)
   }, [src])
+
+  // 구간 미리보기: 구간이 바뀌면 처음으로 (멈춘 채), 재생은 구간 끝에서 멈춘다 (timeupdate는 0.25초 간격이라 화면 갱신마다 본다)
+  const clipStart = clip?.start ?? null
+  const clipEnd = clip?.end ?? null
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || clipStart === null) return
+    video.pause()
+    if (video.readyState >= 1) video.currentTime = clipStart
+  }, [clipStart, clipEnd, src, videoRef])
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !playing || clipEnd === null) return
+    let frame = 0
+    const check = () => {
+      if (video.currentTime >= clipEnd) {
+        video.pause()
+        video.currentTime = clipEnd
+        return
+      }
+      frame = requestAnimationFrame(check)
+    }
+    frame = requestAnimationFrame(check)
+    return () => cancelAnimationFrame(frame)
+  }, [playing, clipEnd, videoRef])
 
   // 프레임 길이: ffmpeg가 읽은 fps, 없으면 재생 중 실제 프레임 간격의 중앙값 (기본 30fps)
   useEffect(() => {
@@ -130,13 +160,15 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
     const video = videoRef.current
     if (!video) return
     const target = video.currentTime + seconds
-    video.currentTime = Math.max(0, duration > 0 ? Math.min(duration - 0.05, target) : target)
+    video.currentTime = Math.max(lo, hi > 0 ? Math.min(hi - (clip ? 0 : 0.05), target) : target)
   }
 
   const togglePlay = () => {
     const video = videoRef.current
     if (!video) return
     if (video.paused) {
+      // 구간 끝에서 다시 누르면 구간 처음부터
+      if (clip && video.currentTime >= clip.end - 0.05) video.currentTime = clip.start
       if (speed === 0) applySpeed(1)
       else void video.play().catch(() => {})
       showOsd('재생')
@@ -204,12 +236,20 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onTimeUpdate={(e) => {
-              setTime(e.currentTarget.currentTime)
-              onTime(e.currentTarget.currentTime)
+              const video = e.currentTarget
+              // 구간 미리보기: 구간 밖으로 가면(표에서 다른 스텝을 눌러 이동 등) 구간 안으로
+              if (clip && (video.currentTime < clip.start - 0.05 || video.currentTime > clip.end + 0.05)) {
+                video.pause()
+                video.currentTime = video.currentTime < clip.start ? clip.start : clip.end
+                return
+              }
+              setTime(video.currentTime)
+              onTime(video.currentTime)
             }}
             onLoadedMetadata={(e) => {
               const video = e.currentTarget
               video.playbackRate = speed || 1
+              if (clip) video.currentTime = clip.start
               if (!Number.isFinite(video.duration) && !durationHint) {
                 // 길이가 없는 영상(브라우저 녹화 webm 등): 끝으로 한 번 보내면 브라우저가 길이를 알아낸다
                 const restore = () => {
@@ -237,7 +277,7 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
         {osd && <div className="rv-osd">{osd}</div>}
         {error && <div className="rv-video-error">{error}</div>}
       </div>
-      {marks && marks.length > 0 && duration > 0 && (
+      {!clip && marks && marks.length > 0 && duration > 0 && (
         <div className="rv-seek-marks" aria-hidden>
           {marks.map((m) => (
             <span key={m.start} style={{ left: `${(m.start / duration) * 100}%`, width: `max(2px, ${((m.end - m.start) / duration) * 100}%)` }} />
@@ -245,21 +285,22 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
         </div>
       )}
       <input
-        className="rv-seek"
+        className={`rv-seek${clip ? ' clip' : ''}`}
         type="range"
         min={0}
-        max={duration || 0}
+        max={Math.max(0, hi - lo)}
         step={0.01}
-        value={Math.min(time, duration || 0)}
+        value={Math.max(0, Math.min(time - lo, hi - lo))}
         onChange={(e) => {
-          if (videoRef.current) videoRef.current.currentTime = Number(e.target.value)
+          if (videoRef.current) videoRef.current.currentTime = lo + Number(e.target.value)
         }}
       />
       <div className="rv-transport">
         <button type="button" onMouseDown={noFocus} onClick={togglePlay} title="재생/일시정지 (Space)">{playing ? '❚❚' : '▶'}</button>
         <button type="button" onMouseDown={noFocus} onClick={() => stepFrame(-1)} title="이전 프레임 (Q)">⏮</button>
         <button type="button" onMouseDown={noFocus} onClick={() => stepFrame(1)} title="다음 프레임 (E)">⏭</button>
-        <span className="rv-time mono">{formatSeconds(time)} / {formatSeconds(duration)}</span>
+        <span className="rv-time mono">{formatSeconds(Math.max(0, time - lo))} / {formatSeconds(Math.max(0, hi - lo))}</span>
+        {clip && <span className="rv-clip-tag small" title="자를 구간만 보여 주는 중 (자르기 종료하면 영상 전체)">✂ 구간</span>}
         <label className="rv-mini" title="A/D 이동 간격">
           이동
           <select value={jump} onChange={(e) => setJump(Number(e.target.value))}>

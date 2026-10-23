@@ -19,6 +19,7 @@ import {
 import { openResultTab, readResultTab, RESULT_TAB_ID, type ResultTabRequest, updateResultTab } from './resultTab'
 import { findRun } from './resultFinder'
 import { type ColFilters, ColumnFilterMenu, type ColSort } from './ColumnFilter'
+import { copyTable } from './tableExport'
 import { VideoTransport } from './VideoTransport'
 import { CropOverlay, ImageSearchPanel } from './ImageSearch'
 import { type SearchVideo, type StepSource, useImageSearch } from './imageSearchState'
@@ -611,6 +612,37 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     },
   }), [parsed, rows, cellLabel, videos, current, absolute, videoTimeOf])
 
+  // 영상 자르기 모드: 표에서 시작·끝 스텝을 고르고, 영상 자리에서는 그 구간만 미리 본다 (자르기 종료하면 원래대로)
+  const trimMode = dialog === 'trim'
+  const trim = useMemo(
+    () => trimRange(trimSel, sortedRows, absolute, stepSource.position, (path) => videos.find((v) => v.path === path)?.duration ?? null),
+    [trimSel, sortedRows, absolute, stepSource, videos],
+  )
+  // 표에서 고른 행 → [시작 스텝]·[끝 스텝] (끝은 시작 스텝보다 앞일 수 없다)
+  const selectedRow = selected === null ? null : sortedRows[trim.order.get(selected) ?? -1] ?? null
+  const startOrder = trim.startRow ? trim.order.get(trim.startRow.index) ?? null : null
+  const canEnd = !!selectedRow && startOrder !== null && (trim.order.get(selectedRow.index) ?? -1) >= startOrder
+  const pickTrim = (which: 'start' | 'end') => {
+    if (!selectedRow) return
+    const at = trim.order.get(selectedRow.index) ?? 0
+    setTrimSel((s) => which === 'end' ? { ...s, end: selectedRow.index }
+      // 끝 스텝이 새 시작보다 앞이면 끝은 다시 고른다
+      : { ...s, start: selectedRow.index, end: s.end !== null && (trim.order.get(s.end) ?? 0) < at ? null : s.end })
+  }
+  // 구간이 정해지거나 바뀌면 그 영상으로 (표에서 다른 영상의 스텝을 눌러 옮긴 것은 그대로 둔다)
+  const clipKey = trimMode && trim.clip ? `${trim.clip.path}|${trim.clip.start}|${trim.clip.end}` : null
+  useEffect(() => {
+    if (clipKey && trim.clip && trim.clip.path !== current) setCurrent(trim.clip.path)
+    // 구간이 바뀔 때만
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipKey])
+  // 이미지 찾기와 같은 자리를 쓰므로 자르기 모드에서는 닫는다
+  useEffect(() => {
+    if (trimMode) search.close()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trimMode])
+  const clipNow = trimMode && trim.clip && trim.clip.path === current ? trim.clip : null
+
   const switchVideo = (step: 1 | -1) => {
     if (videos.length < 2) return
     const i = videos.findIndex((v) => v.path === current)
@@ -673,8 +705,9 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             durationHint={currentRaw?.duration ?? null}
             fps={currentRaw?.fps ?? null}
             videoRef={videoRef}
-            keysEnabled={dialog === null}
+            keysEnabled={dialog === null || trimMode}
             error={videoError}
+            clip={clipNow}
             onTime={onTime}
             onLoaded={(duration) => {
               setVideoError(null)
@@ -694,8 +727,17 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
                     {videos.map((v) => <option key={v.path} value={v.path}>{`${v.name}${PREP_TAG[rawVideos.find((r) => r.path === v.path)?.prep ?? 'ready'] ?? ''}`}</option>)}
                   </select>
                 )}
-                <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!currentRaw?.playPath} className={search.open ? 'active' : ''} onClick={() => (search.open ? search.close() : search.start())} title="크롭한 이미지가 이 실행의 영상에 나타나는 구간 찾기 (테스트 PC에서 ffmpeg)">🔍 이미지 찾기</button>
-                <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!current} onClick={() => setDialog('trim')} title="영상 구간 자르기 (테스트 PC에서 ffmpeg, 원래 영상 폴더에 저장)">✂ 자르기</button>
+                <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!currentRaw?.playPath || trimMode} className={search.open ? 'active' : ''} onClick={() => (search.open ? search.close() : search.start())} title="크롭한 이미지가 이 실행의 영상에 나타나는 구간 찾기 (테스트 PC에서 ffmpeg)">🔍 이미지 찾기</button>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={!current}
+                  className={trimMode ? 'active' : ''}
+                  onClick={() => setDialog(trimMode ? null : 'trim')}
+                  title={trimMode ? '자르기 종료 (Esc)' : '영상 구간 자르기: 표에서 시작·끝 스텝을 골라 그 구간을 잘라 저장 (테스트 PC에서 ffmpeg, 원래 영상 폴더)'}
+                >
+                  ✂ 자르기
+                </button>
               </>
             }
           />
@@ -711,7 +753,17 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             {wallNow !== null && absolute && <> · 지금 {formatWall(wallNow)}</>}
           </div>
           {notice && <div className="rv-notice small">{notice}</div>}
-          {search.open && (
+          {trimMode && (
+            <TrimPanel
+              agentId={source.agentId}
+              trim={trim}
+              selection={trimSel}
+              onChange={setTrimSel}
+              onAdd={(path) => addSessionVideo(id, path)}
+              onExit={() => setDialog(null)}
+            />
+          )}
+          {search.open && !trimMode && (
             <ImageSearchPanel
               state={search}
               videos={searchVideos}
@@ -723,7 +775,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               onSeek={seekTo}
             />
           )}
-          <div className="rv-images" hidden={search.open}>
+          <div className="rv-images" hidden={search.open || trimMode}>
             {pairImages ? (
               <AtsImagePanel
                 row={focusRow}
@@ -766,6 +818,29 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           </div>
         </section>
         <section className="rv-right">
+          {trimMode && (
+            <div className="rv-trim-bar">
+              <strong className="small">✂ 자르기</strong>
+              <span className="small muted ellipsis" translate="no">
+                {selectedRow ? `#${selectedRow.index + 1} ${selectedRow.name}` : ''}
+              </span>
+              <span className="small muted">{selectedRow ? '고른 행을' : '표에서 행을 고르세요'}</span>
+              <button type="button" className="primary" disabled={!selectedRow} onClick={() => pickTrim('start')} title="표에서 고른 행을 시작 스텝으로">
+                시작 스텝
+              </button>
+              <button
+                type="button"
+                className="primary"
+                disabled={!canEnd}
+                onClick={() => pickTrim('end')}
+                title={!trim.startRow ? '시작 스텝을 먼저 정하세요' : selectedRow && !canEnd ? '시작 스텝보다 앞 행은 끝 스텝으로 고를 수 없습니다' : '표에서 고른 행을 끝 스텝으로'}
+              >
+                끝 스텝
+              </button>
+              <span className="rv-spacer" />
+              <button type="button" onClick={() => setDialog(null)} title="원래 화면으로 (Esc) — 고른 스텝은 남습니다">자르기 종료</button>
+            </div>
+          )}
           {parsed?.table ? (Object.keys(colFilters).length > 0 || colSort) && (
             // ATS·RFW: 거르기·정렬은 머리글에서, 표는 항상 재생 중인 스텝을 따라간다
             <div className="rv-filters">
@@ -799,6 +874,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               rows={visible}
               selected={selected}
               playing={playing}
+              trim={trimMode ? { start: trim.startRow, end: trim.endRow } : null}
               follow={!!parsed.table || follow}
               anchors={sync.anchors}
               videoTime={(row) => {
@@ -829,23 +905,6 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           })}
           onSort={(asc) => setColSort({ col: filterMenu.col, asc })}
           onClose={() => setFilterMenu(null)}
-        />
-      )}
-      {dialog === 'trim' && (
-        <TrimDialog
-          agentId={source.agentId}
-          rows={sortedRows}
-          absolute={absolute}
-          selection={trimSel}
-          onChange={setTrimSel}
-          position={stepSource.position}
-          videoDuration={(path) => videos.find((v) => v.path === path)?.duration ?? null}
-          previewUrl={(path) => {
-            const raw = rawVideos.find((v) => v.path === path)
-            return raw?.prep === 'ready' && raw.playPath ? fileUrl(raw.playPath) : null
-          }}
-          onAdd={(path) => addSessionVideo(id, path)}
-          onClose={() => setDialog(null)}
         />
       )}
       {dialog === 'save' && parsed && (
@@ -1145,33 +1204,7 @@ function AtsImageCard({ title, path, url, onPreview, empty, tools }: {
 /** 선택한 칸: row = ResultRow.index, col = 열 번호 (-1 = # 열, 행 전체) */
 type CellPos = { row: number; col: number }
 
-// 앞자리 0이 없는 숫자만 엑셀이 숫자로 받게 두고, 나머지는 글자 그대로 (1/2 → 날짜, 007 → 7 같은 변환 막기)
-const PLAIN_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/
-
-/**
- * 표 칸을 클립보드로: 엑셀에 붙이면 칸마다 들어가게 TSV와 HTML 표를 함께 넣는다.
- * http 접속에서도 되게 navigator.clipboard 대신 copy 이벤트로
- */
-function copyTable(lines: string[][]) {
-  const tsv = lines.map((line) => line.map((v) => (/[\t\r\n"]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)).join('\t')).join('\r\n')
-  const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  const td = (v: string) => (PLAIN_NUMBER.test(v) ? `<td>${v}</td>`
-    : `<td style="mso-number-format:'\\@'">${esc(v).replace(/\r?\n/g, '<br style="mso-data-placement:same-cell">')}</td>`)
-  const html = `<html><head><meta charset="utf-8"></head><body><table>${lines.map((line) => `<tr>${line.map(td).join('')}</tr>`).join('')}</table></body></html>`
-  const onCopy = (e: ClipboardEvent) => {
-    e.preventDefault()
-    e.clipboardData?.setData('text/plain', tsv)
-    e.clipboardData?.setData('text/html', html)
-  }
-  document.addEventListener('copy', onCopy)
-  try {
-    document.execCommand('copy')
-  } finally {
-    document.removeEventListener('copy', onCopy)
-  }
-}
-
-function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, playing, follow, anchors, videoTime, onPick }: {
+function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, playing, trim, follow, anchors, videoTime, onPick }: {
   /** ATS·RFW: 이 열 이름으로 행의 칸을 그대로 보여 준다 (null이면 자동 판별 공통 열) */
   headers: string[] | null
   spec: TableSpec | null
@@ -1182,6 +1215,8 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   rows: ResultRow[]
   selected: number | null
   playing: number | null
+  /** 자르기 모드: 시작·끝 스텝과 그 사이를 표시 */
+  trim?: { start: ResultRow | null; end: ResultRow | null } | null
   follow: boolean
   anchors: Anchor[]
   videoTime: (row: ResultRow) => string
@@ -1406,11 +1441,16 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
             const inRows = !!range && pos >= range.top && pos <= range.bottom
             const isCur = (c: number) => !!sel && sel.focus.row === row.index && sel.focus.col === c
             const cellClass = (c: number) => (inRows && c >= range!.left && c <= range!.right ? ' rv-cell-sel' : '') + (isCur(c) ? ' rv-cell-cur' : '')
+            // 자르기: 시작·끝 스텝 · 그 사이 (시각으로)
+            const trimClass = !trim ? ''
+              : row.index === trim.start?.index ? ' trim-start'
+                : row.index === trim.end?.index ? ' trim-end'
+                  : trim.start?.time != null && trim.end?.time != null && row.time !== null && row.time >= trim.start.time && row.time <= trim.end.time ? ' trim-in' : ''
             return (
             <div
               key={row.index}
               data-pos={pos}
-              className={`rv-row${row.index === selected ? ' selected' : ''}${row.index === playing ? ' playing' : ''} tone-${statusTone(row.status) || 'none'}`}
+              className={`rv-row${row.index === selected ? ' selected' : ''}${row.index === playing ? ' playing' : ''} tone-${statusTone(row.status) || 'none'}${trimClass}`}
               style={{ position: 'absolute', top: pos * ROW_HEIGHT, left: 0, right: 0, height: ROW_HEIGHT, ...grid }}
               onClick={() => onPick(row)}
               title="누르면 영상의 이 시점으로"
@@ -1490,9 +1530,9 @@ function RunSummary({ info }: { info: RunInfo }) {
   )
 }
 
-// ─────────────────────────────── 자르기: 시작·끝 스텝으로 구간을 정한다
+// ─────────────────────────────── 자르기: 표에서 시작·끝 스텝을 골라 구간을 정한다
 
-/** 영상 자르기 구간: 시작·끝 스텝(행 번호)과 앞뒤 여유(초). 창을 닫아도 남는다 (껐다 켜며 조절) */
+/** 영상 자르기 구간: 시작·끝 스텝(행 번호)과 앞뒤 여유(초). 자르기를 끝내도 남는다 (다시 켜면 그대로) */
 interface TrimSelection {
   start: number | null
   end: number | null
@@ -1501,33 +1541,29 @@ interface TrimSelection {
 }
 const EMPTY_TRIM: TrimSelection = { start: null, end: null, before: 0, after: 0 }
 
-function TrimDialog({ agentId, rows, absolute, selection, onChange, position, videoDuration, previewUrl, onAdd, onClose }: {
-  agentId: string
-  /** 시각순 스텝 */
-  rows: ResultRow[]
-  absolute: boolean
-  selection: TrimSelection
-  onChange: (s: TrimSelection) => void
-  /** 스텝의 영상 위치 (영상 시작 시각을 몰라 계산할 수 없으면 null) */
-  position: (row: ResultRow) => { path: string; seconds: number } | null
-  videoDuration: (path: string) => number | null
-  /** 미리보기로 재생할 주소 (재생 준비 전이면 null) */
-  previewUrl: (path: string) => string | null
-  onAdd: (path: string) => void
-  onClose: () => void
-}) {
-  const [picking, setPicking] = useState<'start' | 'end' | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const previewRef = useRef<HTMLVideoElement>(null)
+interface TrimRange {
+  startRow: ResultRow | null
+  endRow: ResultRow | null
+  /** 자를 영상과 구간(초). 다 고르지 않았거나 문제가 있으면 null */
+  clip: { path: string; start: number; end: number } | null
+  /** 시작 스텝 시각 − 앞 여유 · 끝 스텝이 끝난 시각 + 뒤 여유 (벽시계 ms, 경과 시간 Result면 null) */
+  startWall: number | null
+  endWall: number | null
+  problem: string | null
+  /** 행 번호 → 시각순 차례 (끝 스텝은 시작 스텝 차례보다 앞일 수 없다) */
+  order: Map<number, number>
+}
 
-  // 행 번호 → 시각순 차례
-  const order = useMemo(() => new Map(rows.map((r, i) => [r.index, i])), [rows])
+/**
+ * 고른 스텝 → 자를 구간: 시작 스텝 시각 − 앞 여유 ~ 끝 스텝이 끝난 시각(걸린 시간, 없으면 다음 스텝까지) + 뒤 여유.
+ * 영상 위치는 표에서 스텝을 누를 때와 같은 계산 (보정·배율 반영)
+ */
+function trimRange(sel: TrimSelection, rows: ResultRow[], absolute: boolean,
+  position: (row: ResultRow) => { path: string; seconds: number } | null, videoDuration: (path: string) => number | null): TrimRange {
+  const order = new Map(rows.map((r, i) => [r.index, i]))
   const rowOf = (index: number | null) => (index === null ? null : rows[order.get(index) ?? -1] ?? null)
-  const startRow = rowOf(selection.start)
-  const endRow = rowOf(selection.end)
-  /** 스텝이 걸린 시간(초): Result에 있으면 그것, 없으면 다음 스텝까지 */
+  const startRow = rowOf(sel.start)
+  const endRow = rowOf(sel.end)
   const lengthOf = (row: ResultRow) => {
     if (row.durationMs !== null) return row.durationMs / 1000
     const next = rows[(order.get(row.index) ?? rows.length) + 1]
@@ -1535,239 +1571,105 @@ function TrimDialog({ agentId, rows, absolute, selection, onChange, position, vi
   }
   const startAt = startRow ? position(startRow) : null
   const endAt = endRow ? position(endRow) : null
-  const path = startAt?.path ?? null
-  const duration = path ? videoDuration(path) : null
-  // 시작 스텝 시각 − 앞 여유 ~ 끝 스텝이 끝난 시각 + 뒤 여유 (영상 안으로)
-  const clipStart = startAt ? Math.max(0, startAt.seconds - selection.before) : null
-  const clipEnd = endAt && endRow ? Math.min(duration ?? Infinity, endAt.seconds + lengthOf(endRow) + selection.after) : null
+  const duration = startAt ? videoDuration(startAt.path) : null
+  const start = startAt ? Math.max(0, startAt.seconds - sel.before) : null
+  const endLength = endRow ? lengthOf(endRow) : 0
+  const end = endAt ? Math.min(duration ?? Infinity, endAt.seconds + endLength + sel.after) : null
   const problem = startRow && !startAt ? '시작 스텝의 영상 위치를 알 수 없습니다 (영상 시작 시각을 모름)'
     : endRow && !endAt ? '끝 스텝의 영상 위치를 알 수 없습니다 (영상 시작 시각을 모름)'
       : startAt && endAt && startAt.path !== endAt.path ? '시작·끝 스텝이 서로 다른 영상에 있습니다'
-        : clipStart !== null && duration !== null && clipStart >= duration ? '시작 스텝이 영상이 끝난 뒤입니다'
-          : clipEnd !== null && clipEnd <= 0 ? '끝 스텝이 영상 시작 전입니다'
+        : start !== null && duration !== null && start >= duration ? '시작 스텝이 영상이 끝난 뒤입니다'
+          : end !== null && end <= 0 ? '끝 스텝이 영상 시작 전입니다'
             : null
-  const ready = !problem && path !== null && clipStart !== null && clipEnd !== null && clipEnd > clipStart
-  const src = ready && path ? previewUrl(path) : null
-
-  /** 실제 시각 (경과 시간 Result면 영상 위치) */
-  const stampOf = (row: ResultRow, offsetSec: number, videoSec: number | null) =>
-    absolute && row.time !== null ? formatWall(row.time + offsetSec * 1000, true) : videoSec !== null ? formatSeconds(videoSec) : '-'
-
-  const pick = (which: 'start' | 'end', row: ResultRow) => {
-    setPicking(null)
-    setResult(null)
-    if (which === 'end') return onChange({ ...selection, end: row.index })
-    // 끝 스텝이 새 시작 스텝보다 앞이면 끝은 다시 고른다
-    const endBefore = selection.end !== null && (order.get(selection.end) ?? 0) < (order.get(row.index) ?? 0)
-    onChange({ ...selection, start: row.index, end: endBefore ? null : selection.end })
+  return {
+    startRow,
+    endRow,
+    clip: !problem && startAt && start !== null && end !== null && end > start ? { path: startAt.path, start, end } : null,
+    startWall: absolute && startRow?.time != null ? startRow.time - sel.before * 1000 : null,
+    endWall: absolute && endRow?.time != null ? endRow.time + (endLength + sel.after) * 1000 : null,
+    problem,
+    order,
   }
+}
 
-  // 구간이 바뀌면 미리보기를 시작 프레임으로 (멈춘 채)
-  useEffect(() => {
-    const video = previewRef.current
-    if (!video || clipStart === null) return
-    video.pause()
-    if (video.readyState >= 1) video.currentTime = clipStart
-  }, [src, clipStart, clipEnd])
-
-  const play = () => {
-    const video = previewRef.current
-    if (!video || clipStart === null) return
-    video.currentTime = clipStart
-    void video.play()
-  }
+/** 자르기 정보 (이미지 미리보기 자리): 고른 스텝 · 실제 시각 · 여유 · 길이 · 자르기 */
+function TrimPanel({ agentId, trim, selection, onChange, onAdd, onExit }: {
+  agentId: string
+  trim: TrimRange
+  selection: TrimSelection
+  onChange: (s: TrimSelection) => void
+  onAdd: (path: string) => void
+  onExit: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const { startRow, endRow, clip } = trim
 
   const run = () => {
-    if (!ready || path === null || clipStart === null || clipEnd === null) return
+    if (!clip) return
     setBusy(true)
     setError(null)
-    api.trimVideo(agentId, path, clipStart, clipEnd).then(
+    api.trimVideo(agentId, clip.path, clip.start, clip.end).then(
       (r) => setResult(r.outputPath),
       (err) => setError(toMessage(err)),
     ).finally(() => setBusy(false))
   }
-
   const setMargin = (key: 'before' | 'after', value: string) => {
     setResult(null)
     onChange({ ...selection, [key]: Math.max(0, Number(value) || 0) })
   }
+  /** 실제 시각 (경과 시간 Result면 영상 위치) */
+  const stamp = (wall: number | null, seconds: number | undefined) =>
+    wall !== null ? formatWall(wall, true) : seconds !== undefined ? formatSeconds(seconds) : '-'
 
   return (
-    <div className="rv-modal">
-      <div className="rv-modal-box panel wide">
-        <div className="rv-drawer-head">
-          <strong>영상 자르기</strong>
-          <button type="button" className="icon" aria-label="닫기" onClick={onClose}>✕</button>
-        </div>
-        <p className="hint">시작·끝 스텝을 고르면 그 구간을 테스트 PC에서 ffmpeg로 잘라 원래 영상 폴더에 저장합니다 (프레임 단위로 정확하게 다시 인코딩). 창을 닫아도 고른 스텝은 남습니다.</p>
-        <div className="rv-trim-steps">
-          {(['start', 'end'] as const).map((which) => {
-            const row = which === 'start' ? startRow : endRow
-            const stamp = !row ? null
-              : which === 'start' ? stampOf(row, -selection.before, clipStart)
-                : stampOf(row, lengthOf(row) + selection.after, clipEnd)
-            return (
-              <div key={which} className="rv-trim-step">
-                <span className="rv-trim-label">{which === 'start' ? '시작 스텝' : '끝 스텝'}</span>
-                {row ? (
-                  <span className="rv-trim-value" title={row.cells.join(' · ')}>
-                    <span className="ellipsis" translate="no">{`#${row.index + 1} ${row.name}`}</span>
-                    <span className="mono">{stamp}</span>
-                  </span>
-                ) : <span className="rv-trim-value muted">{which === 'end' && !startRow ? '시작 스텝을 먼저 고르세요' : '고르지 않음'}</span>}
-                <button
-                  type="button"
-                  className={picking === which ? 'active' : ''}
-                  disabled={which === 'end' && !startRow}
-                  onClick={() => setPicking(picking === which ? null : which)}
-                >
-                  스텝 선택
-                </button>
-                {picking === which && (
-                  <StepList
-                    rows={rows}
-                    minOrder={which === 'end' && startRow ? order.get(startRow.index) ?? 0 : 0}
-                    selected={row?.index ?? (which === 'end' ? startRow?.index ?? null : null)}
-                    onPick={(r) => pick(which, r)}
-                    onClose={() => setPicking(null)}
-                  />
-                )}
-              </div>
-            )
-          })}
-        </div>
-        <div className="rv-trim-margins small">
-          <label title="시작 스텝보다 이만큼 앞부터">
-            시작 앞 여유
-            <input type="number" min={0} max={600} step={0.5} value={selection.before} onChange={(e) => setMargin('before', e.target.value)} />
-            초
-          </label>
-          <label title="끝 스텝이 끝난 뒤 이만큼 더">
-            끝 뒤 여유
-            <input type="number" min={0} max={600} step={0.5} value={selection.after} onChange={(e) => setMargin('after', e.target.value)} />
-            초
-          </label>
-          <span className="rv-spacer" />
-          <button type="button" onClick={() => { onChange(EMPTY_TRIM); setPicking(null); setResult(null); setError(null) }}>초기화</button>
-        </div>
-        {problem && <p className="error small">{problem}</p>}
-        {ready && clipStart !== null && clipEnd !== null && (
-          <>
-            <p className="small">{`길이 ${formatSeconds(clipEnd - clipStart)}`}</p>
-            {src ? (
-              <div className="rv-trim-preview">
-                <video
-                  ref={previewRef}
-                  src={src}
-                  preload="metadata"
-                  controls
-                  onLoadedMetadata={(e) => { e.currentTarget.currentTime = clipStart }}
-                  onTimeUpdate={(e) => {
-                    // 구간 끝에서 멈춘다
-                    if (e.currentTarget.currentTime >= clipEnd) e.currentTarget.pause()
-                  }}
-                />
-                <button type="button" onClick={play}>▶ 구간 미리보기</button>
-              </div>
-            ) : <p className="small muted">영상 재생 준비가 끝나면 미리볼 수 있습니다</p>}
-          </>
-        )}
-        {error && <p className="error small">{error}</p>}
-        {result && (
-          <p className="small">
-            저장했습니다: <span className="mono">{result}</span>{' '}
-            <button type="button" className="link" onClick={() => { onAdd(result); onClose() }}>영상 목록에 추가</button>
-          </p>
-        )}
-        <div className="rv-setup-actions">
-          <button type="button" className="primary" disabled={busy || !ready} onClick={run}>{busy ? '자르는 중…' : '자르기'}</button>
-        </div>
+    <div className="rv-trim">
+      <div className="rv-drawer-head">
+        <strong>✂ 영상 자르기</strong>
+        <span className="muted small">오른쪽 표에서 행을 고르고 [시작 스텝] · [끝 스텝]</span>
+        <span className="rv-spacer" />
+        <button type="button" onClick={onExit} title="원래 화면으로 (Esc) — 고른 스텝은 남습니다">자르기 종료</button>
       </div>
-    </div>
-  )
-}
-
-const STEP_ITEM = 22
-const STEP_LIST_HEIGHT = 264
-
-/** 스텝 고르기 목록 (시각순 · 검색, 보이는 줄만 그린다). minOrder 앞의 스텝은 고를 수 없다 (끝 스텝은 시작 스텝보다 앞일 수 없음) */
-function StepList({ rows, minOrder, selected, onPick, onClose }: {
-  rows: ResultRow[]
-  minOrder: number
-  /** 처음 보일 스텝 */
-  selected: number | null
-  onPick: (row: ResultRow) => void
-  onClose: () => void
-}) {
-  const [query, setQuery] = useState('')
-  const [scroll, setScroll] = useState(0)
-  const listRef = useRef<HTMLDivElement>(null)
-  const q = query.trim().toLowerCase()
-  const shown = useMemo(() => {
-    const list = rows.map((row, order) => ({ row, order }))
-    return q ? list.filter(({ row }) => String(row.index + 1) === q.replace(/^#/, '') || row.cells.some((c) => c.toLowerCase().includes(q))) : list
-  }, [rows, q])
-  // 열 때 한 번: 고른 스텝(없으면 고를 수 있는 첫 스텝)이 가운데 보이게
-  useLayoutEffect(() => {
-    const target = shown.findIndex((x) => (selected !== null ? x.row.index === selected : x.order >= minOrder))
-    const list = listRef.current
-    if (!list || target <= 0) return
-    list.scrollTop = Math.max(0, target * STEP_ITEM - STEP_LIST_HEIGHT / 2)
-    setScroll(list.scrollTop)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  const first = Math.max(0, Math.floor(scroll / STEP_ITEM) - 5)
-  const last = Math.min(shown.length, Math.ceil((scroll + STEP_LIST_HEIGHT) / STEP_ITEM) + 5)
-
-  return (
-    <div
-      className="rv-steplist"
-      onKeyDown={(e) => {
-        if (e.key !== 'Escape') return
-        // 자르기 창은 닫지 않고 목록만
-        e.stopPropagation()
-        onClose()
-      }}
-    >
-      <input
-        autoFocus
-        placeholder="스텝 검색 (번호 · 이름 · 상태 · 메시지)"
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value)
-          if (listRef.current) listRef.current.scrollTop = 0
-          setScroll(0)
-        }}
-      />
-      <div
-        ref={listRef}
-        className="rv-steplist-items"
-        style={{ height: Math.min(STEP_LIST_HEIGHT, shown.length * STEP_ITEM + 2) }}
-        onScroll={(e) => setScroll(e.currentTarget.scrollTop)}
-      >
-        <div style={{ position: 'relative', height: shown.length * STEP_ITEM }}>
-          {shown.slice(first, last).map(({ row, order }, k) => {
-            const disabled = order < minOrder
-            return (
-              <button
-                key={row.index}
-                type="button"
-                className={`rv-steplist-item${row.index === selected ? ' active' : ''}`}
-                style={{ top: (first + k) * STEP_ITEM }}
-                disabled={disabled}
-                title={disabled ? '시작 스텝보다 앞이라 고를 수 없습니다' : row.cells.join(' · ')}
-                onClick={() => onPick(row)}
-              >
-                <span className="mono">{`#${row.index + 1}`}</span>
-                <span className="mono">{formatWall(row.time)}</span>
-                <span className="ellipsis" translate="no">{row.name}</span>
-                <span className={`rv-steplist-status ${statusTone(row.status)}`}>{row.status}</span>
-              </button>
-            )
-          })}
-        </div>
+      <div className="rv-trim-steps">
+        {([['시작 스텝', startRow, stamp(trim.startWall, clip?.start)], ['끝 스텝', endRow, stamp(trim.endWall, clip?.end)]] as const).map(([label, row, time]) => (
+          <div key={label} className="rv-trim-step">
+            <span className="rv-trim-label">{label}</span>
+            {row ? (
+              <span className="rv-trim-value" title={row.cells.join(' · ')}>
+                <span className="ellipsis" translate="no">{`#${row.index + 1} ${row.name}`}</span>
+                <span className="mono">{time}</span>
+              </span>
+            ) : <span className="rv-trim-value muted">고르지 않음</span>}
+          </div>
+        ))}
       </div>
-      {shown.length === 0 && <p className="small muted">맞는 스텝이 없습니다</p>}
+      <div className="rv-trim-margins small">
+        <label title="시작 스텝보다 이만큼 앞부터">
+          시작 앞 여유
+          <input type="number" min={0} max={600} step={0.5} value={selection.before} onChange={(e) => setMargin('before', e.target.value)} />
+          초
+        </label>
+        <label title="끝 스텝이 끝난 뒤 이만큼 더">
+          끝 뒤 여유
+          <input type="number" min={0} max={600} step={0.5} value={selection.after} onChange={(e) => setMargin('after', e.target.value)} />
+          초
+        </label>
+        <span className="rv-spacer" />
+        <button type="button" onClick={() => { onChange(EMPTY_TRIM); setResult(null); setError(null) }}>초기화</button>
+      </div>
+      {trim.problem && <p className="error small">{trim.problem}</p>}
+      {clip && <p className="small">{`길이 ${formatSeconds(clip.end - clip.start)}`} <span className="muted">· 영상 자리에서 이 구간만 미리 봅니다</span></p>}
+      {error && <p className="error small">{error}</p>}
+      {result && (
+        <p className="small">
+          저장했습니다: <span className="mono">{result}</span>{' '}
+          <button type="button" className="link" onClick={() => onAdd(result)}>영상 목록에 추가</button>
+        </p>
+      )}
+      <div className="rv-setup-actions">
+        <button type="button" className="primary" disabled={busy || !clip} onClick={run}>{busy ? '자르는 중…' : '자르기'}</button>
+      </div>
     </div>
   )
 }

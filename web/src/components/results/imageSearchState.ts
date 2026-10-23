@@ -22,6 +22,10 @@ export type AreaMode = 'same' | 'custom' | 'full'
 /** 찾을 범위: 영상 전체 · 고른 스텝 앞뒤 몇 초 (훨씬 빠르다) */
 export type SearchScope = 'all' | 'steps'
 
+/** 찾은 구간 목록의 열 (머리글에서 체크한 열만 내보낸다) */
+export const RESULT_COLUMNS = ['time', 'cycle', 'step', 'name', 'offset', 'length', 'peak', 'frame', 'video'] as const
+export type ResultColumn = (typeof RESULT_COLUMNS)[number]
+
 /** 훑을 구간 (원래 영상 경로 · 초). steps: 이 구간을 만든 스텝 (행 번호 · 영상 위치) */
 export interface SearchWindow {
   path: string
@@ -112,6 +116,10 @@ export function useImageSearch(agentId: string, videos: SearchVideo[]) {
   const [after, setAfter] = useState(5)
   // 지금 결과를 찾은 구간 (영상 전체로 찾았으면 null)
   const [searched, setSearched] = useState<SearchWindow[] | null>(null)
+  // 목록에서 마지막으로 누른 구간 (`경로:첫 프레임`) — 스크롤해도 어디를 봤는지 보이게
+  const [picked, setPicked] = useState<string | null>(null)
+  // 내보낼 열 (목록 머리글의 체크)
+  const [exportColumns, setExportColumns] = useState<ResultColumn[]>([...RESULT_COLUMNS])
   const [found, setFound] = useState<Found[]>([])
   const [status, setStatus] = useState<ImageSearchProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -146,6 +154,7 @@ export function useImageSearch(agentId: string, videos: SearchVideo[]) {
     setStatus(null)
     setRetrying(false)
     setSearched(windows ?? null)
+    setPicked(null)
     setRunning(true)
     const ranges = windows?.flatMap((w) => {
       const video = videos.findIndex((v) => v.path === w.path)
@@ -236,6 +245,7 @@ export function useImageSearch(agentId: string, videos: SearchVideo[]) {
     open, start, close, template, setTemplate, drawing, setDrawing, areaMode, setAreaMode, customArea, setCustomArea,
     threshold, setThreshold, gap, setGap, found, status, error, running, retrying, run, stop, segments,
     scope, setScope, stepColumn, setStepColumn, stepValues, setStepValues, before, setBefore, after, setAfter, searched,
+    picked, setPicked, exportColumns, setExportColumns,
   }
 }
 

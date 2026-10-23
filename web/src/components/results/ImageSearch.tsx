@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { formatDuration } from '../../format'
+import { tr } from '../../i18n/engine'
 import { ColumnFilterMenu } from './ColumnFilter'
-import { formatWall } from './resultCsv'
+import { formatWall, type ResultRow } from './resultCsv'
 import { toMessage } from './resultSessions'
+import { rowAtTime } from './sync'
+import { copyTable, downloadXlsx } from './tableExport'
 import {
-  type AreaMode, areaOf, type ImageSearchState, type Rect, type SearchScope, type SearchVideo, type Segment, type StepSource, stepWindows,
+  type AreaMode, areaOf, type ImageSearchState, type Rect, RESULT_COLUMNS, type ResultColumn, type SearchScope, type SearchVideo, type Segment,
+  type StepSource, stepWindows,
 } from './imageSearchState'
 
 // 결과 확인 이미지 찾기 화면: 영상 위 크롭·영역 드래그(CropOverlay) · 설정·진행·찾은 구간(ImageSearchPanel). 상태·찾기 작업은 imageSearchState
@@ -161,6 +165,28 @@ export function CropOverlay({ state, videoRef, currentPath }: {
 
 // ─────────────────────────────── 패널: 설정·진행·찾은 구간
 
+/** 찾은 구간 목록의 열: 머리글(내보내는 표의 머리글도 같음) · 화면 폭 · 가장 좁은 폭(px) · 칸 모양 */
+const COLUMN_SPEC: Record<ResultColumn, { label: string; width: string; min: number; className: string }> = {
+  time: { label: '시각', width: '168px', min: 168, className: '' },
+  cycle: { label: 'Cycle', width: '46px', min: 46, className: 'small mono' },
+  step: { label: '스텝', width: '46px', min: 46, className: 'small' },
+  name: { label: '스텝 이름', width: 'minmax(72px, 1fr)', min: 72, className: 'small ellipsis' },
+  offset: { label: '스텝부터(초)', width: '74px', min: 74, className: 'small muted mono rv-search-num' },
+  length: { label: '길이(초)', width: '54px', min: 54, className: 'small muted mono rv-search-num' },
+  peak: { label: '유사도(%)', width: '64px', min: 64, className: 'small muted mono rv-search-num' },
+  frame: { label: '프레임', width: '54px', min: 54, className: 'small muted mono rv-search-num' },
+  video: { label: '영상', width: 'minmax(80px, 0.7fr)', min: 80, className: 'small muted ellipsis' },
+}
+// 칸 사이 · 줄 양옆 여백 (CSS와 같게)
+const COLUMN_GAP = 8
+const ROW_PADDING = 12
+
+/** 파일 이름에 넣을 시각 20261023_101530 */
+const fileStamp = (d: Date) => {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+}
+
 export function ImageSearchPanel({ state, videos, steps, currentPath, escape, nowSeconds, wallOf, onSeek }: {
   state: ImageSearchState
   videos: SearchVideo[]
@@ -210,12 +236,61 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, escape, no
     : state.stepValues.length === 1 ? valueText(state.stepValues[0])
       : `${valueText(state.stepValues[0])} 외 ${state.stepValues.length - 1}개`
   const stepScope = state.scope === 'steps'
-  /** 찾은 구간과 가장 가까운 고른 스텝 (스텝 앞뒤로 찾았을 때) */
-  const stepOf = (s: Segment) => {
+  const rowByIndex = useMemo(() => new Map(steps.rows.map((r) => [r.index, r])), [steps.rows])
+  const timedRows = useMemo(() => steps.rows.filter((r) => r.time !== null).sort((a, b) => a.time! - b.time! || a.index - b.index), [steps.rows])
+  // 테스트가 끝난 시각 (마지막 스텝이 끝난 때): 그 뒤에 찾은 것은 스텝이 없다
+  const runEnd = useMemo(() => timedRows.reduce((end, r) => Math.max(end, r.time! + (r.durationMs ?? 0)), -Infinity), [timedRows])
+  /**
+   * 찾은 구간의 스텝과 그 스텝 시각부터 몇 초 뒤인지: 고른 스텝 앞뒤로 찾았으면 가장 가까운 고른 스텝,
+   * 영상 전체로 찾았으면 그때 하던 스텝 (영상 시작 시각을 몰라 벽시계를 모르면 없음)
+   */
+  const stepOf = (s: Segment): { row: ResultRow; offset: number } | null => {
     const t = s.first / s.fps
-    const w = state.searched?.find((x) => x.path === s.path && s.first >= Math.floor(x.start * s.fps) && t < x.end)
-    return w ? w.steps.reduce((a, b) => (Math.abs(b.at - t) < Math.abs(a.at - t) ? b : a)) : null
+    if (state.searched) {
+      const w = state.searched.find((x) => x.path === s.path && s.first >= Math.floor(x.start * s.fps) && t < x.end)
+      const near = w?.steps.reduce((a, b) => (Math.abs(b.at - t) < Math.abs(a.at - t) ? b : a))
+      const row = near ? rowByIndex.get(near.index) : undefined
+      return near && row ? { row, offset: t - near.at } : null
+    }
+    const wall = wallOf(s.path, t)
+    const row = wall === null || wall > runEnd ? null : rowAtTime(timedRows, wall)
+    return wall !== null && row?.time != null ? { row, offset: (wall - row.time) / 1000 } : null
   }
+  const keyOf = (s: Segment) => `${s.path}:${s.first}`
+  /** 목록 한 줄의 칸 (내보내기와 같은 값, 숫자는 단위 없이) */
+  const cellsOf = (s: Segment): Record<ResultColumn, string> => {
+    const t = s.first / s.fps
+    const wall = wallOf(s.path, t)
+    const step = stepOf(s)
+    return {
+      // 실제 시각 (영상 시작 시각을 모르면 영상 위치)
+      time: wall !== null ? formatWall(wall, true) : formatFrameTime(t),
+      cycle: step?.row.cycle ?? '',
+      step: step ? String(step.row.index + 1) : '',
+      name: step?.row.name ?? '',
+      offset: step ? step.offset.toFixed(2) : '',
+      length: ((s.last - s.first + 1) / s.fps).toFixed(2),
+      peak: (s.peak / 2).toFixed(1),
+      frame: String(s.first),
+      video: nameOf(s.path),
+    }
+  }
+  // 열: 영상이 하나면 '영상' 열은 없다
+  const columns = RESULT_COLUMNS.filter((c) => c !== 'video' || videos.length > 1)
+  const toggleColumn = (c: ResultColumn) =>
+    state.setExportColumns(state.exportColumns.includes(c) ? state.exportColumns.filter((x) => x !== c) : [...state.exportColumns, c])
+  const [exportNotice, setExportNotice] = useState<string | null>(null)
+  /** 목록·시간축에서 누름: 하이라이트하고 그 구간 첫 프레임으로 */
+  const pick = (s: Segment) => {
+    state.setPicked(keyOf(s))
+    onSeek(s.path, (s.first + 0.5) / s.fps)
+  }
+  // 시간축에서 누른 구간이 목록에서 안 보이면 보이게
+  const listRef = useRef<HTMLOListElement>(null)
+  useEffect(() => {
+    if (!state.picked) return
+    listRef.current?.querySelector('li.picked')?.scrollIntoView({ block: 'nearest' })
+  }, [state.picked])
 
   // 한 시간축: 모든 영상의 시작 시각을 알면 벽시계, 아니면 영상을 순서대로 이어 붙인다
   const axis = useMemo(() => {
@@ -241,7 +316,25 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, escape, no
     () => [...segments].sort((a, b) => posOf(a.path, a.first / a.fps) - posOf(b.path, b.first / b.fps)),
     [segments, posOf],
   )
-  const seek = (s: Segment) => onSeek(s.path, (s.first + 0.5) / s.fps)
+  // 내보내기: 머리글에서 체크한 열만, 목록과 같은 차례
+  const canExport = ordered.length > 0 && columns.some((c) => state.exportColumns.includes(c))
+  const exportLines = () => {
+    const chosen = columns.filter((c) => state.exportColumns.includes(c))
+    // 머리글은 화면 언어로 (English면 영어)
+    return [chosen.map((c) => tr(COLUMN_SPEC[c].label)), ...ordered.map((s) => {
+      const v = cellsOf(s)
+      return chosen.map((c) => v[c])
+    })]
+  }
+  const exportXlsx = () => {
+    const name = (videos[0]?.name ?? '영상').replace(/\.[^.]+$/, '')
+    downloadXlsx(`이미지찾기_${name}_${fileStamp(new Date())}.xlsx`, tr('이미지 찾기'), exportLines())
+  }
+  const copyRows = () => {
+    copyTable(exportLines())
+    setExportNotice('표를 복사했습니다 (엑셀에 붙여 넣기)')
+    window.setTimeout(() => setExportNotice(null), 2500)
+  }
   const nameOf = (path: string) => videos.find((v) => v.path === path)?.name ?? path
   const area = areaOf(state)
   // 직접 지정한 영역 크기 (크롭한 영상 픽셀)
@@ -407,37 +500,64 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, escape, no
             })}
             {ordered.map((s) => (
               <button
-                key={`${s.path}:${s.first}`}
+                key={keyOf(s)}
                 type="button"
-                className="rv-search-hit"
+                className={`rv-search-hit${keyOf(s) === state.picked ? ' picked' : ''}`}
                 style={{ left: `${posOf(s.path, s.first / s.fps)}%`, width: `max(3px, ${((s.last - s.first + 1) / s.fps / axis.length) * 100}%)` }}
                 title={`${nameOf(s.path)} ${formatFrameTime(s.first / s.fps)}`}
-                onClick={() => seek(s)}
+                onClick={() => pick(s)}
               />
             ))}
             {currentPath && <div className="rv-search-now" style={{ left: `${posOf(currentPath, nowSeconds)}%` }} />}
           </div>
-          <div className="small muted">
-            {`찾은 구간 ${ordered.length}개`}{running ? ' (찾는 중)' : ''}{' · 누르면 그 구간의 첫 프레임으로 이동'}
+          <div className="rv-search-summary small">
+            <span className="muted">{`찾은 구간 ${ordered.length}개`}{running ? ' (찾는 중)' : ''}{' · 누르면 그 구간의 첫 프레임으로 이동'}</span>
+            <span className="rv-spacer" />
+            {exportNotice && <span className="muted">{exportNotice}</span>}
+            <button type="button" className="small-btn" disabled={!canExport} onClick={exportXlsx} title="머리글에서 체크한 열만 엑셀 파일(.xlsx)로">
+              엑셀로 내보내기
+            </button>
+            <button type="button" className="small-btn" disabled={!canExport} onClick={copyRows} title="머리글에서 체크한 열만 표로 복사 (엑셀에 붙이면 칸마다)">
+              표 복사
+            </button>
           </div>
-          <ol className="rv-search-list">
+          {/* 머리글 있는 표: 체크한 열만 내보낸다 */}
+          <ol
+            className="rv-search-list"
+            ref={listRef}
+            style={{
+              '--search-cols': columns.map((c) => COLUMN_SPEC[c].width).join(' '),
+              // 줄마다 같은 폭이어야 칸이 맞는다: 패널이 좁으면 이 폭에서 가로로 스크롤
+              '--search-min': `${columns.reduce((sum, c) => sum + COLUMN_SPEC[c].min, 0) + COLUMN_GAP * (columns.length - 1) + ROW_PADDING}px`,
+            } as React.CSSProperties}
+          >
+            <li className="rv-search-head">
+              {columns.map((c) => {
+                const on = state.exportColumns.includes(c)
+                return (
+                  <label key={c} className={on ? '' : 'off'} title={on ? '내보낼 열 (누르면 뺌)' : '내보내지 않는 열 (누르면 넣음)'}>
+                    <input type="checkbox" checked={on} onChange={() => toggleColumn(c)} />
+                    {COLUMN_SPEC[c].label}
+                  </label>
+                )
+              })}
+            </li>
             {ordered.map((s) => {
-              const t = s.first / s.fps
-              const wall = wallOf(s.path, t)
-              const step = stepOf(s)
-              const row = step ? steps.rows.find((r) => r.index === step.index) : undefined
+              const key = keyOf(s)
+              const v = cellsOf(s)
               return (
-                <li key={`${s.path}:${s.first}`}>
-                  <button type="button" className="link mono" onClick={() => seek(s)}>{formatFrameTime(t)}</button>
-                  {wall !== null && axis.useWall && <span className="mono small">{formatWall(wall)}</span>}
-                  {step && (
-                    <span className="small" title={row && column !== null ? valueText(row.cells[column] ?? '') : undefined}>
-                      <span>{`스텝 #${step.index + 1}`}</span>{' '}
-                      <span className="muted mono">{`${t >= step.at ? '+' : '−'}${Math.abs(t - step.at).toFixed(2)}초`}</span>
-                    </span>
-                  )}
-                  {videos.length > 1 && <span className="small muted ellipsis" title={s.path}>{nameOf(s.path)}</span>}
-                  <span className="small muted">{`프레임 ${s.first} · ${((s.last - s.first + 1) / s.fps).toFixed(2)}초 · 최고 ${(s.peak / 2).toFixed(1)}%`}</span>
+                <li key={key} className={key === state.picked ? 'picked' : ''} onClick={() => pick(s)}>
+                  {columns.map((c) => {
+                    // 내보내지 않는 열은 흐리게
+                    const off = state.exportColumns.includes(c) ? '' : ' off'
+                    return c === 'time'
+                      ? <button key={c} type="button" className={`link mono${off}`}>{v.time}</button>
+                      : (
+                        <span key={c} className={COLUMN_SPEC[c].className + off} title={c === 'name' || c === 'video' ? v[c] : undefined}>
+                          {c === 'step' && v.step ? `#${v.step}` : c === 'offset' && v.offset && !v.offset.startsWith('-') ? `+${v.offset}` : v[c]}
+                        </span>
+                      )
+                  })}
                 </li>
               )
             })}
