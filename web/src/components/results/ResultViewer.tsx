@@ -23,6 +23,8 @@ import { copyTable } from './tableExport'
 import { VideoTransport } from './VideoTransport'
 import { CropOverlay, ImageSearchPanel } from './ImageSearch'
 import { grabFrame, type SearchVideo, type StepSource, useImageSearch } from './imageSearchState'
+import { AnalysisOverlay, VideoAnalysisPanel } from './VideoAnalysis'
+import { MARK_COLOR, useVideoAnalysis } from './videoAnalysisState'
 
 type PutSlot = 'result' | 'video' | 'image' | 'ref'
 type Dialog = null | 'save' | 'trim'
@@ -433,6 +435,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     [rawVideos],
   )
   const search = useImageSearch(source.agentId, searchVideos)
+  // 영상 분석: 검은 화면·깜박임·정지 구간·화면 전환 (이미지 찾기와 같은 자리, 하나만 연다)
+  const analysis = useVideoAnalysis(source.agentId, searchVideos)
   const [query, setQuery] = useState('')
   const [onlyFail, setOnlyFail] = useState(false)
   const [cycle, setCycle] = useState('')
@@ -443,6 +447,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   const [follow, setFollow] = useState(true)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const pendingSeek = useRef<number | null>(null)
+  // 다른 영상으로 옮겨 간 뒤 그 위치에서 재생할지 (영상 분석 검출 항목)
+  const pendingPlay = useRef(false)
   // 누른 스텝: 시각이 같거나 몇 ms 차이인 다음 스텝으로 바로 넘어가지 않게 잠시 붙잡는다
   const picked = useRef<{ index: number; time: number } | null>(null)
 
@@ -582,13 +588,17 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     if (row && row.index !== playing) setPlaying(row.index)
   }
 
-  /** 영상·위치로 이동 (다른 영상이면 바꾼 뒤) */
-  const seekTo = (path: string, t: number) => {
+  /** 영상·위치로 이동 (다른 영상이면 바꾼 뒤). play: 거기서 재생 */
+  const seekTo = (path: string, t: number, play = false) => {
     setNotice(null)
     if (path !== current) {
       pendingSeek.current = t
+      pendingPlay.current = play
       setCurrent(path)
-    } else seekVideo(t)
+    } else {
+      seekVideo(t)
+      if (play) void videoRef.current?.play().catch(() => {})
+    }
   }
   const wallOf = useCallback((path: string, t: number) => {
     if (!absolute) return null
@@ -636,9 +646,11 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     // 구간이 바뀔 때만
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clipKey])
-  // 이미지 찾기와 같은 자리를 쓰므로 자르기 모드에서는 닫는다
+  // 이미지 찾기·영상 분석과 같은 자리를 쓰므로 자르기 모드에서는 닫는다
   useEffect(() => {
-    if (trimMode) search.close()
+    if (!trimMode) return
+    search.close()
+    analysis.close()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trimMode])
   const clipNow = trimMode && trim.clip && trim.clip.path === current ? trim.clip : null
@@ -705,7 +717,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             durationHint={currentRaw?.duration ?? null}
             fps={currentRaw?.fps ?? null}
             videoRef={videoRef}
-            keysEnabled={(dialog === null || trimMode) && !search.crop}
+            keysEnabled={(dialog === null || trimMode) && !search.crop && !analysis.picking}
             error={videoError}
             clip={clipNow}
             onTime={onTime}
@@ -715,11 +727,22 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               if (pendingSeek.current !== null) {
                 seekVideo(pendingSeek.current)
                 pendingSeek.current = null
+                if (pendingPlay.current) void videoRef.current?.play().catch(() => {})
               }
+              pendingPlay.current = false
             }}
             onSwitch={videos.length > 1 ? switchVideo : undefined}
-            overlay={<CropOverlay state={search} videoRef={videoRef} currentPath={current} />}
-            marks={search.open ? search.segments.filter((m) => m.path === current).map((m) => ({ start: m.first / m.fps, end: (m.last + 1) / m.fps })) : undefined}
+            overlay={(
+              <>
+                <CropOverlay state={search} videoRef={videoRef} currentPath={current} />
+                <AnalysisOverlay state={analysis} videoRef={videoRef} currentPath={current} />
+              </>
+            )}
+            marks={search.open ? search.segments.filter((m) => m.path === current).map((m) => ({ start: m.first / m.fps, end: (m.last + 1) / m.fps }))
+              // 영상 분석: 지금 영상의 검출 구간 (종류별 색)
+              : analysis.open ? (analysis.results[searchVideos.findIndex((v) => v.path === current)]?.segments ?? [])
+                .map((m) => ({ start: m.start, end: m.end, color: MARK_COLOR[m.kind] }))
+                : undefined}
             extra={
               <>
                 {videos.length > 1 && (
@@ -727,7 +750,34 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
                     {videos.map((v) => <option key={v.path} value={v.path}>{`${v.name}${PREP_TAG[rawVideos.find((r) => r.path === v.path)?.prep ?? 'ready'] ?? ''}`}</option>)}
                   </select>
                 )}
-                <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!currentRaw?.playPath || trimMode} className={search.open ? 'active' : ''} onClick={() => (search.open ? search.close() : search.start(grabFrame(videoRef.current, current)))} title="크롭한 이미지가 이 실행의 영상에 나타나는 구간 찾기 (테스트 PC에서 ffmpeg)">🔍 이미지 찾기</button>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={!currentRaw?.playPath || trimMode}
+                  className={search.open ? 'active' : ''}
+                  onClick={() => {
+                    if (search.open) return search.close()
+                    analysis.close()
+                    search.start(grabFrame(videoRef.current, current))
+                  }}
+                  title="크롭한 이미지가 이 실행의 영상에 나타나는 구간 찾기 (테스트 PC에서 ffmpeg)"
+                >
+                  🔍 이미지 찾기
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  disabled={!currentRaw?.playPath || trimMode}
+                  className={analysis.open ? 'active' : ''}
+                  onClick={() => {
+                    if (analysis.open) return analysis.close()
+                    search.close()
+                    analysis.setOpen(true)
+                  }}
+                  title="화면의 밝기·윤곽·변화량으로 검은 화면·깜박임·정지 구간·화면 전환 찾기 (테스트 PC에서 ffmpeg)"
+                >
+                  📊 영상 분석
+                </button>
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
@@ -777,7 +827,20 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               onSeek={seekTo}
             />
           )}
-          <div className="rv-images" hidden={search.open || trimMode}>
+          {analysis.open && !search.open && !trimMode && (
+            <VideoAnalysisPanel
+              state={analysis}
+              videos={searchVideos}
+              steps={stepSource}
+              currentPath={current}
+              grab={() => grabFrame(videoRef.current, current)}
+              escape={dialog === null}
+              nowSeconds={videoNow}
+              wallOf={wallOf}
+              onSeek={seekTo}
+            />
+          )}
+          <div className="rv-images" hidden={search.open || analysis.open || trimMode}>
             {pairImages ? (
               <AtsImagePanel
                 row={focusRow}

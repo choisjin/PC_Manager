@@ -202,6 +202,40 @@ public static class ResultSetEndpoints
                 await proxy.InvokeAsync<bool>(AgentClientMethods.CancelImageSearch, searchId, ct);
                 return Results.NoContent();
             }));
+
+        // 영상 분석: 테스트 PC 에이전트가 영상들의 프레임별 밝기·윤곽·변화량을 잰다 (시작 → 조각 받기 → 멈춤). 판정은 웹
+        app.MapPost("/api/agents/{agentId}/video/analysis", async (string agentId, VideoAnalysisRequest request, AgentRegistry registry,
+            IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+        {
+            if (request.Paths is not { Count: > 0 })
+                return Results.BadRequest("영상이 필요합니다.");
+            return await CallAgent(agentId, registry, agentHub, async proxy =>
+            {
+                try
+                {
+                    return Results.Ok(new { id = await proxy.InvokeAsync<string>(AgentClientMethods.StartVideoAnalysis, request, ct) });
+                }
+                catch (HubException)
+                {
+                    return Results.Conflict("이 PC의 에이전트가 영상 분석을 모릅니다. 에이전트를 업데이트하세요 (업데이트 → 에이전트 업데이트)");
+                }
+            });
+        });
+
+        app.MapGet("/api/agents/{agentId}/video/analysis/{jobId}", async (string agentId, string jobId, int? video, int? offset,
+            AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            await CallAgent(agentId, registry, agentHub, async proxy =>
+                await proxy.InvokeAsync<VideoAnalysisProgress?>(AgentClientMethods.GetVideoAnalysisChunks, jobId, video ?? 0, offset ?? 0, ct) is { } progress
+                    ? Results.Ok(progress)
+                    : Results.NotFound("분석 작업이 없습니다 (에이전트가 다시 시작됨)")));
+
+        app.MapDelete("/api/agents/{agentId}/video/analysis/{jobId}", async (string agentId, string jobId,
+            AgentRegistry registry, IHubContext<AgentHub> agentHub, CancellationToken ct) =>
+            await CallAgent(agentId, registry, agentHub, async proxy =>
+            {
+                await proxy.InvokeAsync<bool>(AgentClientMethods.CancelVideoAnalysis, jobId, ct);
+                return Results.NoContent();
+            }));
     }
 
     internal static async Task<IResult> CallAgent(string agentId, AgentRegistry registry, IHubContext<AgentHub> agentHub,

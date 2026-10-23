@@ -17,6 +17,7 @@ public class LinuxAgentWorker(
     FileTransferService files,
     VideoTrimmer trimmer,
     VideoImageSearch imageSearch,
+    VideoAnalyzer analyzer,
     SystemMonitor monitor,
     LinuxRemoteControl remote,
     LinuxAgentUpdater updater,
@@ -156,6 +157,12 @@ public class LinuxAgentWorker(
             (searchId, video, offset) => Task.Run(() => imageSearch.GetChunks(searchId, video, offset)));
         connection.On<string, bool>(AgentClientMethods.CancelImageSearch,
             searchId => Task.Run(() => imageSearch.Cancel(searchId)));
+        connection.On<VideoAnalysisRequest, string>(AgentClientMethods.StartVideoAnalysis,
+            request => Task.Run(() => analyzer.Start(request)));
+        connection.On<string, int, int, VideoAnalysisProgress?>(AgentClientMethods.GetVideoAnalysisChunks,
+            (jobId, video, offset) => Task.Run(() => analyzer.GetChunks(jobId, video, offset)));
+        connection.On<string, bool>(AgentClientMethods.CancelVideoAnalysis,
+            jobId => Task.Run(() => analyzer.Cancel(jobId)));
         // PC 정보 패널 (대시보드가 보고 있을 때만 묻는다)
         connection.On(AgentClientMethods.GetSystemInfo, () => Task.Run(monitor.GetSystemInfo));
         connection.On(AgentClientMethods.GetProcesses, () => Task.Run(monitor.GetProcessesAsync));

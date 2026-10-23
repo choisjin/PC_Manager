@@ -34,8 +34,8 @@ interface Props {
   fps?: number | null
   /** 영상 위에 겹쳐 그릴 것 (이미지 찾기 크롭 등) */
   overlay?: ReactNode
-  /** 탐색 막대 위에 표시할 구간 (초) */
-  marks?: { start: number; end: number }[]
+  /** 탐색 막대 위에 표시할 구간 (초, color가 없으면 주황) */
+  marks?: { start: number; end: number; color?: string }[]
   /** 이 구간(초)만 보여 준다: 탐색 막대·시간은 0~구간 길이, 재생도 그 안에서 (자르기 미리보기) */
   clip?: { start: number; end: number } | null
 }
@@ -280,7 +280,10 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
       {!clip && marks && marks.length > 0 && duration > 0 && (
         <div className="rv-seek-marks" aria-hidden>
           {marks.map((m) => (
-            <span key={m.start} style={{ left: `${(m.start / duration) * 100}%`, width: `max(2px, ${((m.end - m.start) / duration) * 100}%)` }} />
+            <span
+              key={`${m.start}:${m.color ?? ''}`}
+              style={{ left: `${(m.start / duration) * 100}%`, width: `max(2px, ${((m.end - m.start) / duration) * 100}%)`, background: m.color }}
+            />
           ))}
         </div>
       )}

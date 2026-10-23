@@ -208,6 +208,34 @@ public record ImageSearchChunk(int Video, string Path, double Fps, int Offset, b
 public record ImageSearchProgress(string State, double Progress, string? Current, int Scale, string? Error,
     IReadOnlyList<ImageSearchChunk> Chunks, bool More);
 
+/// <summary>
+/// 결과 확인 도구의 영상 분석 (ReplayKit_FailAnalyzer 영상 페이지와 같은 방식): 영상들의 모든 프레임에서 화면 영역의
+/// 밝기·프레임 차이·윤곽·평균 색(·베젤 테두리 밝기)을 잰다. 검은 화면·깜박임·정지·화면 전환 판정은 웹이 한다.
+/// 사각형은 영상 크기에 대한 비율 [x0, y0, x1, y1]
+/// </summary>
+/// <param name="Roi">화면 영역. null이면 에이전트가 추정한다 (칸별 윤곽 변화가 큰 곳, 못 찾으면 화면 전체)</param>
+/// <param name="Bezel">베젤 외곽 (화면을 감싸는 모니터 테두리 바깥선). 주면 외곽에서 화면을 뺀 테두리 띠의 밝기도 잰다 (Roi가 있을 때만)</param>
+public record VideoAnalysisRequest(IReadOnlyList<string> Paths, double[]? Roi = null, double[]? Bezel = null);
+
+/// <summary>
+/// 영상 분석 결과 조각: Video번째 영상의 Offset번째 프레임부터. 프레임마다 31바이트 (little-endian):
+/// double 시각(초) · float 밝기 · float 프레임 차이 · float 윤곽 · float 윤곽이 가장 많은 칸(8×4) ·
+/// float 베젤 테두리 밝기 (베젤이 없으면 0) · 평균 색 R·G·B
+/// </summary>
+/// <param name="Marks">이 조각 안에서 측정 구간이 끝난 자리 (프레임 수). 웹은 이 경계마다 판정한다 (기준값 창이 ReplayKit_FailAnalyzer와 같게)</param>
+/// <param name="Done">이 영상의 마지막 조각 (다 쟀다)</param>
+public record VideoAnalysisChunk(int Video, string Path, int Offset, byte[] Frames, int[] Marks, bool Done, string? Error);
+
+/// <param name="State">running · done · failed · canceled</param>
+/// <param name="Progress">0~1 (잰 시간의 합 기준)</param>
+/// <param name="Roi">쓴 화면 영역 (추정 전이면 null)</param>
+/// <param name="RoiSource">화면 영역을 정한 방법 ("직접 지정" · "자동 추정 (…)" · "화면 전체 (…)")</param>
+/// <param name="Bezel">쓴 베젤 외곽 (화면을 감싸게 넓힌 것, 없거나 테두리 띠가 너무 얇으면 null)</param>
+/// <param name="Chunks">요청한 위치(video, offset)부터 이어지는 결과. 서버 SignalR 메시지 한도(2MB) 안에 들게 한 번에 1MB까지</param>
+/// <param name="More">더 받을 결과가 남았다 (곧바로 다시 묻는다)</param>
+public record VideoAnalysisProgress(string State, double Progress, string? Current, string? Error,
+    double[]? Roi, string? RoiSource, double[]? Bezel, IReadOnlyList<VideoAnalysisChunk> Chunks, bool More);
+
 /// <summary>PC 정보 패널의 시스템·디스크 탭</summary>
 /// <param name="Platform">windows · linux</param>
 /// <param name="Os">"Windows 11 Pro" · "Ubuntu 24.04.1 LTS"</param>
@@ -426,6 +454,12 @@ public static class AgentClientMethods
     public const string GetImageSearchChunks = "GetImageSearchChunks";
     /// <summary>(string id) → bool. 이미지 찾기 멈춤</summary>
     public const string CancelImageSearch = "CancelImageSearch";
+    /// <summary>(VideoAnalysisRequest) → string 작업 id. 영상들의 프레임별 밝기·윤곽·변화량 재기를 뒤에서 시작</summary>
+    public const string StartVideoAnalysis = "StartVideoAnalysis";
+    /// <summary>(string id, int video, int offset) → VideoAnalysisProgress? 진행과 (video, offset 프레임)부터의 결과 조각 (한 번에 1MB까지)</summary>
+    public const string GetVideoAnalysisChunks = "GetVideoAnalysisChunks";
+    /// <summary>(string id) → bool. 영상 분석 멈춤 (거기까지 잰 결과는 남는다)</summary>
+    public const string CancelVideoAnalysis = "CancelVideoAnalysis";
     /// <summary>() → PcSystemInfo. PC 정보 패널: 시스템 정보·드라이브</summary>
     public const string GetSystemInfo = "GetSystemInfo";
     /// <summary>() → ProcessList. CPU는 저번 목록과 비교해 잰다 (1.5초 안에 다시 물으면 같은 목록)</summary>

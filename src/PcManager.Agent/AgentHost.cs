@@ -32,6 +32,7 @@ public static class AgentHost
         builder.Services.AddSingleton<FileTransferService>();
         builder.Services.AddSingleton<VideoTrimmer>();
         builder.Services.AddSingleton<VideoImageSearch>();
+        builder.Services.AddSingleton<VideoAnalyzer>();
         builder.Services.AddSingleton<SystemMonitor>();
         builder.Services.AddSingleton<LocalEditService>();
         builder.Services.AddSingleton<UserShellIcons>();

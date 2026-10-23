@@ -30,6 +30,7 @@ public static class LinuxAgentHost
         builder.Services.AddSingleton<FileTransferService>();
         builder.Services.AddSingleton<VideoTrimmer>();
         builder.Services.AddSingleton<VideoImageSearch>();
+        builder.Services.AddSingleton<VideoAnalyzer>();
         builder.Services.AddSingleton<SystemMonitor>();
         builder.Services.AddSingleton<LinuxRemoteControl>();
         builder.Services.AddSingleton<LinuxAgentUpdater>();

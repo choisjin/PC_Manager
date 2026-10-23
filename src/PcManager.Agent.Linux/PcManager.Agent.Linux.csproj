@@ -52,6 +52,7 @@
     <Compile Include="..\PcManager.Agent\ServerInfoClient.cs" Link="Shared\ServerInfoClient.cs" />
     <Compile Include="..\PcManager.Agent\VideoTrimmer.cs" Link="Shared\VideoTrimmer.cs" />
     <Compile Include="..\PcManager.Agent\VideoImageSearch.cs" Link="Shared\VideoImageSearch.cs" />
+    <Compile Include="..\PcManager.Agent\VideoAnalyzer.cs" Link="Shared\VideoAnalyzer.cs" />
     <Compile Include="..\PcManager.Agent\SystemMonitor.cs" Link="Shared\SystemMonitor.cs" />
     <Compile Include="..\PcManager.Agent\ArchiveFormats.cs" Link="Shared\ArchiveFormats.cs" />
   </ItemGroup>

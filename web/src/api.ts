@@ -555,6 +555,47 @@ export interface ImageSearchProgress {
   more: boolean
 }
 
+/**
+ * 영상 분석 요청 (ReplayKit_FailAnalyzer 영상 분석과 같은 측정): 사각형은 영상 크기에 대한 비율 [x0, y0, x1, y1].
+ * roi가 없으면 에이전트가 화면 영역을 추정한다. bezel(베젤 외곽)은 roi를 줄 때만
+ */
+export interface VideoAnalysisRequest {
+  paths: string[]
+  roi?: number[] | null
+  bezel?: number[] | null
+}
+
+/**
+ * 영상 분석 결과 조각: video번째 영상의 offset번째 프레임부터. frames는 프레임마다 31바이트(base64, little-endian):
+ * float64 시각(초) · float32 밝기 · 프레임 차이 · 윤곽 · 윤곽이 가장 많은 칸 · 베젤 테두리 밝기 · R·G·B
+ */
+export interface VideoAnalysisChunk {
+  video: number
+  path: string
+  offset: number
+  frames: string
+  /** 이 조각 안에서 측정 구간이 끝난 자리 (프레임 수): 이 경계마다 판정한다 */
+  marks: number[]
+  /** 이 영상의 마지막 조각 */
+  done: boolean
+  error: string | null
+}
+
+export interface VideoAnalysisProgress {
+  state: 'running' | 'done' | 'failed' | 'canceled'
+  progress: number
+  current: string | null
+  error: string | null
+  /** 쓴 화면 영역 (추정 전이면 null) · 정한 방법 · 쓴 베젤 외곽 */
+  roi: number[] | null
+  roiSource: string | null
+  bezel: number[] | null
+  /** 요청한 위치부터 이어지는 결과 (한 번에 1MB까지) */
+  chunks: VideoAnalysisChunk[]
+  /** 더 받을 결과가 남았다 → 곧바로 다시 묻는다 */
+  more: boolean
+}
+
 /** PC 정보 패널: 시스템·디스크 탭 */
 export interface PcSystemInfo {
   platform: 'windows' | 'linux'
@@ -1056,6 +1097,14 @@ export const api = {
     request<ImageSearchProgress>(`/api/agents/${agentId}/video/image-search/${id}?${query({ video, offset })}`),
   cancelImageSearch: (agentId: string, id: string) =>
     request<void>(`/api/agents/${agentId}/video/image-search/${id}`, { method: 'DELETE' }),
+  /** 테스트 PC에서 영상들의 프레임별 밝기·윤곽·변화량 재기 시작 → 작업 id */
+  startVideoAnalysis: (agentId: string, body: VideoAnalysisRequest) =>
+    request<{ id: string }>(`/api/agents/${agentId}/video/analysis`, { method: 'POST', body: JSON.stringify(body) }),
+  /** 진행과 (video, offset 프레임)부터의 결과 조각 (1MB씩) */
+  videoAnalysisChunks: (agentId: string, id: string, video: number, offset: number) =>
+    request<VideoAnalysisProgress>(`/api/agents/${agentId}/video/analysis/${id}?${query({ video, offset })}`),
+  cancelVideoAnalysis: (agentId: string, id: string) =>
+    request<void>(`/api/agents/${agentId}/video/analysis/${id}`, { method: 'DELETE' }),
   /** '원격 사용 중' 표시가 남았을 때 지우기 */
   clearRemoteUsage: (agentId: string) => request<void>(`/api/remote-usage/${agentId}`, { method: 'DELETE' }),
   /** Linux PC: Wayland를 끄고(Xorg) 재부팅 */
