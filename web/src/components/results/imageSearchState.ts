@@ -4,8 +4,8 @@ import type { ResultRow } from './resultCsv'
 import { toMessage } from './resultSessions'
 
 // 결과 확인: 크롭한 이미지가 영상에 나타나는 구간 찾기
-//   1) 영상 위에서 찾을 이미지를 드래그 (지금 프레임에서 회색조로 떼어 냄)
-//   2) 검색 영역: 크롭 위치 그대로 · 직접 지정 · 화면 전체
+//   1) 지금 프레임을 크롭 창에 띄워 찾을 이미지를 고른다 (확대해 픽셀 단위로, 회색조로 떼어 냄)
+//   2) 검색 영역: 크롭 위치 그대로 · 직접 지정(크롭 창) · 화면 전체
 //   3) 테스트 PC 에이전트가 이 실행의 모든 영상을 프레임마다 재 유사도 시계열을 돌려준다
 //   4) 유사도 기준 이상이 이어지는 구간마다 첫 프레임만 표시 (기준을 바꾸면 다시 찾지 않고 바로 다시 나눔)
 
@@ -53,6 +53,35 @@ export interface SearchVideo {
   duration: number | null
 }
 
+/** 크롭 창에 띄운 프레임 (영상 원래 크기로 떠 둔 것) */
+export interface FrameShot {
+  canvas: HTMLCanvasElement
+  width: number
+  height: number
+  /** 원래 영상 경로 · 위치(초) */
+  path: string
+  time: number
+}
+
+/** 크롭 창: 찾을 이미지 또는 검색 영역을 그 프레임에서 고르는 중 */
+export interface CropTarget {
+  kind: 'template' | 'area'
+  frame: FrameShot
+}
+
+/** 지금 영상 프레임을 원래 크기로 떠 둔다 (영상은 멈춤). 아직 보이는 프레임이 없으면 null */
+export function grabFrame(video: HTMLVideoElement | null, path: string | null): FrameShot | null {
+  if (!video || !path || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null
+  video.pause()
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
+  const context = canvas.getContext('2d')
+  if (!context) return null
+  context.drawImage(video, 0, 0)
+  return { canvas, width: canvas.width, height: canvas.height, path, time: video.currentTime }
+}
+
 export interface Template {
   rect: Rect
   frameWidth: number
@@ -96,14 +125,14 @@ export interface Segment {
 }
 
 /**
- * 오버레이(영상 위 드래그)·패널이 함께 쓰는 상태와 찾기 작업.
+ * 오버레이(영상 위 크롭·영역 표시)·패널·크롭 창이 함께 쓰는 상태와 찾기 작업.
  * 패널을 닫아도(스텝 이미지를 보려고) 크롭·결과·진행 중인 찾기는 그대로 두고, 다시 열면 이어서 본다
  */
 export function useImageSearch(agentId: string, videos: SearchVideo[]) {
   const [open, setOpen] = useState(false)
   const [template, setTemplate] = useState<Template | null>(null)
-  // 드래그해서 정하는 중인 것
-  const [drawing, setDrawing] = useState<'template' | 'area' | null>(null)
+  // 열린 크롭 창
+  const [crop, setCrop] = useState<CropTarget | null>(null)
   const [areaMode, setAreaMode] = useState<AreaMode>('same')
   const [customArea, setCustomArea] = useState<Rect | null>(null)
   const [threshold, setThreshold] = useState(90)
@@ -135,13 +164,14 @@ export function useImageSearch(agentId: string, videos: SearchVideo[]) {
     if (id) void api.cancelImageSearch(agentId, id).catch(() => {})
   }, [agentId])
 
-  const start = () => {
+  /** 패널 열기: 크롭한 이미지가 아직 없으면 지금 프레임(frame)으로 크롭 창도 연다 */
+  const start = (frame: FrameShot | null) => {
     setOpen(true)
-    if (!template) setDrawing('template')
+    if (!template && frame) setCrop({ kind: 'template', frame })
   }
   const close = () => {
     setOpen(false)
-    setDrawing(null)
+    setCrop(null)
   }
 
   /** windows: 이 구간만 훑는다 (고른 스텝 앞뒤). 없으면 영상 전체 */
@@ -242,7 +272,7 @@ export function useImageSearch(agentId: string, videos: SearchVideo[]) {
   }, [found, threshold, gap, searched])
 
   return {
-    open, start, close, template, setTemplate, drawing, setDrawing, areaMode, setAreaMode, customArea, setCustomArea,
+    open, start, close, template, setTemplate, crop, setCrop, areaMode, setAreaMode, customArea, setCustomArea,
     threshold, setThreshold, gap, setGap, found, status, error, running, retrying, run, stop, segments,
     scope, setScope, stepColumn, setStepColumn, stepValues, setStepValues, before, setBefore, after, setAfter, searched,
     picked, setPicked, exportColumns, setExportColumns,

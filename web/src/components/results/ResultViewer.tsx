@@ -22,7 +22,7 @@ import { type ColFilters, ColumnFilterMenu, type ColSort } from './ColumnFilter'
 import { copyTable } from './tableExport'
 import { VideoTransport } from './VideoTransport'
 import { CropOverlay, ImageSearchPanel } from './ImageSearch'
-import { type SearchVideo, type StepSource, useImageSearch } from './imageSearchState'
+import { grabFrame, type SearchVideo, type StepSource, useImageSearch } from './imageSearchState'
 
 type PutSlot = 'result' | 'video' | 'image' | 'ref'
 type Dialog = null | 'save' | 'trim'
@@ -705,7 +705,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             durationHint={currentRaw?.duration ?? null}
             fps={currentRaw?.fps ?? null}
             videoRef={videoRef}
-            keysEnabled={dialog === null || trimMode}
+            keysEnabled={(dialog === null || trimMode) && !search.crop}
             error={videoError}
             clip={clipNow}
             onTime={onTime}
@@ -727,7 +727,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
                     {videos.map((v) => <option key={v.path} value={v.path}>{`${v.name}${PREP_TAG[rawVideos.find((r) => r.path === v.path)?.prep ?? 'ready'] ?? ''}`}</option>)}
                   </select>
                 )}
-                <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!currentRaw?.playPath || trimMode} className={search.open ? 'active' : ''} onClick={() => (search.open ? search.close() : search.start())} title="크롭한 이미지가 이 실행의 영상에 나타나는 구간 찾기 (테스트 PC에서 ffmpeg)">🔍 이미지 찾기</button>
+                <button type="button" onMouseDown={(e) => e.preventDefault()} disabled={!currentRaw?.playPath || trimMode} className={search.open ? 'active' : ''} onClick={() => (search.open ? search.close() : search.start(grabFrame(videoRef.current, current)))} title="크롭한 이미지가 이 실행의 영상에 나타나는 구간 찾기 (테스트 PC에서 ffmpeg)">🔍 이미지 찾기</button>
                 <button
                   type="button"
                   onMouseDown={(e) => e.preventDefault()}
@@ -769,6 +769,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               videos={searchVideos}
               steps={stepSource}
               currentPath={current}
+              grab={() => grabFrame(videoRef.current, current)}
               escape={dialog === null}
               nowSeconds={videoNow}
               wallOf={wallOf}
