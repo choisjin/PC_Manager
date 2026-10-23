@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 using PcManager.Shared;
 
 namespace PcManager.Agent;
@@ -30,7 +31,11 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
     private const int SampleWidth = 128, SampleHeight = 72;
     private const int GridX = 8, GridY = 6;
     private const int EdgeThreshold = 14;
-    private static readonly double[] Full = [0, 0, 1, 1];
+    // 사다리꼴 영역은 펴기 전에 이 폭으로 줄인다 (어차피 320 폭으로 잰다)
+    private const int WarpWidth = 640;
+    // 편 화면은 가장자리를 이만큼(양쪽 3%) 안으로 잘라 잰다: 꼭짓점이 조금만 어긋나도 남는 배경 띠의 경계가 윤곽으로 잡혀
+    // 꺼진 화면을 켜진 것으로 보지 않게
+    private const double WarpInset = 0.03;
     // 끝난 작업을 남겨 두는 시간 · 웹이 이만큼 진행을 묻지 않으면 버려진 것으로 보고 멈춘다
     private static readonly TimeSpan Keep = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan Abandoned = TimeSpan.FromMinutes(2);
@@ -167,10 +172,10 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         var workers = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
 
         // 화면 영역: 지정한 것 → 없으면 추정. 베젤은 화면을 직접 지정했을 때만
-        double[] roi;
+        Region roi;
         string source;
-        if (Box(r.Roi) is { } given)
-            (roi, source) = (given, given.SequenceEqual(Full) ? "화면 전체" : "직접 지정");
+        if (Region.Parse(r.Roi) is { } given)
+            (roi, source) = (given, given.IsBox && given.Bounds == (0d, 0d, 1d, 1d) ? "화면 전체" : "직접 지정");
         else
         {
             lock (job)
@@ -179,15 +184,15 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 .Where(x => x.Ok).Take(SampleVideos).Select(x => (x.Path, x.Duration)).ToList();
             (roi, source) = await DetectScreenAsync(ffmpeg, videos, workers, token);
         }
-        var bezel = Box(r.Roi) is not null ? FitBezel(roi, Box(r.Bezel)) : null;
+        var bezel = Region.Parse(r.Roi) is not null ? FitBezel(roi, Region.Parse(r.Bezel)) : null;
         lock (job)
         {
-            job.Roi = roi;
+            job.Roi = roi.ToArray();
             job.RoiSource = source;
-            job.Bezel = bezel;
+            job.Bezel = bezel?.ToArray();
         }
         logger.LogInformation("영상 분석: 영상 {Count}개, 화면 영역 {Roi} ({Source}), 베젤 {Bezel}, ffmpeg {Workers}개",
-            r.Paths.Count, string.Join(",", roi), source, bezel is null ? "없음" : string.Join(",", bezel), workers);
+            r.Paths.Count, roi, source, bezel?.ToString() ?? "없음", workers);
 
         var total = Math.Max(1, probes.Sum(p => p?.Duration ?? 0));
         double before = 0;
@@ -213,7 +218,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             var start = before;
             try
             {
-                await MeasureVideoAsync(ffmpeg, path, probe.Duration, roi, bezel, workers, job, result, seconds =>
+                await MeasureVideoAsync(ffmpeg, path, probe.Duration, probe.Width, roi, bezel, workers, job, result, seconds =>
                 {
                     lock (job)
                         job.Progress = Math.Min(1, (start + seconds) / total);
@@ -234,7 +239,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
     }
 
     /// <summary>영상 하나: 구간마다 ffmpeg를 돌리되 모든 작업자가 앞 구간부터 가져가고, 결과는 앞에서부터 차례로 붙인다</summary>
-    private async Task MeasureVideoAsync(string ffmpeg, string path, double? duration, double[] roi, double[]? bezel, int workers,
+    private async Task MeasureVideoAsync(string ffmpeg, string path, double? duration, int width, Region roi, Region? bezel, int workers,
         Job job, VideoResult result, Action<double> progress)
     {
         var bounds = Chunks(duration ?? 0);
@@ -247,7 +252,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             {
                 try
                 {
-                    outputs[i].TrySetResult(await MeasureAsync(ffmpeg, path, roi, bezel, bounds[i].Start, bounds[i].Length, stop.Token));
+                    outputs[i].TrySetResult(await MeasureAsync(ffmpeg, path, roi, bezel, width, bounds[i].Start, bounds[i].Length, stop.Token));
                 }
                 catch (Exception ex)
                 {
@@ -319,9 +324,9 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
 
     /// <summary>
     /// [start, start+length) 구간 프레임들의 측정값. 밝기·차이·평균 색은 stdout, 윤곽·칸 윤곽·베젤 외곽은 작업 폴더의 파일로 받는다
-    /// (윈도우 경로의 ':'를 필터 문법에서 피하려고 작업 폴더 안의 상대 경로)
+    /// (윈도우 경로의 ':'를 필터 문법에서 피하려고 작업 폴더 안의 상대 경로). width: 영상 폭 (사다리꼴을 펴기 전에 줄일지)
     /// </summary>
-    private static async Task<List<Row>> MeasureAsync(string ffmpeg, string path, double[] roi, double[]? bezel, double start, double? length,
+    private static async Task<List<Row>> MeasureAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, double start, double? length,
         CancellationToken token)
     {
         var folder = Directory.CreateTempSubdirectory("pcm_va_");
@@ -334,14 +339,25 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 args.AddRange(["-ss", Seconds(seek)]);
             if (length is { } span)
                 args.AddRange(["-t", Seconds(span + (start - seek))]);
-            var main = $"{Crop(roi)},scale=320:-2,signalstats,metadata=print:file=-,"
+            var main = $"{roi.Filter(width, inset: true)},scale=320:-2,signalstats,metadata=print:file=-,"
                 + "edgedetect=low=0.08:high=0.2,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=edge.txt,"
                 + "scale=8:4:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YMAX:file=grid.txt";
             args.AddRange(["-copyts", "-i", path]);
-            if (bezel is not null)
-                args.AddRange(["-filter_complex", $"[0:v]split=2[a][b];[a]{main}[out];"
-                    + $"[b]{Crop(bezel)},scale=160:-2,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=outer.txt,nullsink",
-                    "-map", "[out]"]);
+            // 베젤 테두리 띠: 직사각형끼리면 외곽 전체를 재서 화면을 빼고 (ReplayKit_FailAnalyzer와 같게),
+            // 꼭짓점이면 변마다 사다리꼴 띠 넷을 각각 펴서 재고 넓이로 평균한다 (얇은 띠에서 빼기의 오차가 커지지 않게)
+            var boxRing = bezel is not null && roi.IsBox && bezel.IsBox;
+            List<Region> strips = bezel is null ? [] : boxRing ? [bezel] : Region.Ring(bezel, roi);
+            if (strips.Count > 0)
+            {
+                var graph = new StringBuilder($"[0:v]split={strips.Count + 1}[a]");
+                for (var k = 0; k < strips.Count; k++)
+                    graph.Append($"[r{k}]");
+                graph.Append($";[a]{main}[out]");
+                for (var k = 0; k < strips.Count; k++)
+                    graph.Append($";[r{k}]{strips[k].Filter(width)},scale={(boxRing ? "160:-2" : "64:16")},signalstats,"
+                        + $"metadata=print:key=lavfi.signalstats.YAVG:file=ring{k}.txt,nullsink");
+                args.AddRange(["-filter_complex", graph.ToString(), "-map", "[out]"]);
+            }
             else
                 args.AddRange(["-vf", main]);
             args.AddRange(["-fps_mode", "passthrough", "-an", "-sn", "-dn", "-f", "null", "-"]);
@@ -376,22 +392,31 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             }
             var edge = ReadKey(Path.Combine(folder.FullName, "edge.txt"), "YAVG", start, end);
             var grid = ReadKey(Path.Combine(folder.FullName, "grid.txt"), "YMAX", start, end);
-            var outer = bezel is not null ? ReadKey(Path.Combine(folder.FullName, "outer.txt"), "YAVG", start, end) : null;
+            var rings = strips.Select((_, k) => ReadKey(Path.Combine(folder.FullName, $"ring{k}.txt"), "YAVG", start, end)).ToList();
 
-            // 테두리 띠 = 외곽 전체 − 화면 (면적 가중)
-            var outerArea = bezel is not null ? Area(bezel) : 0;
-            var innerArea = Area(roi);
+            // 테두리 띠 밝기: 직사각형끼리는 (외곽 × 외곽 넓이 − 화면 × 화면 넓이) / 넓이 차, 꼭짓점이면 띠 넷의 넓이 가중 평균
+            // (편 영상의 평균은 넓이 가중에 가깝다 — 가까운 쪽이 조금 더 무겁다)
+            var areas = strips.Select(x => x.Area).ToArray();
             var rows = new List<Row>(luma.Count);
             foreach (var (key, v) in luma.OrderBy(x => x.Key))
             {
                 if (!edge.TryGetValue(key, out var e))
                     continue;
                 double b = 0;
-                if (outer is not null)
+                if (strips.Count > 0)
                 {
-                    if (!outer.TryGetValue(key, out var o))
+                    double sum = 0, weight = 0;
+                    var missing = false;
+                    for (var k = 0; k < rings.Count && !missing; k++)
+                    {
+                        if (rings[k].TryGetValue(key, out var o))
+                            (sum, weight) = (sum + o * areas[k], weight + areas[k]);
+                        else
+                            missing = true;
+                    }
+                    if (missing)
                         continue;
-                    b = Math.Clamp((o * outerArea - v[0] * innerArea) / (outerArea - innerArea), 0, 255);
+                    b = Math.Clamp(boxRing ? (sum - v[0] * roi.Area) / (bezel!.Area - roi.Area) : sum / weight, 0, 255);
                 }
                 var (red, green, blue) = Rgb(v[0], v[2], v[3]);
                 rows.Add(new Row(key / 1e6, v[0], v[1], e, grid.TryGetValue(key, out var g) ? g : e, b, red, green, blue));
@@ -509,36 +534,170 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         return (F(c + 1.596 * e), F(c - 0.392 * d - 0.813 * e), F(c + 2.017 * d));
     }
 
-    private static string Crop(double[] box) => string.Create(CultureInfo.InvariantCulture,
-        $"crop=iw*{box[2] - box[0]:0.0000}:ih*{box[3] - box[1]:0.0000}:iw*{box[0]:0.0000}:ih*{box[1]:0.0000}");
-
-    private static double Area(double[] box) => Math.Max(0, box[2] - box[0]) * Math.Max(0, box[3] - box[1]);
-
     private static string Seconds(double value) => value.ToString("0.000", CultureInfo.InvariantCulture);
 
-    /// <summary>[x0, y0, x1, y1] 비율 사각형 (0~1 안, 너무 작으면 null)</summary>
-    private static double[]? Box(double[]? box)
-    {
-        if (box is not { Length: 4 } || box.Any(v => !double.IsFinite(v)))
-            return null;
-        var b = box.Select(v => Math.Round(Math.Clamp(v, 0, 1), 4)).ToArray();
-        return b[2] - b[0] >= 0.01 && b[3] - b[1] >= 0.01 ? b : null;
-    }
-
-    /// <summary>베젤 외곽은 화면을 감싸야 한다 (합집합으로 넓힘). 테두리 띠가 너무 얇으면(화면 면적의 3% 미만) 쓰지 않는다</summary>
-    private static double[]? FitBezel(double[] roi, double[]? bezel)
+    /// <summary>
+    /// 베젤 외곽은 화면을 감싸야 한다: 직사각형끼리면 ReplayKit_FailAnalyzer처럼 합쳐 넓히고, 꼭짓점으로 지정한 사각형이 화면을 감싸지 않으면 쓰지 않는다.
+    /// 테두리 띠가 너무 얇으면(화면 면적의 3% 미만) 쓰지 않는다
+    /// </summary>
+    private static Region? FitBezel(Region roi, Region? bezel)
     {
         if (bezel is null)
             return null;
-        double[] b = [Math.Min(bezel[0], roi[0]), Math.Min(bezel[1], roi[1]), Math.Max(bezel[2], roi[2]), Math.Max(bezel[3], roi[3])];
-        return Area(b) - Area(roi) > 0.03 * Math.Max(Area(roi), 1e-6) ? b : null;
+        Region fitted;
+        if (roi.IsBox && bezel.IsBox)
+        {
+            var (a0, b0, a1, b1) = roi.Bounds;
+            var (c0, d0, c1, d1) = bezel.Bounds;
+            fitted = bezel.WithBox(Math.Min(a0, c0), Math.Min(b0, d0), Math.Max(a1, c1), Math.Max(b1, d1));
+        }
+        else if (bezel.Contains(roi))
+            fitted = bezel;
+        else
+            return null;
+        return fitted.Area - roi.Area > 0.03 * Math.Max(roi.Area, 1e-6) ? fitted : null;
+    }
+
+    /// <summary>
+    /// 화면·베젤 영역: 영상 크기에 대한 비율 좌표의 네 꼭짓점 (왼쪽 위 · 오른쪽 위 · 오른쪽 아래 · 왼쪽 아래).
+    /// 직사각형이면 crop만, 비스듬히 찍혀 사다리꼴이면 둘레 직사각형을 잘라 perspective로 반듯하게 편다 (화면 밖 배경이 섞이지 않게)
+    /// </summary>
+    private sealed class Region
+    {
+        public static readonly Region Full = Box(0, 0, 1, 1);
+        public readonly double[] X;
+        public readonly double[] Y;
+        // 꼭짓점 넷(값 8개)으로 받았다 → 돌려줄 때도 그대로 (웹이 꼭짓점을 모르는 옛 에이전트를 알아본다)
+        private readonly bool _corners;
+
+        private Region(double[] x, double[] y, bool corners)
+        {
+            X = x;
+            Y = y;
+            _corners = corners;
+        }
+
+        public static Region Box(double x0, double y0, double x1, double y1, bool corners = false) =>
+            new([x0, x1, x1, x0], [y0, y0, y1, y1], corners);
+
+        public Region WithBox(double x0, double y0, double x1, double y1) => Box(x0, y0, x1, y1, _corners);
+
+        /// <summary>[x0, y0, x1, y1] 직사각형 또는 [x, y]×4 꼭짓점. 0~1 밖은 안으로, 너무 작거나 꼬인(볼록하지 않은) 사각형이면 null</summary>
+        public static Region? Parse(double[]? values)
+        {
+            if (values is not { Length: 4 or 8 } || values.Any(v => !double.IsFinite(v)))
+                return null;
+            var c = values.Select(v => Math.Round(Math.Clamp(v, 0, 1), 4)).ToArray();
+            var region = c.Length == 4
+                ? Box(Math.Min(c[0], c[2]), Math.Min(c[1], c[3]), Math.Max(c[0], c[2]), Math.Max(c[1], c[3]))
+                : new Region([c[0], c[2], c[4], c[6]], [c[1], c[3], c[5], c[7]], true);
+            var (x0, y0, x1, y1) = region.Bounds;
+            return x1 - x0 >= 0.01 && y1 - y0 >= 0.01 && region.Convex() ? region : null;
+        }
+
+        public bool IsBox => Math.Abs(X[0] - X[3]) < 1e-4 && Math.Abs(X[1] - X[2]) < 1e-4
+            && Math.Abs(Y[0] - Y[1]) < 1e-4 && Math.Abs(Y[2] - Y[3]) < 1e-4;
+
+        public (double X0, double Y0, double X1, double Y1) Bounds => (X.Min(), Y.Min(), X.Max(), Y.Max());
+
+        /// <summary>넓이 (신발끈 공식)</summary>
+        public double Area
+        {
+            get
+            {
+                double sum = 0;
+                for (var i = 0; i < 4; i++)
+                    sum += X[i] * Y[(i + 1) % 4] - X[(i + 1) % 4] * Y[i];
+                return Math.Abs(sum) / 2;
+            }
+        }
+
+        /// <summary>모퉁이마다 꺾는 방향이 같다 (볼록, 꼭짓점 차례가 꼬이지 않음)</summary>
+        private bool Convex()
+        {
+            var sign = 0;
+            for (var i = 0; i < 4; i++)
+            {
+                int j = (i + 1) % 4, k = (i + 2) % 4;
+                var cross = (X[j] - X[i]) * (Y[k] - Y[j]) - (Y[j] - Y[i]) * (X[k] - X[j]);
+                if (Math.Abs(cross) < 1e-9)
+                    return false;
+                if (sign == 0)
+                    sign = Math.Sign(cross);
+                else if (Math.Sign(cross) != sign)
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>점이 안(경계 포함)에 있다</summary>
+        private bool Inside(double x, double y)
+        {
+            var sign = 0;
+            for (var i = 0; i < 4; i++)
+            {
+                var j = (i + 1) % 4;
+                var cross = (X[j] - X[i]) * (y - Y[i]) - (Y[j] - Y[i]) * (x - X[i]);
+                if (Math.Abs(cross) < 1e-7)
+                    continue;
+                if (sign == 0)
+                    sign = Math.Sign(cross);
+                else if (Math.Sign(cross) != sign)
+                    return false;
+            }
+            return true;
+        }
+
+        public bool Contains(Region inner) => Enumerable.Range(0, 4).All(i => Inside(inner.X[i], inner.Y[i]));
+
+        /// <summary>
+        /// 바깥(베젤 외곽)과 안(화면) 사이 테두리 띠: 변마다 사다리꼴 [바깥 i, 바깥 i+1, 안 i+1, 안 i] (같은 차례의 꼭짓점끼리).
+        /// 넓이가 거의 없거나 꼬인 띠는 뺀다
+        /// </summary>
+        public static List<Region> Ring(Region outer, Region inner)
+        {
+            var strips = new List<Region>();
+            for (var i = 0; i < 4; i++)
+            {
+                var j = (i + 1) % 4;
+                var strip = new Region([outer.X[i], outer.X[j], inner.X[j], inner.X[i]], [outer.Y[i], outer.Y[j], inner.Y[j], inner.Y[i]], true);
+                if (strip.Area > 1e-5 && strip.Convex())
+                    strips.Add(strip);
+            }
+            return strips;
+        }
+
+        public double[] ToArray() => _corners || !IsBox
+            ? [X[0], Y[0], X[1], Y[1], X[2], Y[2], X[3], Y[3]]
+            : [X[0], Y[0], X[2], Y[2]];
+
+        /// <summary>
+        /// 이 영역만 남기는 ffmpeg 필터: 둘레 직사각형을 자르고, 사다리꼴이면 perspective로 펴서 그 크기에 채운다
+        /// (넓은 영상은 펴기 전에 WarpWidth로 줄인다). videoWidth: 영상 폭 (모르면 0).
+        /// inset: 편 뒤 가장자리를 WarpInset만큼 안으로 자른다 (화면을 잴 때, 직사각형은 ReplayKit_FailAnalyzer와 같게 그대로)
+        /// </summary>
+        public string Filter(int videoWidth, bool inset = false)
+        {
+            var (x0, y0, x1, y1) = Bounds;
+            var crop = string.Create(CultureInfo.InvariantCulture, $"crop=iw*{x1 - x0:0.0000}:ih*{y1 - y0:0.0000}:iw*{x0:0.0000}:ih*{y0:0.0000}");
+            if (IsBox)
+                return crop;
+            var shrink = (x1 - x0) * videoWidth > WarpWidth ? $",scale={WarpWidth}:-2" : "";
+            string U(int i) => ((X[i] - x0) / (x1 - x0)).ToString("0.0000", CultureInfo.InvariantCulture);
+            string V(int i) => ((Y[i] - y0) / (y1 - y0)).ToString("0.0000", CultureInfo.InvariantCulture);
+            // perspective 꼭짓점 차례는 왼쪽 위 · 오른쪽 위 · 왼쪽 아래 · 오른쪽 아래, sense=source: 이 점들을 출력의 네 모서리로
+            var trim = inset ? string.Create(CultureInfo.InvariantCulture, $",crop=iw*{1 - 2 * WarpInset:0.00}:ih*{1 - 2 * WarpInset:0.00}:iw*{WarpInset:0.00}:ih*{WarpInset:0.00}") : "";
+            return $"{crop}{shrink},perspective=x0={U(0)}*W:y0={V(0)}*H:x1={U(1)}*W:y1={V(1)}*H:x2={U(3)}*W:y2={V(3)}*H:x3={U(2)}*W:y3={V(2)}*H:sense=source{trim}";
+        }
+
+        public override string ToString() => string.Join(",", ToArray().Select(v => v.ToString(CultureInfo.InvariantCulture)));
     }
 
     /// <summary>
     /// 화면 영역 추정: 영상마다 고르게 몇 장 뽑아 칸(8×6)별 윤곽 양의 변화폭이 큰 칸들을 감싸는 사각형.
     /// 배경(케이블·벽)은 화면이 바뀌어도 윤곽 양이 거의 그대로다. 못 찾으면 화면 전체
     /// </summary>
-    private static async Task<(double[] Roi, string Source)> DetectScreenAsync(string ffmpeg, IReadOnlyList<(string Path, double? Duration)> videos,
+    private static async Task<(Region Roi, string Source)> DetectScreenAsync(string ffmpeg, IReadOnlyList<(string Path, double? Duration)> videos,
         int workers, CancellationToken token)
     {
         var points = videos.SelectMany(v => Enumerable.Range(0, Samples)
@@ -550,7 +709,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 frames.Add(frame);
         });
         if (frames.Count < 4)
-            return (Full, "화면 전체 (표본 프레임 부족)");
+            return (Region.Full, "화면 전체 (표본 프레임 부족)");
         var lo = new double[GridX * GridY];
         var hi = new double[GridX * GridY];
         Array.Fill(lo, double.MaxValue);
@@ -567,12 +726,12 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         var top = range.Max();
         var dynamic = Enumerable.Range(0, range.Length).Where(i => range[i] >= Math.Max(15, 0.3 * top)).ToList();
         if (dynamic.Count < 4)
-            return (Full, "화면 전체 (화면 영역을 찾지 못함)");
+            return (Region.Full, "화면 전체 (화면 영역을 찾지 못함)");
         double x0 = dynamic.Min(i => i % GridX) / (double)GridX, x1 = (dynamic.Max(i => i % GridX) + 1) / (double)GridX;
         double y0 = dynamic.Min(i => i / GridX) / (double)GridY, y1 = (dynamic.Max(i => i / GridX) + 1) / (double)GridY;
         if ((x1 - x0) * (y1 - y0) < 0.15)
-            return (Full, "화면 전체 (추정 영역이 너무 작음)");
-        return ([Math.Round(x0, 4), Math.Round(y0, 4), Math.Round(x1, 4), Math.Round(y1, 4)], $"자동 추정 (표본 {frames.Count}장의 칸별 윤곽 변화)");
+            return (Region.Full, "화면 전체 (추정 영역이 너무 작음)");
+        return (Region.Box(Math.Round(x0, 4), Math.Round(y0, 4), Math.Round(x1, 4), Math.Round(y1, 4)), $"자동 추정 (표본 {frames.Count}장의 칸별 윤곽 변화)");
     }
 
     /// <summary>at초의 프레임 한 장 (SampleWidth×SampleHeight 회색조). 못 읽으면 null</summary>

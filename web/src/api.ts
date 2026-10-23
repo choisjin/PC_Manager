@@ -556,8 +556,9 @@ export interface ImageSearchProgress {
 }
 
 /**
- * 영상 분석 요청 (ReplayKit_FailAnalyzer 영상 분석과 같은 측정): 사각형은 영상 크기에 대한 비율 [x0, y0, x1, y1].
- * roi가 없으면 에이전트가 화면 영역을 추정한다. bezel(베젤 외곽)은 roi를 줄 때만
+ * 영상 분석 요청 (ReplayKit_FailAnalyzer 영상 분석과 같은 측정): 영역은 영상 크기에 대한 비율 — 직사각형 [x0, y0, x1, y1]
+ * 또는 꼭짓점 넷 [x, y]×4 (왼쪽 위부터 시계 방향, 비스듬히 찍힌 화면을 에이전트가 펴서 잰다).
+ * roi가 없으면 에이전트가 화면 영역을 추정한다. bezel(베젤 외곽)은 roi를 줄 때만 (화면을 감싸야 함)
  */
 export interface VideoAnalysisRequest {
   paths: string[]

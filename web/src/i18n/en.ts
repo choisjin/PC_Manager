@@ -1452,6 +1452,18 @@ const EXACT: Record<string, string> = {
   "이 PC의 에이전트가 영상 분석을 모릅니다. 에이전트를 업데이트하세요 (업데이트 → 에이전트 업데이트)": "This PC's agent doesn't support video analysis. Update the agent (Update → Agent update)",
   "분석 작업이 없습니다 (에이전트가 다시 시작됨)": "Analysis job not found (the agent restarted)",
   "영상이 필요합니다.": "Videos are required.",
+  "왼쪽 위": "Top left",
+  "오른쪽 위": "Top right",
+  "오른쪽 아래": "Bottom right",
+  "왼쪽 아래": "Bottom left",
+  "반듯하게 편 모습 (이렇게 펴서 잽니다)": "Straightened view (measured like this)",
+  "꼭짓점 차례가 꼬였습니다. 볼록한 사각형이 되게 옮기세요": "The corners are crossed. Move them so the shape stays convex",
+  "베젤 외곽이 화면(빨강)을 감싸야 합니다": "The bezel outline must enclose the screen (red)",
+  "드래그: 새로 고르기 (직사각형)": "Drag: new selection (rectangle)",
+  "꼭짓점 끌기: 비스듬한 화면에 맞추기 · 안쪽 끌기: 옮기기": "Drag a corner: fit an angled screen · Drag inside: move",
+  "1~4 또는 꼭짓점 누르기 + 방향키: 그 꼭짓점 1픽셀 (Shift 10), 안 고르면 전체": "1–4 or click a corner + arrow keys: move that corner 1 px (Shift 10), or the whole shape if none",
+  "베젤이 새 화면 영역을 감싸지 않아 지웠습니다. 베젤을 다시 지정하세요": "The bezel no longer enclosed the new screen area and was cleared. Set the bezel again",
+  "이 PC의 에이전트는 꼭짓점으로 지정한 영역을 몰라 화면 영역을 추정해 잽니다. 에이전트를 업데이트하세요": "This PC's agent doesn't support corner-based areas, so it estimates the screen area. Update the agent",
 }
 
 const TEMPLATES: [string, string][] = [
@@ -1820,6 +1832,7 @@ const TEMPLATES: [string, string][] = [
   ["{0}초 안에 원래 밝기로 복귀", "back to normal within {0}s"],
   ["{0}초 동안 화면 변화 없음 (프리징 또는 정상 대기)", "No screen change for {0}s (freeze or normal wait)"],
   ["자동 추정 (표본 {0}장의 칸별 윤곽 변화)", "Auto (edge changes per cell over {0} sample frames)"],
+  ["꼭짓점 {0}", "corners {0}"],
 ]
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

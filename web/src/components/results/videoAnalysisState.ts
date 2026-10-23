@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type VideoAnalysisChunk, type VideoAnalysisProgress } from '../../api'
-import type { Box } from './frameUtil'
+import type { Quad } from './frameUtil'
 import type { FrameShot, SearchVideo } from './imageSearchState'
 import { toMessage } from './resultSessions'
 import { Detector, type DetectResult, type FrameArrays, type SegmentKind } from './videoDetect'
@@ -42,11 +42,11 @@ export interface VideoFrames {
   error: string | null
 }
 
-/** 쓴 분석 조건 (에이전트가 정한 화면 영역 포함) */
+/** 쓴 분석 조건 (에이전트가 정한 화면 영역 포함): 영역은 직사각형 [x0, y0, x1, y1] 또는 꼭짓점 넷 (비율) */
 export interface AnalysisSetup {
-  roi: Box | null
+  roi: number[] | null
   roiSource: string | null
-  bezel: Box | null
+  bezel: number[] | null
 }
 
 // 에이전트가 잠깐 다시 연결하는 동안 묻기 실패를 견디는 횟수 (1초 간격 → 약 30초)
@@ -128,8 +128,9 @@ function arraysOf(f: VideoFrames, n: number, bezel: boolean): FrameArrays {
 export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
   const [open, setOpen] = useState(false)
   const [roiMode, setRoiMode] = useState<RoiMode>('auto')
-  const [customRoi, setCustomRoi] = useState<Box | null>(null)
-  const [bezel, setBezel] = useState<Box | null>(null)
+  // 직접 지정한 화면·베젤: 꼭짓점 넷 (비스듬히 찍힌 화면도 그대로, 에이전트가 반듯하게 펴서 잰다)
+  const [customRoi, setCustomRoi] = useState<Quad | null>(null)
+  const [bezel, setBezel] = useState<Quad | null>(null)
   // 정지 구간 기준 (초): 바꾸면 받은 프레임으로 바로 다시 판정
   const [staticS, setStaticS] = useState(10)
   // 영상 위에 화면 영역(빨강)·베젤(노랑) 표시
@@ -141,6 +142,8 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
   const [setup, setSetup] = useState<AnalysisSetup | null>(null)
   const [status, setStatus] = useState<{ state: VideoAnalysisProgress['state']; progress: number; current: string | null } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // 분석은 되지만 알아야 할 것 (꼭짓점 영역을 모르는 옛 에이전트 등)
+  const [warning, setWarning] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   // 묻기가 실패해 다시 묻는 중 (에이전트 연결이 잠깐 끊김)
   const [retrying, setRetrying] = useState(false)
@@ -202,6 +205,7 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
     setResults([])
     setSetup(null)
     setError(null)
+    setWarning(null)
     setStatus(null)
     setRetrying(false)
     setElapsed(null)
@@ -239,7 +243,11 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
         setRetrying(false)
         if (next.roi) {
           bezelRef.current = !!next.bezel
-          setSetup({ roi: next.roi as Box, roiSource: next.roiSource, bezel: (next.bezel as Box | null) ?? null })
+          setSetup({ roi: next.roi, roiSource: next.roiSource, bezel: next.bezel ?? null })
+          // 꼭짓점 넷을 보냈는데 직사각형이 왔다 = 꼭짓점을 모르는 옛 에이전트 (화면 영역을 추정해 잰다)
+          if (roiMode === 'custom' && customRoi && next.roi.length !== 8) {
+            setWarning('이 PC의 에이전트는 꼭짓점으로 지정한 영역을 몰라 화면 영역을 추정해 잽니다. 에이전트를 업데이트하세요')
+          }
         }
         const touched = new Set<number>()
         for (const chunk of next.chunks) {
@@ -294,7 +302,7 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
 
   return {
     open, setOpen, close, roiMode, setRoiMode, customRoi, setCustomRoi, bezel, setBezel, staticS, changeStatic, showRoi, setShowRoi,
-    picking, setPicking, frames, results, setup, status, error, running, retrying, elapsed, run, stop, picked, setPicked,
+    picking, setPicking, frames, results, setup, status, error, warning, running, retrying, elapsed, run, stop, picked, setPicked,
   }
 }
 

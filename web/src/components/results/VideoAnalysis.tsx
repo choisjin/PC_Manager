@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { formatDuration } from '../../format'
-import { type Box, boxToRect, formatFrameTime, rectToBox, useVideoView } from './frameUtil'
-import type { FrameShot, Rect, SearchVideo, StepSource } from './imageSearchState'
-import { RectPickerDialog } from './RectPicker'
+import { cornersOf, formatFrameTime, type Point, type Quad, quadContains, useVideoView } from './frameUtil'
+import type { FrameShot, SearchVideo, StepSource } from './imageSearchState'
+import { QuadPickerDialog } from './QuadPicker'
 import { formatWall, type ResultRow, statusTone } from './resultCsv'
 import { rowAtTime } from './sync'
 import type { RoiMode, VideoAnalysisState, VideoFrames } from './videoAnalysisState'
@@ -28,8 +28,13 @@ const LIST_PAGE = 500
 // 검출 항목을 누르면 이만큼 앞부터 재생 (그 순간을 보게)
 const LEAD_S = 1.5
 
-/** 비율 사각형 글: 왼쪽 위 ~ 오른쪽 아래 (%) */
-const boxText = (b: Box) => `${(b[0] * 100).toFixed(0)}%, ${(b[1] * 100).toFixed(0)}% ~ ${(b[2] * 100).toFixed(0)}%, ${(b[3] * 100).toFixed(0)}%`
+/** 영역 글 (%): 직사각형은 왼쪽 위 ~ 오른쪽 아래, 꼭짓점 넷은 왼쪽 위부터 시계 방향 */
+const regionText = (r: number[]) => {
+  const pct = (v: number) => `${(v * 100).toFixed(0)}%`
+  return r.length === 8
+    ? `꼭짓점 ${cornersOf(r).map(([x, y]) => `${pct(x)},${pct(y)}`).join(' · ')}`
+    : `${pct(r[0])}, ${pct(r[1])} ~ ${pct(r[2])}, ${pct(r[3])}`
+}
 
 // ─────────────────────────────── 영상 위 화면 영역(빨강)·베젤(노랑) 표시
 
@@ -45,16 +50,18 @@ export function AnalysisOverlay({ state, videoRef, currentPath }: {
   const custom = state.roiMode === 'custom'
   const roi = custom ? state.customRoi : state.setup?.roi ?? null
   const bezel = custom ? (state.customRoi ? state.bezel : null) : state.setup?.bezel ?? null
-  const place = (b: Box) => view && {
-    left: view.left + b[0] * view.vw * view.scale,
-    top: view.top + b[1] * view.vh * view.scale,
-    width: (b[2] - b[0]) * view.vw * view.scale,
-    height: (b[3] - b[1]) * view.vh * view.scale,
-  }
+  // 비율 꼭짓점 → 오버레이 안 위치 (비스듬한 영역도 그대로 다각형으로)
+  const points = (r: number[]) => (view
+    ? cornersOf(r).map(([x, y]) => `${view.left + x * view.vw * view.scale},${view.top + y * view.vh * view.scale}`).join(' ')
+    : '')
   return (
     <div ref={boxRef} className="rv-crop">
-      {bezel && <div className="rv-roi-bezel" style={place(bezel) ?? undefined} />}
-      {roi && <div className="rv-roi-screen" style={place(roi) ?? undefined} />}
+      {view && (roi || bezel) && (
+        <svg className="rv-roi-svg">
+          {bezel && <polygon className="rv-roi-bezel" points={points(bezel)} />}
+          {roi && <polygon className="rv-roi-screen" points={points(roi)} />}
+        </svg>
+      )}
     </div>
   )
 }
@@ -440,17 +447,26 @@ export function VideoAnalysisPanel({ state, videos, steps, currentPath, grab, es
   }, [state.picked, tab])
 
   const pickedFrame = state.picking?.frame
-  const applyPick = (sel: Rect): string | null => {
+  /** 고른 꼭짓점 (프레임 픽셀) → 비율 꼭짓점 넷 */
+  const applyPick = (corners: Point[]): string | null => {
     if (!state.picking || !pickedFrame) return null
-    const box = rectToBox(sel, pickedFrame.width, pickedFrame.height)
+    const quad = corners.flatMap(([x, y]) => [Math.round((x / pickedFrame.width) * 10000) / 10000, Math.round((y / pickedFrame.height) * 10000) / 10000]) as Quad
     if (state.picking.kind === 'screen') {
-      state.setCustomRoi(box)
+      state.setCustomRoi(quad)
       state.setRoiMode('custom')
-    } else state.setBezel(box)
+      // 새 화면을 감싸지 않는 베젤은 지운다 (베젤은 화면을 감싸야 잴 수 있다)
+      if (state.bezel && !quadContains(cornersOf(state.bezel), cornersOf(quad))) {
+        state.setBezel(null)
+        setGrabError('베젤이 새 화면 영역을 감싸지 않아 지웠습니다. 베젤을 다시 지정하세요')
+      }
+    } else state.setBezel(quad)
     state.setPicking(null)
     return null
   }
-  const asRect = (b: Box | null) => (b && pickedFrame ? boxToRect(b, pickedFrame.width, pickedFrame.height) : null)
+  /** 비율 꼭짓점 → 고르는 프레임의 픽셀 꼭짓점 */
+  const toPixels = (q: Quad | null): Point[] | null => (q && pickedFrame
+    ? cornersOf(q).map(([x, y]) => [Math.round(x * pickedFrame.width), Math.round(y * pickedFrame.height)])
+    : null)
 
   const status = state.status
   const pct = Math.round((status?.progress ?? 0) * 100)
@@ -532,6 +548,7 @@ export function VideoAnalysisPanel({ state, videos, steps, currentPath, grab, es
       {!state.running && status?.state === 'canceled' && <div className="small rv-search-warn">멈춤 — 거기까지 잰 결과입니다</div>}
       {grabError && <p className="error small">{grabError}</p>}
       {state.error && <p className="error small">{state.error}</p>}
+      {state.warning && <p className="small rv-search-warn">{state.warning}</p>}
       {state.frames.filter((f) => f?.error).map((f) => <p key={f.path} className="error small">{`${nameOf(f.path)}: ${f.error}`}</p>)}
       {!hasResult && !state.running && !state.error && (
         <p className="small muted">
@@ -579,11 +596,11 @@ export function VideoAnalysisPanel({ state, videos, steps, currentPath, grab, es
                 </span>
                 <span className="muted">화면 영역</span>
                 <span>
-                  {state.setup?.roi ? <span className="mono">{boxText(state.setup.roi)}</span> : '-'}
+                  {state.setup?.roi ? <span className="mono">{regionText(state.setup.roi)}</span> : '-'}
                   {state.setup?.roiSource && <span className="muted">{' · '}<span>{state.setup.roiSource}</span></span>}
                 </span>
                 <span className="muted">베젤</span>
-                <span>{state.setup?.bezel ? <span className="mono">{boxText(state.setup.bezel)}</span> : <span>없음</span>}</span>
+                <span>{state.setup?.bezel ? <span className="mono">{regionText(state.setup.bezel)}</span> : <span>없음</span>}</span>
                 <span className="muted">기준값</span>
                 <span>
                   {curResult?.ref
@@ -639,12 +656,13 @@ export function VideoAnalysisPanel({ state, videos, steps, currentPath, grab, es
         </>
       )}
       {state.picking && pickedFrame && (
-        <RectPickerDialog
+        <QuadPickerDialog
           frame={pickedFrame}
           title={state.picking.kind === 'screen' ? '화면 영역 지정' : '베젤 외곽 지정'}
           confirmLabel={state.picking.kind === 'screen' ? '이 영역으로 지정' : '베젤로 지정'}
-          initial={asRect(state.picking.kind === 'screen' ? state.customRoi : state.bezel)}
-          reference={asRect(state.picking.kind === 'screen' ? state.bezel : state.customRoi)}
+          initial={toPixels(state.picking.kind === 'screen' ? state.customRoi : state.bezel)}
+          reference={toPixels(state.picking.kind === 'screen' ? state.bezel : state.customRoi)}
+          mustContain={state.picking.kind === 'bezel'}
           variant={state.picking.kind}
           onApply={applyPick}
           onCancel={() => state.setPicking(null)}

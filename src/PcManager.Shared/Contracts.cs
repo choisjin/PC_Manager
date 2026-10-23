@@ -211,10 +211,11 @@ public record ImageSearchProgress(string State, double Progress, string? Current
 /// <summary>
 /// 결과 확인 도구의 영상 분석 (ReplayKit_FailAnalyzer 영상 페이지와 같은 방식): 영상들의 모든 프레임에서 화면 영역의
 /// 밝기·프레임 차이·윤곽·평균 색(·베젤 테두리 밝기)을 잰다. 검은 화면·깜박임·정지·화면 전환 판정은 웹이 한다.
-/// 사각형은 영상 크기에 대한 비율 [x0, y0, x1, y1]
+/// 영역은 영상 크기에 대한 비율: 직사각형 [x0, y0, x1, y1] 또는 꼭짓점 넷 [x, y]×4 (왼쪽 위 · 오른쪽 위 · 오른쪽 아래 · 왼쪽 아래,
+/// 비스듬히 찍힌 화면 — 에이전트가 perspective로 반듯하게 펴서 잰다)
 /// </summary>
 /// <param name="Roi">화면 영역. null이면 에이전트가 추정한다 (칸별 윤곽 변화가 큰 곳, 못 찾으면 화면 전체)</param>
-/// <param name="Bezel">베젤 외곽 (화면을 감싸는 모니터 테두리 바깥선). 주면 외곽에서 화면을 뺀 테두리 띠의 밝기도 잰다 (Roi가 있을 때만)</param>
+/// <param name="Bezel">베젤 외곽 (화면을 감싸는 모니터 테두리 바깥선). 주면 외곽에서 화면을 뺀 테두리 띠의 밝기도 잰다 (Roi가 있을 때만, 화면을 감싸야 함)</param>
 public record VideoAnalysisRequest(IReadOnlyList<string> Paths, double[]? Roi = null, double[]? Bezel = null);
 
 /// <summary>
@@ -228,7 +229,7 @@ public record VideoAnalysisChunk(int Video, string Path, int Offset, byte[] Fram
 
 /// <param name="State">running · done · failed · canceled</param>
 /// <param name="Progress">0~1 (잰 시간의 합 기준)</param>
-/// <param name="Roi">쓴 화면 영역 (추정 전이면 null)</param>
+/// <param name="Roi">쓴 화면 영역 (추정 전이면 null). 꼭짓점 넷으로 받았으면 꼭짓점 넷으로 돌려준다</param>
 /// <param name="RoiSource">화면 영역을 정한 방법 ("직접 지정" · "자동 추정 (…)" · "화면 전체 (…)")</param>
 /// <param name="Bezel">쓴 베젤 외곽 (화면을 감싸게 넓힌 것, 없거나 테두리 띠가 너무 얇으면 null)</param>
 /// <param name="Chunks">요청한 위치(video, offset)부터 이어지는 결과. 서버 SignalR 메시지 한도(2MB) 안에 들게 한 번에 1MB까지</param>

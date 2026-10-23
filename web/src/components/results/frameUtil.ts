@@ -3,8 +3,69 @@ import type { Rect } from './imageSearchState'
 
 // 결과 확인의 영상 위 표시·영역 고르기 창이 함께 쓰는 도구 (이미지 찾기 · 영상 분석)
 
-/** 영상 크기에 대한 비율 사각형 [x0, y0, x1, y1] (크기가 다른 영상에도 같은 자리) */
-export type Box = [number, number, number, number]
+/** 비율 좌표의 네 꼭짓점 [x, y]×4 (왼쪽 위 · 오른쪽 위 · 오른쪽 아래 · 왼쪽 아래): 비스듬히 찍힌 화면 */
+export type Quad = [number, number, number, number, number, number, number, number]
+/** 꼭짓점 하나 [x, y] */
+export type Point = [number, number]
+
+/** 직사각형([x0, y0, x1, y1]) 또는 꼭짓점 넷(값 8개) → 꼭짓점 넷 */
+export function cornersOf(r: readonly number[]): Point[] {
+  if (r.length >= 8) return [[r[0], r[1]], [r[2], r[3]], [r[4], r[5]], [r[6], r[7]]]
+  const [x0, y0, x1, y1] = r
+  return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+}
+
+/** 모퉁이마다 꺾는 방향이 같다 (볼록하고 꼭짓점 차례가 꼬이지 않음) */
+export function convexQuad(p: Point[]): boolean {
+  let sign = 0
+  for (let i = 0; i < 4; i++) {
+    const [a, b, c] = [p[i], p[(i + 1) % 4], p[(i + 2) % 4]]
+    const cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
+    if (Math.abs(cross) < 1e-9) return false
+    if (!sign) sign = Math.sign(cross)
+    else if (Math.sign(cross) !== sign) return false
+  }
+  return true
+}
+
+/** outer(볼록)가 inner의 네 꼭짓점을 모두 감싼다 (경계 포함) */
+export function quadContains(outer: Point[], inner: Point[]): boolean {
+  return inner.every(([x, y]) => {
+    let sign = 0
+    for (let i = 0; i < 4; i++) {
+      const [a, b] = [outer[i], outer[(i + 1) % 4]]
+      const cross = (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0])
+      if (Math.abs(cross) < 1e-7) continue
+      if (!sign) sign = Math.sign(cross)
+      else if (Math.sign(cross) !== sign) return false
+    }
+    return true
+  })
+}
+
+/** 정사각형 [0,1]² → 사각형 (Heckbert): (u, v)가 꼭짓점 차례로 (0,0) (1,0) (1,1) (0,1)에 간다 — 반듯하게 편 미리 보기 */
+export function squareToQuad(p: Point[]): (u: number, v: number) => Point {
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = p
+  const dx1 = x1 - x2
+  const dx2 = x3 - x2
+  const dx3 = x0 - x1 + x2 - x3
+  const dy1 = y1 - y2
+  const dy2 = y3 - y2
+  const dy3 = y0 - y1 + y2 - y3
+  let g = 0
+  let h = 0
+  if (Math.abs(dx3) > 1e-12 || Math.abs(dy3) > 1e-12) {
+    const den = dx1 * dy2 - dx2 * dy1
+    g = (dx3 * dy2 - dx2 * dy3) / den
+    h = (dx1 * dy3 - dx3 * dy1) / den
+  }
+  const [a, b, c] = [x1 - x0 + g * x1, x3 - x0 + h * x3, x0]
+  const [d, e, f] = [y1 - y0 + g * y1, y3 - y0 + h * y3, y0]
+  return (u, v) => {
+    const w = g * u + h * v + 1
+    return [(a * u + b * v + c) / w, (d * u + e * v + f) / w]
+  }
+}
 
 export const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 
@@ -13,19 +74,6 @@ export function scaleRect(r: Rect, sx: number, sy: number, frame: { width: numbe
   const x = clamp(Math.round(r.x * sx), 0, frame.width - 1)
   const y = clamp(Math.round(r.y * sy), 0, frame.height - 1)
   return { x, y, w: clamp(Math.round(r.w * sx), 1, frame.width - x), h: clamp(Math.round(r.h * sy), 1, frame.height - y) }
-}
-
-/** 프레임 픽셀 사각형 → 비율 */
-export function rectToBox(r: Rect, width: number, height: number): Box {
-  const f = (v: number) => Math.round(v * 10000) / 10000
-  return [f(r.x / width), f(r.y / height), f((r.x + r.w) / width), f((r.y + r.h) / height)]
-}
-
-/** 비율 → 프레임 픽셀 사각형 (프레임 안으로) */
-export function boxToRect(b: Box, width: number, height: number): Rect {
-  const x = clamp(Math.round(b[0] * width), 0, width - 1)
-  const y = clamp(Math.round(b[1] * height), 0, height - 1)
-  return { x, y, w: clamp(Math.round((b[2] - b[0]) * width), 1, width - x), h: clamp(Math.round((b[3] - b[1]) * height), 1, height - y) }
 }
 
 /** 초 → m:ss.mmm (프레임 단위로 보이게) */
