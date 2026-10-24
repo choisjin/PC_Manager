@@ -7,6 +7,7 @@ import { QuadPickerDialog } from './QuadPicker'
 import { formatWall, type ResultRow, statusTone } from './resultCsv'
 import { rowAtTime } from './sync'
 import type { RoiMode, VideoAnalysisState, VideoFrames } from './videoAnalysisState'
+import { CYCLE_COLOR, type CycleAnomaly, type CycleCompare, type CycleMap } from './videoCycle'
 import { bisectLeft, type DetectedSegment, type DetectResult, type SegmentKind } from './videoDetect'
 import { type Exclusion, type ExclusionDraft, spansOf } from './videoExclude'
 
@@ -15,14 +16,17 @@ import { type Exclusion, type ExclusionDraft, spansOf } from './videoExclude'
 // 결과 표 아래 검출 탭·목록(VideoAnalysisResults, 탭 줄은 영상 조작 줄과 같은 높이) · 결과 표 위 제외 구간 고르기(ExcludeBar).
 // 상태·받기는 videoAnalysisState, 판정은 videoDetect, 제외 구간은 videoExclude
 
-type ListTab = SegmentKind | 'transitions'
-const TABS: [ListTab, string][] = [['black_screen', '검은 화면'], ['flicker', '깜박임'], ['static', '정지 구간'], ['transitions', '화면 전환']]
+type ListTab = SegmentKind | 'transitions' | 'cycle'
+const TABS: [ListTab, string][] = [
+  ['black_screen', '검은 화면'], ['flicker', '깜박임'], ['static', '정지 구간'], ['transitions', '화면 전환'], ['cycle', 'Cycle 비교'],
+]
 // 탭에 대면 보이는 판정 기준
 const RULES: Record<ListTab, string> = {
   black_screen: '검은 화면: 밝기가 기준 밝기(영상에서 가장 어두웠던 밝기)에 가깝고(차이가 5 · 기준 밝기의 15% · 켜진 평소 차이의 20% 중 큰 값 이하), 윤곽이 가장 많은 칸도 비어 있고, 색이 없음 (0.3초 미만·깜박임은 뺌)',
   flicker: '깜박임: 밝기가 평소보다 25%(최소 12) 넘게 어두워지고 기준 밝기까지 5% 미만(평소 밝기 − 기준 밝기의 5%)으로 내려갔다가 0.6초 안에 돌아옴 (밝게 번쩍이는 것은 뺌, 3초 안에 이어지면 한 묶음)',
   static: '정지 구간: 화면 영역의 프레임 간 차이가 잡음 수준으로 정지 기준 이상 이어짐 (통째로 꺼진 구간은 뺌)',
   transitions: '화면 전환: 프레임 차이가 평소의 8배(최소 6) 넘게 튄 시점 (0.5초 안에 이어지면 한 건, 깜박임은 뺌)',
+  cycle: 'Cycle 비교: 첫 Cycle을 기준으로 이후 Cycle의 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지) 동안 화면 밝기·평균 색을 스텝 시작부터 0.2초마다 견줘, 밝기 차이(평균 색은 1.5배)가 기준을 넘는 것이 0.6초 넘게 이어진 곳 (앞뒤 0.6초 어긋남은 봐 줌, 스텝 시작·끝 0.4초는 뺌)',
 }
 const SEG_COLOR: Record<SegmentKind, string> = {
   black_screen: 'rgba(201, 57, 47, 0.35)', flicker: 'rgba(183, 121, 31, 0.4)', static: 'rgba(120, 130, 145, 0.22)',
@@ -38,18 +42,25 @@ const STRIP_H = 10
 const LIST_PAGE = 500
 // 검출 항목을 누르면 이만큼 앞부터 재생 (그 순간을 보게)
 const LEAD_S = 1.5
+// 그래프에 겹칠 Cycle 짝이 없을 때 (매번 새 배열을 만들지 않게)
+const NO_MAPS: CycleMap[] = []
 // 정지 기준 칸 (초)
 const STATIC_MIN = 1
 const STATIC_MAX = 86400
 
 /** 그래프에 그리는 것: 범례를 눌러 켜고 끈다 (끈 것은 이 브라우저에 기억) */
-type Series = 'bright' | 'floor' | 'rgb' | SegmentKind | 'transitions' | 'exclude' | 'steps' | 'fail'
+type Series = 'bright' | 'floor' | 'rgb' | SegmentKind | 'transitions' | 'refBright' | 'cycle' | 'exclude' | 'steps' | 'fail'
 const SERIES: [Series, string][] = [
   ['bright', '화면 밝기'], ['floor', '기준 밝기'], ['rgb', '화면 평균 색 (아래 띠)'], ['black_screen', '검은 화면'], ['flicker', '깜박임'],
-  ['static', '정지'], ['transitions', '화면 전환'], ['exclude', '제외 구간'], ['steps', '스텝'], ['fail', '실패 스텝'],
+  ['static', '정지'], ['transitions', '화면 전환'], ['refBright', '첫 Cycle 밝기'], ['cycle', 'Cycle 차이'],
+  ['exclude', '제외 구간'], ['steps', '스텝'], ['fail', '실패 스텝'],
 ]
+// 첫 Cycle 밝기 (같은 스텝 자리에 겹쳐 그림) · Cycle 차이 음영
+const REF_COLOR = '#e08a1e'
+const CYCLE_SHADE = 'rgba(15, 154, 168, 0.3)'
 const SWATCH: Partial<Record<Series, string>> = {
-  bright: BRIGHT_COLOR, floor: FLOOR_COLOR, ...SEG_COLOR, transitions: TRANSITION_COLOR, steps: STEP_COLOR, fail: FAIL_COLOR,
+  bright: BRIGHT_COLOR, floor: FLOOR_COLOR, ...SEG_COLOR, transitions: TRANSITION_COLOR, refBright: REF_COLOR, cycle: CYCLE_SHADE,
+  steps: STEP_COLOR, fail: FAIL_COLOR,
 }
 const HIDDEN_KEY = 'results.va.hidden'
 function readHidden(): Set<Series> {
@@ -120,12 +131,17 @@ export function AnalysisOverlay({ state, videoRef, currentPath }: {
 
 interface ChartView { t0: number; t1: number }
 
-function AnalysisChart({ frames, result, excluded, duration, steps, now, onSeek }: {
+function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomalies, duration, steps, now, onSeek }: {
   frames: VideoFrames | undefined
+  /** 모든 영상의 프레임 (첫 Cycle 밝기를 겹쳐 그릴 때) */
+  allFrames: VideoFrames[]
   /** 제외 구간을 뺀 검출 */
   result: DetectResult | undefined
   /** 제외 구간 (영상 안 초) */
   excluded: [number, number][]
+  /** Cycle 비교: 이 영상 구간 ↔ 첫 Cycle 같은 스텝 · 이 영상의 특이점 */
+  cycleMaps: CycleMap[]
+  anomalies: CycleAnomaly[]
   /** 영상 길이 (모르면 받은 프레임 끝까지) */
   duration: number | null
   /** 스텝 시작 (영상 안 초) · 실패 스텝 */
@@ -221,6 +237,15 @@ function AnalysisChart({ frames, result, excluded, duration, steps, now, onSeek 
       const x = xOf(s.start)
       ctx.fillRect(x, 0, Math.max(1, xOf(s.end) - x), plotH)
     }
+    // Cycle 차이 음영
+    if (on('cycle')) {
+      ctx.fillStyle = CYCLE_SHADE
+      for (const a of anomalies) {
+        if (a.end < v.t0 || a.start > v.t1) continue
+        const x = xOf(a.start)
+        ctx.fillRect(x, 0, Math.max(1, xOf(a.end) - x), plotH)
+      }
+    }
     // 스텝 경계 (실패 스텝은 빨강, 위에 그린다). 촘촘하면(픽셀 4개에 하나 넘게) 통과 스텝은 아래 짧은 눈금만 (밝기 선이 묻히지 않게)
     const shown = steps.filter((s) => s.t >= v.t0 && s.t <= v.t1)
     const dense = shown.length > width / 4
@@ -241,9 +266,41 @@ function AnalysisChart({ frames, result, excluded, duration, steps, now, onSeek 
     const i1 = Math.min(n, bisectLeft(frames.t, v.t1, n) + 1)
     let top = 16
     for (let i = i0; i < i1; i++) if (frames.y[i] > top) top = frames.y[i]
+    // 첫 Cycle 밝기: 스텝 짝마다 같은 스텝 자리로 옮겨 칸(픽셀 열)마다 평균한 점들 (짝 안에서는 이어 그린다)
+    const cols = Math.max(1, width)
+    const refLines: [number, number][][] = []
+    if (on('refBright')) {
+      for (const m of cycleMaps) {
+        if (m.end < v.t0 || m.start > v.t1) continue
+        const rf = allFrames[m.refVideo]
+        if (!rf?.n) continue
+        const len = m.end - m.start
+        const line: [number, number][] = []
+        let col = -1
+        let acc = 0
+        let k = 0
+        const flush = () => {
+          if (k) line.push([col + 0.5, acc / k])
+        }
+        for (let i = bisectLeft(rf.t, m.refStart, rf.n); i < rf.n && rf.t[i] <= m.refStart + len; i++) {
+          const x = Math.floor(xOf(m.start + rf.t[i] - m.refStart))
+          if (x < -1 || x > cols) continue
+          if (x !== col) {
+            flush()
+            col = x
+            acc = 0
+            k = 0
+          }
+          acc += rf.y[i]
+          k++
+          if (rf.y[i] > top) top = rf.y[i]
+        }
+        flush()
+        if (line.length) refLines.push(line)
+      }
+    }
     top = Math.ceil((top * 1.08) / 8) * 8
     const yOf = (value: number) => plotH - (value / top) * (plotH - 4)
-    const cols = Math.max(1, width)
     const lo = new Float32Array(cols).fill(Infinity)
     const hi = new Float32Array(cols).fill(-Infinity)
     const sum = new Float64Array(cols * 3)
@@ -270,6 +327,15 @@ function AnalysisChart({ frames, result, excluded, duration, steps, now, onSeek 
       }
       ctx.fillStyle = FLOOR_COLOR
       ctx.fillRect(0, fy - 0.75, width, 1.5)
+    }
+    if (refLines.length) {
+      ctx.strokeStyle = REF_COLOR
+      ctx.lineWidth = 1.2
+      ctx.beginPath()
+      for (const line of refLines) {
+        line.forEach(([x, value], i) => (i ? ctx.lineTo(x, yOf(value)) : ctx.moveTo(x, yOf(value))))
+      }
+      ctx.stroke()
     }
     if (on('bright')) {
       ctx.strokeStyle = BRIGHT_COLOR
@@ -303,7 +369,7 @@ function AnalysisChart({ frames, result, excluded, duration, steps, now, onSeek 
     ctx.fillStyle = 'rgba(128, 128, 128, 0.9)'
     ctx.font = '10px sans-serif'
     ctx.fillText(String(top), 2, 10)
-  }, [frames, n, measured, result, excluded, floor, hidden, steps, width, height, v.t0, v.t1, span])
+  }, [frames, allFrames, n, measured, result, excluded, cycleMaps, anomalies, floor, hidden, steps, width, height, v.t0, v.t1, span])
 
   // 휠: 커서 위치 기준 시간축 확대·축소, Shift+휠·가로 휠은 좌우 이동 (페이지가 스크롤되지 않게 passive 아님)
   useEffect(() => {
@@ -356,7 +422,8 @@ function AnalysisChart({ frames, result, excluded, duration, steps, now, onSeek 
   // 커서 위치의 값 (가장 가까운 프레임): 밝기 (기준 밝기와의 차이)
   const at = hover !== null && frames && n ? Math.min(n - 1, bisectLeft(frames.t, hover, n)) : -1
   // 스텝이 없으면 스텝 범례, 지금 영상에 제외 구간이 없으면 제외 구간 범례는 감춘다
-  const series = SERIES.filter(([k]) => ((k !== 'steps' && k !== 'fail') || steps.length > 0) && (k !== 'exclude' || excluded.length > 0))
+  const series = SERIES.filter(([k]) => ((k !== 'steps' && k !== 'fail') || steps.length > 0) && (k !== 'exclude' || excluded.length > 0)
+    && ((k !== 'refBright' && k !== 'cycle') || cycleMaps.length > 0))
   return (
     <div className="rv-va-chart">
       <div className="rv-va-legend small">
@@ -422,21 +489,21 @@ function SegmentDetail({ seg }: { seg: DetectedSegment }) {
   return <span>{`${info.seconds.toFixed(1)}초 동안 화면 변화 없음 (프리징 또는 정상 대기)`}</span>
 }
 
-/** 정지 기준 칸: 다 쓰고 Enter를 누르거나 칸을 벗어나면 적용 (치는 중에는 다시 판정하지 않게) */
-function StaticField({ value, onCommit }: { value: number; onCommit: (seconds: number) => void }) {
+/** 숫자 칸 (정지 기준·Cycle 차이 기준): 다 쓰고 Enter를 누르거나 칸을 벗어나면 적용 (치는 중에는 다시 판정하지 않게), 0.1 단위 */
+function NumberField({ value, min, max, onCommit }: { value: number; min: number; max: number; onCommit: (value: number) => void }) {
   const [text, setText] = useState(String(value))
   const commit = () => {
     const n = Number(text)
     if (text.trim() === '' || !Number.isFinite(n)) return setText(String(value))
-    const seconds = Math.round(clamp(n, STATIC_MIN, STATIC_MAX) * 10) / 10
-    setText(String(seconds))
-    if (seconds !== value) onCommit(seconds)
+    const next = Math.round(clamp(n, min, max) * 10) / 10
+    setText(String(next))
+    if (next !== value) onCommit(next)
   }
   return (
     <input
       type="number"
-      min={STATIC_MIN}
-      max={STATIC_MAX}
+      min={min}
+      max={max}
       step={1}
       value={text}
       onChange={(e) => setText(e.target.value)}
@@ -450,12 +517,14 @@ function StaticField({ value, onCommit }: { value: number; onCommit: (seconds: n
 
 // ─────────────────────────────── 패널 (영상 아래): 설정·진행·그래프·영상 정보
 
-export function VideoAnalysisPanel({ state, results, excluded, videos, steps, currentPath, grab, escape, nowSeconds, onSeek }: {
+export function VideoAnalysisPanel({ state, results, excluded, cycle, videos, steps, currentPath, grab, escape, nowSeconds, onSeek }: {
   state: VideoAnalysisState
   /** 영상마다 제외 구간을 뺀 검출 */
   results: DetectResult[]
   /** 영상마다 제외 구간 (영상 안 초) */
   excluded: [number, number][][]
+  /** 첫 Cycle 기준 비교 (Cycle이 하나면 null) */
+  cycle: CycleCompare | null
   videos: SearchVideo[]
   /** 그래프에 스텝 경계를 그리는 Result 표 */
   steps: StepSource
@@ -503,6 +572,7 @@ export function VideoAnalysisPanel({ state, results, excluded, videos, steps, cu
   const hasResult = state.frames.some((f) => f?.n)
   const multi = videos.length > 1
   const nameOf = (path: string) => videos.find((v) => v.path === path)?.name ?? path
+  const curAnomalies = useMemo(() => (cycle?.anomalies ?? []).filter((a) => a.video === current), [cycle, current])
 
   const frame = state.picking
   /** 고른 꼭짓점 (프레임 픽셀) → 비율 꼭짓점 넷 */
@@ -547,7 +617,7 @@ export function VideoAnalysisPanel({ state, results, excluded, videos, steps, cu
         </label>
         <label className="small" title="화면 변화가 이 시간 이상 없으면 정지 구간 (Enter 또는 칸을 벗어나면 적용 — 다시 재지 않고 바로 다시 나눕니다)">
           정지 기준
-          <StaticField key={state.staticS} value={state.staticS} onCommit={state.changeStatic} />
+          <NumberField key={state.staticS} value={state.staticS} min={STATIC_MIN} max={STATIC_MAX} onCommit={state.changeStatic} />
           초
         </label>
         <button
@@ -594,8 +664,11 @@ export function VideoAnalysisPanel({ state, results, excluded, videos, steps, cu
       {hasResult && (
         <AnalysisChart
           frames={curFrames}
+          allFrames={state.frames}
           result={curResult}
           excluded={current >= 0 ? excluded[current] ?? [] : []}
+          cycleMaps={(current >= 0 && cycle?.maps[current]) || NO_MAPS}
+          anomalies={curAnomalies}
           duration={current >= 0 ? videos[current].duration : null}
           steps={chartSteps}
           now={nowSeconds}
@@ -659,12 +732,14 @@ interface Item {
   number: number
 }
 
-export function VideoAnalysisResults({ state, results, removed, videos, steps, wallOf, onSeek }: {
+export function VideoAnalysisResults({ state, results, removed, cycle, videos, steps, wallOf, onSeek }: {
   state: VideoAnalysisState
   /** 영상마다 제외 구간을 뺀 검출 */
   results: DetectResult[]
   /** 제외 구간으로 뺀 검출 수 */
   removed: number
+  /** 첫 Cycle 기준 비교 (Cycle이 하나면 null) */
+  cycle: CycleCompare | null
   videos: SearchVideo[]
   /** 검출 시점의 스텝을 찾는 Result 표 */
   steps: StepSource
@@ -673,7 +748,9 @@ export function VideoAnalysisResults({ state, results, removed, videos, steps, w
   /** 영상·위치로 이동 (play: 거기서 재생) */
   onSeek: (path: string, seconds: number, play?: boolean) => void
 }) {
-  const [tab, setTab] = useState<ListTab>('black_screen')
+  const [tabSel, setTab] = useState<ListTab>('black_screen')
+  // Cycle 비교 탭은 Cycle이 둘 이상일 때만
+  const tab: ListTab = tabSel === 'cycle' && !cycle ? 'black_screen' : tabSel
   const [limit, setLimit] = useState(LIST_PAGE)
 
   // 검출 시점의 스텝: 그때 하던 스텝 (영상 시작 시각을 몰라 벽시계를 모르면 없음, 테스트가 끝난 뒤면 없음)
@@ -687,7 +764,7 @@ export function VideoAnalysisResults({ state, results, removed, videos, steps, w
 
   // 모든 영상의 검출을 종류별로 (영상 차례 → 시작 순)
   const items = useMemo(() => {
-    const out: Record<ListTab, Item[]> = { black_screen: [], flicker: [], static: [], transitions: [] }
+    const out: Record<ListTab, Item[]> = { black_screen: [], flicker: [], static: [], transitions: [], cycle: [] }
     results.forEach((r, video) => {
       const path = state.frames[video]?.path ?? videos[video]?.path ?? ''
       for (const seg of r.segments) {
@@ -703,6 +780,7 @@ export function VideoAnalysisResults({ state, results, removed, videos, steps, w
   const counts: Record<ListTab, number> = {
     black_screen: items.black_screen.length, flicker: items.flicker.length, static: items.static.length,
     transitions: results.reduce((n, r) => n + r.nTransitions, 0),
+    cycle: cycle?.anomalies.length ?? 0,
   }
   const hasResult = state.frames.some((f) => f?.n)
   const multi = videos.length > 1
@@ -723,7 +801,7 @@ export function VideoAnalysisResults({ state, results, removed, videos, steps, w
   return (
     <div className="rv-va-results">
       <div className="rv-va-tabs">
-        {TABS.map(([k, label]) => (
+        {TABS.filter(([k]) => k !== 'cycle' || cycle).map(([k, label]) => (
           <button
             key={k}
             type="button"
@@ -739,12 +817,53 @@ export function VideoAnalysisResults({ state, results, removed, videos, steps, w
           </button>
         ))}
         <span className="rv-spacer" />
-        {removed > 0 && (
+        {tab === 'cycle' && cycle && (
+          <label className="small rv-va-cycle-diff" title="첫 Cycle과 화면 밝기가 이만큼(0~255) 넘게 다르면 특이점 (평균 색은 1.5배). Enter 또는 칸을 벗어나면 적용">
+            {`첫 Cycle(${cycle.ref}) 대비 밝기 차이`}
+            <NumberField key={state.cycleDiff} value={state.cycleDiff} min={5} max={200} onCommit={state.setCycleDiff} />
+            {`이상 · 스텝 ${cycle.compared}개 비교`}
+          </label>
+        )}
+        {removed > 0 && tab !== 'cycle' && (
           <span className="small muted" title="제외 구간에 걸친 검출은 목록·그래프에서 뺍니다 (검은 화면·정지 구간은 구간 밖으로 남는 부분만 남김)">
             {`제외 구간으로 뺀 검출 ${removed}개`}
           </span>
         )}
       </div>
+      {tab === 'cycle' && cycle ? (
+        <ol className={`rv-va-list${multi ? ' multi' : ''}`} ref={listRef}>
+          <li className="rv-va-head">
+            <span>길이</span>
+            <span>시각</span>
+            <span>영상 위치</span>
+            <span>스텝</span>
+            <span>내용</span>
+          </li>
+          {cycle.anomalies.length === 0 && (
+            <li className="muted small rv-va-empty">{state.running ? '아직 없음 (분석 중)' : `첫 Cycle(${cycle.ref})과 다른 곳 없음`}</li>
+          )}
+          {cycle.anomalies.slice(0, limit).map((a) => (
+            <CycleItem
+              key={a.key}
+              a={a}
+              picked={a.key === state.picked}
+              path={state.frames[a.video]?.path ?? videos[a.video]?.path ?? ''}
+              refPath={state.frames[a.refVideo]?.path ?? videos[a.refVideo]?.path ?? ''}
+              nameOf={multi ? nameOf : null}
+              wallOf={wallOf}
+              onPick={(path, seconds) => {
+                state.setPicked(a.key)
+                onSeek(path, Math.max(0, seconds - LEAD_S), true)
+              }}
+            />
+          ))}
+          {cycle.anomalies.length > limit && (
+            <li className="rv-va-more">
+              <button type="button" className="small-btn" onClick={() => setLimit(limit + LIST_PAGE)}>{`더 보기 (${cycle.anomalies.length - limit}개 남음)`}</button>
+            </li>
+          )}
+        </ol>
+      ) : (
       <ol className={`rv-va-list${tab === 'transitions' ? ' tr' : ''}${multi ? ' multi' : ''}`} ref={listRef}>
         <li className="rv-va-head">
           <span>{tab === 'transitions' ? '#' : '길이'}</span>
@@ -784,7 +903,50 @@ export function VideoAnalysisResults({ state, results, removed, videos, steps, w
           <li className="muted small rv-va-empty">{`전체 ${counts.transitions}개 중 앞 ${list.length}개만 목록에 있습니다`}</li>
         )}
       </ol>
+      )}
     </div>
+  )
+}
+
+/** Cycle 비교 목록 한 줄: 누르면 그 순간, [첫 Cycle]은 기준 Cycle의 같은 자리 */
+function CycleItem({ a, picked, path, refPath, nameOf, wallOf, onPick }: {
+  a: CycleAnomaly
+  picked: boolean
+  path: string
+  refPath: string
+  /** 영상이 여럿이면 영상 이름 */
+  nameOf: ((path: string) => string) | null
+  wallOf: (path: string, seconds: number) => number | null
+  onPick: (path: string, seconds: number) => void
+}) {
+  const wall = wallOf(path, a.start)
+  const delta = a.bright - a.refBright
+  return (
+    <li className={picked ? 'picked' : ''} onClick={() => onPick(path, a.start)} title="누르면 그 순간 조금 앞부터 재생">
+      <span className="mono small rv-search-num">{`${(a.end - a.start).toFixed(1)}s`}</span>
+      <button type="button" className="link mono">{wall !== null ? formatWall(wall, true) : formatFrameTime(a.start)}</button>
+      <span className="mono small muted ellipsis" title={nameOf ? nameOf(path) : undefined}>
+        {`${formatFrameTime(a.start)}${nameOf ? ` · ${nameOf(path)}` : ''}`}
+      </span>
+      <span className="small ellipsis" title={`#${a.row.index + 1} ${a.row.name}`}>
+        {`#${a.row.index + 1} ${a.row.name} `}<span className="muted">{`(+${a.offset.toFixed(1)}s)`}</span>
+      </span>
+      <span className="small rv-va-detail">
+        <span className="rv-va-cycle-tag" style={{ color: CYCLE_COLOR }}>{`Cycle ${a.cycle}`}</span>
+        {` 밝기 ${a.refBright.toFixed(0)} → ${a.bright.toFixed(0)} (${delta >= 0 ? '+' : ''}${delta.toFixed(0)}) · 색 차이 ${a.colorDiff} `}
+        <button
+          type="button"
+          className="link small"
+          title={`첫 Cycle의 같은 자리 (#${a.refRow.index + 1} ${a.refRow.name} +${a.offset.toFixed(1)}s)`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onPick(refPath, a.refAt)
+          }}
+        >
+          첫 Cycle 보기
+        </button>
+      </span>
+    </li>
   )
 }
 

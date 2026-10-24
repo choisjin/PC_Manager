@@ -4,6 +4,7 @@ import type { Quad } from './frameUtil'
 import type { FrameShot, SearchVideo } from './imageSearchState'
 import { toMessage } from './resultSessions'
 import { Detector, type DetectResult, type FrameArrays, type SegmentKind } from './videoDetect'
+import { CYCLE_DIFF_DEFAULT } from './videoCycle'
 import type { Exclusion } from './videoExclude'
 
 // 결과 확인: 영상 분석 (ReplayKit_FailAnalyzer 영상 페이지의 영상 분석을 옮김)
@@ -174,6 +175,8 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
   // 제외 구간 (Result 표의 스텝으로) · 제외 구간 고르는 중 (결과 표 위에 고르는 줄)
   const [excludes, setExcludes] = useState<Exclusion[]>([])
   const [excludeEdit, setExcludeEdit] = useState(false)
+  // Cycle 비교: 첫 Cycle과 밝기가 이만큼(0~255) 넘게 다르면 특이점 (평균 색은 1.5배)
+  const [cycleDiff, setCycleDiff] = useState(CYCLE_DIFF_DEFAULT)
   const [frames, setFrames] = useState<VideoFrames[]>([])
   const [results, setResults] = useState<DetectResult[]>([])
   const [setup, setSetup] = useState<AnalysisSetup | null>(null)
@@ -371,7 +374,7 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
 
   return {
     open, setOpen, close, roiMode, setRoiMode, customRoi, setCustomRoi, staticS, changeStatic, showRoi, setShowRoi,
-    picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit,
+    picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit, cycleDiff, setCycleDiff,
     frames, results, setup, status, error, warning, running, retrying, elapsed, run, stop, picked, setPicked, startsRef,
   }
 }

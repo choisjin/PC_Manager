@@ -27,7 +27,7 @@ export interface ExclusionDraft {
 const MIN_BLACK_S = 0.3
 
 /** 행 → Cycle 안에서의 자리 ("이름\0몇 번째"): Cycle마다 같은 스텝을 찾는 열쇠 (rows: 시각순) */
-function stepKeys(rows: ResultRow[]): Map<number, string> {
+export function stepKeys(rows: ResultRow[]): Map<number, string> {
   const seen = new Map<string, number>()
   const keys = new Map<number, string>()
   for (const r of rows) {

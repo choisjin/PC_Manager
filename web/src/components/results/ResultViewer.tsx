@@ -25,6 +25,7 @@ import { CropOverlay, ImageSearchPanel } from './ImageSearch'
 import { grabFrame, type SearchVideo, type StepSource, useImageSearch } from './imageSearchState'
 import { AnalysisOverlay, ExcludeBar, VideoAnalysisPanel, VideoAnalysisResults } from './VideoAnalysis'
 import { MARK_COLOR, useVideoAnalysis } from './videoAnalysisState'
+import { compareCycles, CYCLE_COLOR } from './videoCycle'
 import { applyExclusions, type ExclusionDraft, mergeSpans, spansOf } from './videoExclude'
 
 type PutSlot = 'result' | 'video' | 'image' | 'ref'
@@ -697,6 +698,16 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   )
   const shownResults = useMemo(() => shown.map((x) => x.result), [shown])
   const removedCount = shown.reduce((n, x) => n + x.removed, 0)
+  // Cycle 비교: 첫 Cycle 기준으로 이후 Cycle의 같은 스텝 화면이 다른 곳 (Cycle이 둘 이상일 때)
+  const cycleCompare = useMemo(() => {
+    if (!vaOpen || !analysis.frames.some((f) => f?.n)) return null
+    const index = new Map(searchVideos.map((v, i) => [v.path, i]))
+    return compareCycles(sortedRows, (row) => {
+      const at = stepSource.position(row)
+      const video = at ? index.get(at.path) : undefined
+      return at && video !== undefined ? { video, seconds: at.seconds } : null
+    }, analysis.frames, analysis.cycleDiff, excludeSpans)
+  }, [vaOpen, analysis.frames, analysis.cycleDiff, sortedRows, stepSource, searchVideos, excludeSpans])
   // 제외 구간에 드는 행 (표에 빗금): 둘 다 시각순이라 한 번 훑는다
   const excludedRows = useMemo(() => {
     if (!vaOpen || !excludeWall.length) return null
@@ -823,8 +834,12 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             )}
             marks={search.open ? search.segments.filter((m) => m.path === current).map((m) => ({ start: m.first / m.fps, end: (m.last + 1) / m.fps }))
               // 영상 분석: 지금 영상의 검출 구간 (종류별 색)
-              : analysis.open ? (shownResults[searchVideos.findIndex((v) => v.path === current)]?.segments ?? [])
-                .map((m) => ({ start: m.start, end: m.end, color: MARK_COLOR[m.kind] }))
+              : analysis.open ? [
+                ...(shownResults[searchVideos.findIndex((v) => v.path === current)]?.segments ?? [])
+                  .map((m) => ({ start: m.start, end: m.end, color: MARK_COLOR[m.kind] })),
+                ...(cycleCompare?.anomalies ?? []).filter((a) => searchVideos[a.video]?.path === current)
+                  .map((a) => ({ start: a.start, end: a.end, color: CYCLE_COLOR })),
+              ]
                 : undefined}
             extra={
               <>
@@ -915,6 +930,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               state={analysis}
               results={shownResults}
               excluded={excludeSpans}
+              cycle={cycleCompare}
               videos={searchVideos}
               steps={stepSource}
               currentPath={current}
@@ -1050,6 +1066,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               state={analysis}
               results={shownResults}
               removed={removedCount}
+              cycle={cycleCompare}
               videos={searchVideos}
               steps={stepSource}
               wallOf={wallOf}
@@ -1472,9 +1489,7 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
     const cellFont = fontOf(body.querySelector('.rv-row > span.ellipsis, .rv-row > span.rv-status'), '11px sans-serif')
     const monoFont = fontOf(body.querySelector('.rv-row > span.mono'), cellFont)
     const wrapFont = fontOf(body.querySelector('.rv-row > span.rv-wrap'), cellFont)
-    const smallFont = fontOf(body.querySelector('.rv-row > span.rv-small'), cellFont)
     const wrapping = new Set(spec.wrapCells ?? [])
-    const smalls = new Set(spec.smallCells ?? [])
     const headFont = fontOf(head.querySelector('.rv-colhead-label'), cellFont)
     const icoFont = fontOf(head.querySelector('.rv-colhead-ico'), headFont)
     const measure = (font: string, text: string) => {
@@ -1495,7 +1510,7 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
       for (const row of rows) {
         const text = time ? timeText(row, spec) : row.cells[i] ?? ''
         let w = sized.get(text)
-        if (w === undefined) sized.set(text, (w = measure(time ? monoFont : wrap ? wrapFont : smalls.has(i) ? smallFont : cellFont, text)))
+        if (w === undefined) sized.set(text, (w = measure(time ? monoFont : wrap ? wrapFont : cellFont, text)))
         widths.push(w)
       }
       widths.sort((a, b) => a - b)
@@ -1658,7 +1673,6 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   const index = !spec?.noIndex
   const numberWidth = !index ? 0 : spec?.compact ? 34 : 40
   const wrapping = new Set(spec?.wrapCells ?? [])
-  const smalls = new Set(spec?.smallCells ?? [])
   const grid = spec
     ? { gridTemplateColumns: wide ? `40px ${spec.expandColumns} minmax(${expandWidth}px, 1fr)` : `${index ? `${numberWidth}px ` : ''}${columnList.join(' ')}` }
     : undefined
@@ -1745,7 +1759,7 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
                   <span
                     key={i}
                     data-col={i}
-                    className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : wrapping.has(i) ? 'rv-wrap' : smalls.has(i) ? 'ellipsis rv-small' : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}${cellClass(i)}`}
+                    className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : wrapping.has(i) ? 'rv-wrap' : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}${cellClass(i)}`}
                     title={c}
                   >
                     {i === spec.timeCell ? `${!index && anchorRows.has(row.index) ? '📍' : ''}${timeText(row, spec)}`
