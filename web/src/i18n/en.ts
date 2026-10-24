@@ -1465,7 +1465,6 @@ const EXACT: Record<string, string> = {
   "고르던 제외 구간을 이 시작·끝 스텝으로 바꿉니다": "Changes the exclusion being edited to these start and end steps",
   "바꾸기": "Apply",
   "고치지 않고 그대로 둡니다": "Leave it unchanged",
-  "고치는 중": "Editing",
   "고치기": "Edit",
   "고치기 그만두기": "Stop editing",
   "이 제외 구간 고치기 — 시작·끝 스텝을 다시 골라 [바꾸기]": "Edit this exclusion — pick the start and end steps again, then [Apply]",
