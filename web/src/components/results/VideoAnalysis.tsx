@@ -8,7 +8,7 @@ import { formatWall, type ResultRow, statusTone } from './resultCsv'
 import { rowAtTime } from './sync'
 import type { RoiMode, VideoAnalysisState, VideoFrames } from './videoAnalysisState'
 import { bisectLeft, type DetectedSegment, type DetectResult, type SegmentKind } from './videoDetect'
-import { type ExclusionDraft, spansOf } from './videoExclude'
+import { type Exclusion, type ExclusionDraft, spansOf } from './videoExclude'
 
 // 결과 확인 영상 분석 화면 (ReplayKit_FailAnalyzer 영상 페이지의 영상 분석을 옮김):
 // 영상 위 화면 영역 표시(AnalysisOverlay) · 영상 아래 설정·진행·그래프·영상 정보(VideoAnalysisPanel) ·
@@ -20,7 +20,7 @@ const TABS: [ListTab, string][] = [['black_screen', '검은 화면'], ['flicker'
 // 탭에 대면 보이는 판정 기준
 const RULES: Record<ListTab, string> = {
   black_screen: '검은 화면: 밝기가 기준 밝기(영상에서 가장 어두웠던 밝기)에 가깝고(차이가 5 · 기준 밝기의 15% · 켜진 평소 차이의 20% 중 큰 값 이하), 윤곽이 가장 많은 칸도 비어 있고, 색이 없음 (0.3초 미만·깜박임은 뺌)',
-  flicker: '깜박임: 밝기가 평소보다 25%(최소 12) 넘게 어두워졌다가 0.6초 안에 돌아옴 (밝게 번쩍이는 것은 뺌, 3초 안에 이어지면 한 묶음)',
+  flicker: '깜박임: 밝기가 평소보다 25%(최소 12) 넘게 어두워지고 기준 밝기까지 5% 미만(평소 밝기 − 기준 밝기의 5%)으로 내려갔다가 0.6초 안에 돌아옴 (밝게 번쩍이는 것은 뺌, 3초 안에 이어지면 한 묶음)',
   static: '정지 구간: 화면 영역의 프레임 간 차이가 잡음 수준으로 정지 기준 이상 이어짐 (통째로 꺼진 구간은 뺌)',
   transitions: '화면 전환: 프레임 차이가 평소의 8배(최소 6) 넘게 튄 시점 (0.5초 안에 이어지면 한 건, 깜박임은 뺌)',
 }
@@ -815,10 +815,21 @@ export function ExcludeBar({ state, rows, selected, draft, setDraft }: {
     // 끝 스텝이 새 시작보다 앞이면 끝은 다시 고른다
     setDraft({ ...draft, start: selected.index, end: draft.end !== null && (order.get(draft.end) ?? 0) < at ? null : draft.end })
   }
+  const editing = state.excludes.some((x) => x.id === draft.editing) ? draft.editing : null
   const add = () => {
     if (!start || !end) return
-    state.setExcludes([...state.excludes, { id: newId(), start: start.index, end: end.index, everyCycle }])
-    setDraft({ ...draft, start: null, end: null })
+    const ex = { id: editing ?? newId(), start: start.index, end: end.index, everyCycle }
+    state.setExcludes(editing ? state.excludes.map((x) => (x.id === editing ? ex : x)) : [...state.excludes, ex])
+    setDraft({ ...draft, start: null, end: null, editing: null })
+  }
+  // 목록의 제외 구간을 고르는 칸으로 불러와 고친다 (같은 걸 다시 누르면 그만둠)
+  const edit = (ex: Exclusion) => {
+    if (editing === ex.id) setDraft({ ...draft, start: null, end: null, editing: null })
+    else setDraft({ start: ex.start, end: ex.end, everyCycle: ex.everyCycle, editing: ex.id })
+  }
+  const remove = (id: string) => {
+    state.setExcludes(state.excludes.filter((x) => x.id !== id))
+    if (editing === id) setDraft({ ...draft, start: null, end: null, editing: null })
   }
 
   return (
@@ -838,17 +849,22 @@ export function ExcludeBar({ state, rows, selected, draft, setDraft }: {
           끝 스텝
         </button>
         {cycles > 1 && (
-          <label className="small" title="Cycle마다 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지) 사이를 뺍니다">
+          <label className="small" title="Cycle마다 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지) 사이를 뺍니다 — 켜 두면 표에는 첫 Cycle만 보입니다">
             <input type="checkbox" checked={draft.everyCycle} onChange={(e) => setDraft({ ...draft, everyCycle: e.target.checked })} />
             모든 Cycle
           </label>
         )}
-        <button type="button" disabled={!start || !end} onClick={add} title="시작 스텝 ~ 끝 스텝이 끝날 때까지를 검출에서 뺍니다">추가</button>
+        {everyCycle && <span className="small muted">표는 첫 Cycle만</span>}
+        <button type="button" disabled={!start || !end} onClick={add} title={editing ? '고르던 제외 구간을 이 시작·끝 스텝으로 바꿉니다' : '시작 스텝 ~ 끝 스텝이 끝날 때까지를 검출에서 뺍니다'}>
+          {editing ? '바꾸기' : '추가'}
+        </button>
+        {editing && <button type="button" onClick={() => setDraft({ ...draft, start: null, end: null, editing: null })} title="고치지 않고 그대로 둡니다">취소</button>}
         <span className="rv-spacer" />
         <button type="button" onClick={() => state.setExcludeEdit(false)} title="닫기 (Esc) — 추가한 구간은 그대로 뺍니다">닫기</button>
       </div>
       {(start || end) && (
         <div className="rv-va-exclude-draft small">
+          {editing && <strong>고치는 중</strong>}
           <span className="muted">시작</span>
           <span className="ellipsis" translate="no">{start ? label(start) : '-'}</span>
           <span className="muted">끝</span>
@@ -863,10 +879,11 @@ export function ExcludeBar({ state, rows, selected, draft, setDraft }: {
             const e = rowOf(ex.end)
             const places = spansOf(ex, rows).length
             return (
-              <li key={ex.id}>
+              <li key={ex.id} className={editing === ex.id ? 'editing' : undefined}>
                 <span className="ellipsis" translate="no">{`${s ? label(s) : '?'} ~ ${e ? label(e) : '?'}`}</span>
                 <span className="muted">{ex.everyCycle ? `모든 Cycle · 구간 ${places}개` : `구간 ${places}개`}</span>
-                <button type="button" className="icon" aria-label="빼기" title="이 제외 구간 지우기" onClick={() => state.setExcludes(state.excludes.filter((x) => x.id !== ex.id))}>✕</button>
+                <button type="button" className="icon" aria-label="고치기" aria-pressed={editing === ex.id} title={editing === ex.id ? '고치기 그만두기' : '이 제외 구간 고치기 — 시작·끝 스텝을 다시 골라 [바꾸기]'} onClick={() => edit(ex)}>✎</button>
+                <button type="button" className="icon" aria-label="빼기" title="이 제외 구간 지우기" onClick={() => remove(ex.id)}>✕</button>
               </li>
             )
           })}

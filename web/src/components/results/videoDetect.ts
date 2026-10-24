@@ -16,11 +16,13 @@ const OFF_FLOOR_REL = 0.15       // …또는 기준 밝기의 15% 이하
 const OFF_FLOOR_ON = 0.2         // …또는 켜진 평소 차이의 20% 이하 중 큰 쪽 (꺼진 패널의 반사광 여유)
 const BLANK_SAT_MAX = 40         // 꺼진 화면은 색이 없다: 평균 색의 채도(RGB 최대−최소)가 이보다 크면 검은 화면이 아니다
 // 깜박임: 평소 밝기(직전 1초 중앙값)보다 25%(최소 12단계) 이상 어두워졌다가 0.6초 안에 ±10%로 돌아오면.
+// 기준 밝기가 있으면 가장 어두운 프레임이 기준 밝기까지 5% 미만(평소 밝기 − 기준 밝기의 5%)으로 내려가야 한다 (잠깐 꺼짐).
 // 밝게 번쩍였다 돌아오는 것은 깜박임이 아니다 (프레임 차이가 크면 화면 전환으로 센다)
 const BLINK_REL = 0.25
 const BLINK_ABS = 12
 const BLINK_MAX_S = 0.6
 const BLINK_BACK = 0.1
+const BLINK_FLOOR = 0.05
 
 export type SegmentKind = 'black_screen' | 'flicker' | 'static'
 
@@ -156,9 +158,10 @@ let scratch = new Float64Array(256)
 
 /**
  * 평소 밝기(직전 winS초의 중앙값)보다 잠깐 어두워졌다가 돌아오는 구간 (프레임 [a, b)에서, 위치는 그대로).
+ * floor(기준 밝기)가 있으면 가장 어두운 프레임이 기준 밝기까지 남은 차이가 평소 차이의 5% 미만이어야 한다.
  * 웹캠 프레임 간격(약 0.13초)보다 짧은 깜박임은 영상에 남지 않을 수 있다
  */
-export function blinks(t: Float64Array, y: Float32Array, a: number, b: number, winS = 1): Blink[] {
+export function blinks(t: Float64Array, y: Float32Array, a: number, b: number, floor: number | null = null, winS = 1): Blink[] {
   const out: Blink[] = []
   let lo = a
   let i = a + 1
@@ -185,6 +188,11 @@ export function blinks(t: Float64Array, y: Float32Array, a: number, b: number, w
       // 가장 어두웠던 프레임
       let low = y[i]
       for (let m = i + 1; m < j; m++) low = Math.min(low, y[m])
+      // 기준 밝기 가까이까지 내려가지 않았으면 깜박임이 아니다
+      if (floor !== null && low - floor >= BLINK_FLOOR * (base - floor)) {
+        i++
+        continue
+      }
       out.push({
         i0: i, i1: j - 1,
         depth: pyRound(((base - low) / Math.max(base, 1)) * 100), dur: pyRound(t[j] - t[i], 2), t0: t[i],
@@ -334,7 +342,7 @@ export class Detector {
     // 깜박임: 앞 1.2초(평소 밝기) + 뒤 0.8초(복귀 확인)를 붙여 검사하고, 시작이 이번 부분인 것만 쓴다
     const a = bisectLeft(t, t[this.pos] - 1.2, n)
     const b = Math.min(n, bisectRight(t, t[upto - 1] + 0.8, n))
-    for (const bl of blinks(t, y, a, b)) {
+    for (const bl of blinks(t, y, a, b, f.floor)) {
       if (!(this.pos <= bl.i0 && bl.i0 < upto)) continue
       if (this.group.length && bl.t0 - this.group[0].t0 > 3) this.closeGroup(f)
       this.group.push(bl)

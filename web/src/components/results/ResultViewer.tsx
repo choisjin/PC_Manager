@@ -439,7 +439,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   // 영상 분석: 검은 화면·깜박임·정지 구간·화면 전환 (이미지 찾기와 같은 자리, 하나만 연다)
   const analysis = useVideoAnalysis(source.agentId, searchVideos)
   // 영상 분석 제외 구간: 고르는 중인 시작·끝 스텝 (자르기처럼 표에서)
-  const [exDraft, setExDraft] = useState<ExclusionDraft>({ start: null, end: null, everyCycle: true })
+  const [exDraft, setExDraft] = useState<ExclusionDraft>({ start: null, end: null, everyCycle: true, editing: null })
   const mainRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
   const [onlyFail, setOnlyFail] = useState(false)
@@ -731,14 +731,17 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     () => Object.entries(colFilters).map(([c, f]) => [Number(c), new Set(f.values ?? [])] as const),
     [colFilters],
   )
+  // 제외 구간을 모든 Cycle로 고르는 중이면 표에는 첫 Cycle만 (Cycle마다 같은 스텝이라 한 번만 고르면 된다)
+  const firstCycleOnly = vaOpen && analysis.excludeEdit && exDraft.everyCycle && cycles.length > 1
+  const shownCycle = firstCycleOnly ? cycles[0] : cycle
   // 머리글 거르기를 뺀 나머지 조건 (검색·실패만·회차)
   const baseRows = useMemo(() => {
     const q = query.trim().toLowerCase()
     return rows.filter((r) =>
       (!onlyFail || statusTone(r.status) === 'bad')
-      && (!cycle || r.cycle === cycle)
+      && (!shownCycle || r.cycle === shownCycle)
       && (!q || r.cells.some((c) => c.toLowerCase().includes(q))))
-  }, [rows, query, onlyFail, cycle])
+  }, [rows, query, onlyFail, shownCycle])
   const visible = useMemo(() => {
     const list = baseRows.filter((r) => filterSets.every(([c, set]) => set.has(r.cells[c] ?? '')))
     if (!colSort) return list
@@ -988,7 +991,12 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             ) : (
               <div className="rv-filters">
                 <input placeholder="검색 (모든 열)" value={query} onChange={(e) => setQuery(e.target.value)} />
-                <select value={cycle} onChange={(e) => setCycle(e.target.value)} title="회차">
+                <select
+                  value={shownCycle}
+                  onChange={(e) => setCycle(e.target.value)}
+                  disabled={firstCycleOnly}
+                  title={firstCycleOnly ? '제외 구간을 모든 Cycle로 고르는 동안은 첫 회차만 보입니다' : '회차'}
+                >
                   <option value="">전체 회차</option>
                   {cycles.map((c) => <option key={c} value={c}>회차 {c}</option>)}
                 </select>

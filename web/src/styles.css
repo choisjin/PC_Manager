@@ -5560,6 +5560,7 @@ body.rv-open .pip { display: none; }
 .rv-va-exclude-list { margin: 0; padding: 2px 8px 4px; list-style: none; display: flex; flex-direction: column; gap: 1px; max-height: 96px; overflow: auto; }
 .rv-va-exclude-list li { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .rv-va-exclude-list .ellipsis { min-width: 0; }
+.rv-va-exclude-list li.editing { color: var(--accent); font-weight: 600; }
 .rv-trim { display: flex; flex-direction: column; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .rv-trim .rv-drawer-head { justify-content: flex-start; gap: 8px; margin-bottom: 0; }
 .rv-trim-steps { display: flex; flex-direction: column; gap: 6px; }

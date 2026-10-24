@@ -19,6 +19,8 @@ export interface ExclusionDraft {
   start: number | null
   end: number | null
   everyCycle: boolean
+  /** 고치는 중인 제외 구간 (Exclusion.id), 없으면 새로 추가 */
+  editing: string | null
 }
 
 /** 검은 화면이 이보다 짧게 남으면 버린다 (판정의 0.3초 미만 빈 화면과 같게) */
