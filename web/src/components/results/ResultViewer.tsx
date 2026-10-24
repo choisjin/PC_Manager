@@ -1377,6 +1377,13 @@ function AtsImageCard({ title, path, url, onPreview, empty, tools }: {
 type CellPos = { row: number; col: number }
 
 /** grid 열 폭 글을 열마다 나눈다 (minmax(80px, 1fr) 안의 빈칸은 나누지 않음) */
+/** 표의 시각 칸 글 (ATS는 연도 빼고) — 복사·내보내기는 연도까지 */
+function timeText(row: ResultRow, spec: TableSpec): string {
+  const text = formatWall(row.time, true)
+  if (!text) return row.cells[spec.timeCell] ?? ''
+  return spec.noYear ? text.slice(5) : text
+}
+
 function splitColumns(columns: string): string[] {
   const out: string[] = []
   let depth = 0
@@ -1465,7 +1472,9 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
     const cellFont = fontOf(body.querySelector('.rv-row > span.ellipsis, .rv-row > span.rv-status'), '11px sans-serif')
     const monoFont = fontOf(body.querySelector('.rv-row > span.mono'), cellFont)
     const wrapFont = fontOf(body.querySelector('.rv-row > span.rv-wrap'), cellFont)
+    const smallFont = fontOf(body.querySelector('.rv-row > span.rv-small'), cellFont)
     const wrapping = new Set(spec.wrapCells ?? [])
+    const smalls = new Set(spec.smallCells ?? [])
     const headFont = fontOf(head.querySelector('.rv-colhead-label'), cellFont)
     const icoFont = fontOf(head.querySelector('.rv-colhead-ico'), headFont)
     const measure = (font: string, text: string) => {
@@ -1484,9 +1493,9 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
       const sized = new Map<string, number>()
       const widths: number[] = []
       for (const row of rows) {
-        const text = time ? formatWall(row.time, true) || (row.cells[i] ?? '') : row.cells[i] ?? ''
+        const text = time ? timeText(row, spec) : row.cells[i] ?? ''
         let w = sized.get(text)
-        if (w === undefined) sized.set(text, (w = measure(time ? monoFont : wrap ? wrapFont : cellFont, text)))
+        if (w === undefined) sized.set(text, (w = measure(time ? monoFont : wrap ? wrapFont : smalls.has(i) ? smallFont : cellFont, text)))
         widths.push(w)
       }
       widths.sort((a, b) => a - b)
@@ -1649,6 +1658,7 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   const index = !spec?.noIndex
   const numberWidth = !index ? 0 : spec?.compact ? 34 : 40
   const wrapping = new Set(spec?.wrapCells ?? [])
+  const smalls = new Set(spec?.smallCells ?? [])
   const grid = spec
     ? { gridTemplateColumns: wide ? `40px ${spec.expandColumns} minmax(${expandWidth}px, 1fr)` : `${index ? `${numberWidth}px ` : ''}${columnList.join(' ')}` }
     : undefined
@@ -1735,10 +1745,10 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
                   <span
                     key={i}
                     data-col={i}
-                    className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : wrapping.has(i) ? 'rv-wrap' : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}${cellClass(i)}`}
+                    className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : wrapping.has(i) ? 'rv-wrap' : smalls.has(i) ? 'ellipsis rv-small' : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}${cellClass(i)}`}
                     title={c}
                   >
-                    {i === spec.timeCell ? `${!index && anchorRows.has(row.index) ? '📍' : ''}${formatWall(row.time, true) || c}`
+                    {i === spec.timeCell ? `${!index && anchorRows.has(row.index) ? '📍' : ''}${timeText(row, spec)}`
                       : spec.pathCells?.includes(i) ? shortMessage(c) : c}
                   </span>
                 )

@@ -317,7 +317,6 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
           </select>
         </label>
         <span className="rv-spacer" />
-        {extra}
         <button type="button" onMouseDown={noFocus} onClick={fullscreen} title="전체 화면">⛶</button>
         <span className="rv-keys" ref={helpRef}>
           <button type="button" className={`small${helpOpen ? ' active' : ''}`} onMouseDown={noFocus} onClick={() => setHelpOpen((v) => !v)} aria-expanded={helpOpen} title="단축키 보기">
@@ -332,6 +331,8 @@ export function VideoTransport({ src, videoRef, keysEnabled, onTime, onLoaded, o
             </span>
           )}
         </span>
+        {/* 영상 고르기·이미지 찾기·영상 분석·자르기는 아랫줄 */}
+        {extra && <><span className="rv-break" />{extra}</>}
       </div>
     </div>
   )

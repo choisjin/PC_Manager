@@ -1,8 +1,8 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-24 · 최신 릴리스 **v0.8.101** (ATS 표: # 열 없앰 · 머리글 9px · Control 작은 글자 두 줄 · 겹쳐 보이던 열·하이라이트 고침 ·
-왼쪽 영상 칸 조금 좁게 — 웹만 바뀜 = 서버만 업데이트, 아래 1절의 0.8.101 항목. 그 앞 0.8.100: ATS 행 시각 = 스텝 시작 · ATS 표 열 ·
-영상 분석은 테스트 시작부터, **에이전트·서버 업데이트 필요**)
+작성: 2026-10-24 · 최신 릴리스 **v0.8.102** (ATS 표: DEVICE 작은 글자 · 시각 칸 연도 뺌 · 영상 아래 버튼 두 줄 — 웹만 바뀜 = 서버만 업데이트,
+아래 1절의 0.8.102 항목. 그 앞 0.8.101: ATS 표 겹침·# 열·Control 두 줄, 0.8.100: ATS 행 시각 = 스텝 시작 · 영상 분석은 테스트 시작부터,
+**에이전트·서버 업데이트 필요**)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -351,6 +351,14 @@ NuGet 경고 NU1903 (GHSA-334f-vvp4-7g6p, CVE-2026-70159, SignalR stateful recon
 - 왼쪽 영상 칸: `.rv-main` minmax(420px, 1.1fr) → minmax(400px, 0.9fr) (ATS·일반 Result, RFW `wide`는 그대로).
 - 확인: 임시 하네스(RowTable + `Reference/` ATS 샘플, vite)로 브라우저에서 — 시각 열 안 잘림, Control 두 줄, 가로 스크롤 정렬·하이라이트 끝까지.
   `tsc -b`. 실제 앱 화면(테마 색)은 사용자 확인.
+
+### 0.8.102: ATS 표 DEVICE·시각 · 영상 아래 버튼 두 줄
+사용자 요청: DEVICE 값 글자 줄이기 · Time Stamp에서 연도 빼기 · 영상 아래 이미지 찾기·분석·자르기는 아랫줄, 전체 화면·단축키는 윗줄.
+- `TableSpec.smallCells`(ATS DEVICE): `.rv-small` 9px 한 줄, fit 폭도 그 글꼴로. `noYear`(ATS): 표 시각 칸만 `MM-DD HH:MM:SS.mmm` (`timeText`) —
+  Ctrl+C 복사·거르기·엑셀 내보내기는 연도까지.
+- VideoTransport: 윗줄 재생 조작 … ⛶ · ⌨ 단축키, `.rv-break`(flex-basis 100%) 뒤 아랫줄에 `extra`(영상 고르기·이미지 찾기·영상 분석·자르기).
+  한 `.rv-transport` 안이라 영상 분석 탭 줄 높이 맞춤(`--va-bar`)은 두 줄 전체.
+- 확인: 임시 하네스(VideoTransport + RowTable, ATS 샘플)로 브라우저에서. `tsc -b`.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

@@ -87,6 +87,10 @@ export interface TableSpec {
   noIndex?: boolean
   /** 작은 글자로 줄을 바꿔 다 보여 줄 열 (행 높이 안에서 두 줄): 'fit'이면 한 줄 폭의 반으로 */
   wrapCells?: number[]
+  /** 글자를 작게 보여 줄 열 (한 줄) */
+  smallCells?: number[]
+  /** 시각 칸에서 연도를 뺀다 (10-06 14:01:40.097) */
+  noYear?: boolean
 }
 
 // ── RFW Message 표시: 핵심만 한 줄로 (원래 글은 마우스를 올리면)
@@ -499,6 +503,7 @@ const ATS_FALLBACK = ['Time Stamp', 'ITERATION IN JOB', 'DEVICE', 'Control', 'ST
 /** ATS 화면 열: ACTION CHECK(OK/ERROR) · STEP RESULT(PASS/FAIL, 판정 스텝만) */
 export const ATS_ACTION_CELL = 5
 export const ATS_RESULT_CELL = 7
+const ATS_DEVICE_CELL = 2
 const ATS_CONTROL_CELL = 3
 const ATS_DURATION_COL = 17
 const ATS_MAPPING: ResultMapping = { time: 0, cycle: 1, status: 7, name: 6, duration: -1, message: 8, durationUnit: 's', timeMode: 'absolute' }
@@ -552,6 +557,8 @@ export function parseAts(text: string): ParsedResult {
     compact: true,
     noIndex: true,
     wrapCells: [ATS_CONTROL_CELL],
+    smallCells: [ATS_DEVICE_CELL],
+    noYear: true,
     center: [1, ATS_ACTION_CELL, ATS_RESULT_CELL],
     statusCells: [ATS_RESULT_CELL],
     alertCells: [ATS_ACTION_CELL],
