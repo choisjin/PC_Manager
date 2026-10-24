@@ -564,6 +564,8 @@ export interface VideoAnalysisRequest {
   paths: string[]
   roi?: number[] | null
   bezel?: number[] | null
+  /** 영상마다 이 초부터만 잰다 (테스트 시작 전은 재지 않음, 길이 이상이면 그 영상은 재지 않음, 0이면 처음부터) */
+  starts?: number[] | null
 }
 
 /**

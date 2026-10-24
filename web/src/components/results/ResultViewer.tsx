@@ -663,18 +663,32 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   const vaOpen = analysis.open && !search.open && !trimMode
   // 제외 구간 → Result 시각 구간 → 영상마다 영상 안 초 구간 (검출·그래프·탐색 막대에서 뺀다)
   const excludeWall = useMemo(() => mergeSpans(analysis.excludes.flatMap((ex) => spansOf(ex, sortedRows))), [analysis.excludes, sortedRows])
-  const excludeSpans = useMemo(() => searchVideos.map((sv) => {
+  // Result 시각 → 영상마다 영상 안 초 (영상 시작을 모르면 null)
+  const videoAt = useCallback((sv: SearchVideo, time: number) => {
     const video = videos.find((v) => v.path === sv.path) ?? null
-    const at = (time: number) => {
-      const base = baseSeconds(time, video, absolute)
-      return base === null ? null : toVideoTime(base, sync)
-    }
-    return mergeSpans(excludeWall.flatMap(([a, b]): [number, number][] => {
-      const t0 = at(a)
-      const t1 = at(b)
-      return t0 === null || t1 === null || t1 <= 0 || (video?.duration != null && t0 >= video.duration) ? [] : [[Math.max(0, t0), t1]]
-    }))
-  }), [excludeWall, searchVideos, videos, absolute, sync])
+    const base = baseSeconds(time, video, absolute)
+    return base === null ? null : toVideoTime(base, sync)
+  }, [videos, absolute, sync])
+  // 영상마다 테스트 시작(첫 스텝) 초: 그 앞은 재지 않는다 (0 = 처음부터, 영상 길이 = 그 영상은 통째로 테스트 전)
+  const testStarts = useMemo(() => searchVideos.map((sv) => {
+    const t = firstTime === null ? null : videoAt(sv, firstTime)
+    return t === null || t <= 0 ? 0 : Math.min(t, sv.duration ?? t)
+  }), [searchVideos, firstTime, videoAt])
+  useEffect(() => {
+    analysis.startsRef.current = testStarts
+  }, [analysis.startsRef, testStarts])
+  const excludeSpans = useMemo(() => searchVideos.map((sv, i) => {
+    const duration = sv.duration
+    return mergeSpans([
+      // 테스트 시작 전 (옛 에이전트는 재 오므로 검출에서 뺀다)
+      ...(testStarts[i] > 0 ? [[0, testStarts[i]] as [number, number]] : []),
+      ...excludeWall.flatMap(([a, b]): [number, number][] => {
+        const t0 = videoAt(sv, a)
+        const t1 = videoAt(sv, b)
+        return t0 === null || t1 === null || t1 <= 0 || (duration != null && t0 >= duration) ? [] : [[Math.max(0, t0), t1]]
+      }),
+    ])
+  }), [excludeWall, searchVideos, videoAt, testStarts])
   const shown = useMemo(
     () => analysis.results.map((r, i) => applyExclusions(r, excludeSpans[i] ?? [], analysis.staticS)),
     [analysis.results, excludeSpans, analysis.staticS],
@@ -1360,7 +1374,24 @@ function AtsImageCard({ title, path, url, onPreview, empty, tools }: {
 /** 선택한 칸: row = ResultRow.index, col = 열 번호 (-1 = # 열, 행 전체) */
 type CellPos = { row: number; col: number }
 
-function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, playing, trim, excluded, follow, anchors, videoTime, onPick }: {
+/** grid 열 폭 글을 열마다 나눈다 (minmax(80px, 1fr) 안의 빈칸은 나누지 않음) */
+function splitColumns(columns: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let cur = ''
+  for (const ch of columns) {
+    if (ch === '(') depth++
+    else if (ch === ')') depth--
+    if (/\s/.test(ch) && depth === 0) {
+      if (cur) out.push(cur)
+      cur = ''
+    } else cur += ch
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, playing, trim, excluded, follow, anchors, videoTime, onPick }: {
   /** ATS·RFW: 이 열 이름으로 행의 칸을 그대로 보여 준다 (null이면 자동 판별 공통 열) */
   headers: string[] | null
   spec: TableSpec | null
@@ -1401,6 +1432,54 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
     return Math.min(20000, Math.ceil(widest) + 16)
   }, [expanded, canExpand, rows, spec, expandCell])
   const wide = expanded && canExpand && expandWidth > 0
+  // 'fit' 열: 머리글·행 내용 중 가장 넓은 것 + 칸 여백 (표와 같은 글꼴로 잰다). 거르기로 행이 줄어도 좁아지지 않게
+  // 넓어지기만 하고, 다른 표(spec)가 되면 다시 잰다
+  const [fit, setFit] = useState<{ spec: TableSpec | null; widths: Map<number, number> }>({ spec: null, widths: new Map() })
+  const fitWidths = fit.spec === spec ? fit.widths : null
+  useLayoutEffect(() => {
+    const body = bodyRef.current
+    const head = headRef.current
+    const tokens = spec ? splitColumns(spec.columns) : []
+    if (!spec || !headers || !body || !head || !tokens.includes('fit')) return
+    const context = document.createElement('canvas').getContext('2d')
+    if (!context) return
+    const fontOf = (el: Element | null, fallback: string) => (el ? getComputedStyle(el).font : '') || fallback
+    const cellFont = fontOf(body.querySelector('.rv-row > span.ellipsis, .rv-row > span.rv-status'), '11px sans-serif')
+    const monoFont = fontOf(body.querySelector('.rv-row > span.mono'), cellFont)
+    const headFont = fontOf(head.querySelector('.rv-colhead-label'), cellFont)
+    const icoFont = fontOf(head.querySelector('.rv-colhead-ico'), headFont)
+    const measure = (font: string, text: string) => {
+      context.font = font
+      return context.measureText(text).width
+    }
+    // 머리글 오른쪽 ▾·정렬 화살표 자리
+    const ico = measure(icoFont, '↑⧩') + 2
+    const centered = new Set(spec.center)
+    const out = new Map<number, number>()
+    tokens.forEach((t, i) => {
+      if (t !== 'fit') return
+      const time = i === spec.timeCell
+      const seen = new Set<string>()
+      let widest = 0
+      for (const row of rows) {
+        const text = time ? formatWall(row.time, true) || (row.cells[i] ?? '') : row.cells[i] ?? ''
+        if (seen.has(text)) continue
+        seen.add(text)
+        widest = Math.max(widest, measure(time ? monoFont : cellFont, text))
+      }
+      // 가운데 열 머리글은 낱말마다 줄을 바꾼다 (colHead)
+      const words = centered.has(i) ? headers[i].split(/\s+/) : [headers[i]]
+      const label = Math.max(...words.map((w) => measure(headFont, w)))
+      // 칸 좌우 여백 3px씩 · 오른쪽 세로 줄 1px · 반올림 여유
+      out.set(i, Math.min(260, Math.ceil(Math.max(widest + 7, label + ico + 4)) + 1))
+    })
+    setFit((prev) => {
+      const widths = new Map(out)
+      if (prev.spec === spec) for (const [i, w] of prev.widths) widths.set(i, Math.max(w, widths.get(i) ?? 0))
+      const same = prev.spec === spec && widths.size === prev.widths.size && [...widths].every(([i, w]) => prev.widths.get(i) === w)
+      return same ? prev : { spec, widths }
+    })
+  }, [spec, headers, rows])
   const [height, setHeight] = useState(400)
   const lastUserScroll = useRef(0)
 
@@ -1539,8 +1618,9 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   const last = Math.min(rows.length, Math.ceil((scroll + height) / ROW_HEIGHT) + 10)
   const anchorRows = new Set(anchors.map((a) => a.row))
   const center = new Set(spec?.center ?? [])
+  const columns = spec ? splitColumns(spec.columns).map((t, i) => (t === 'fit' ? `${fitWidths?.get(i) ?? 60}px` : t)).join(' ') : ''
   const grid = spec
-    ? { gridTemplateColumns: wide ? `40px ${spec.expandColumns} minmax(${expandWidth}px, 1fr)` : `40px ${spec.columns}` }
+    ? { gridTemplateColumns: wide ? `40px ${spec.expandColumns} minmax(${expandWidth}px, 1fr)` : `${spec.compact ? 34 : 40}px ${columns}` }
     : undefined
   // 넓힌 표는 가로로 스크롤 (머리글도 같이)
   const wideWidth = wide ? 40 + (spec?.expandColumns ?? '').split(/\s+/).reduce((sum, w) => sum + (parseFloat(w) || 0), 0) + expandWidth : 0
@@ -1560,7 +1640,7 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   )
 
   return (
-    <div className={`rv-table${spec ? ' fixed' : ''}${wide ? ' expanded' : ''}`}>
+    <div className={`rv-table${spec ? ' fixed' : ''}${spec?.compact ? ' compact' : ''}${wide ? ' expanded' : ''}`}>
       <div className="rv-head-scroll" ref={headRef}>
         <div className="rv-row rv-row-head small" style={{ ...grid, ...(wide ? { minWidth: wideWidth } : null) }}>
           {headers

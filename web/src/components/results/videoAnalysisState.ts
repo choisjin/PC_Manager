@@ -8,7 +8,7 @@ import type { Exclusion } from './videoExclude'
 
 // 결과 확인: 영상 분석 (ReplayKit_FailAnalyzer 영상 페이지의 영상 분석을 옮김)
 //   1) 테스트 PC 에이전트가 이 실행의 영상들을 ffmpeg로 프레임마다 잰다: 화면 영역의 밝기·프레임 차이·윤곽·
-//      윤곽이 가장 많은 칸·평균 색. 긴 영상은 앞 구간부터 재고 조각(1MB)으로 돌려준다
+//      윤곽이 가장 많은 칸·평균 색. 테스트 시작(첫 스텝) 전은 재지 않는다. 긴 영상은 앞 구간부터 재고 조각(1MB)으로 돌려준다
 //   2) 받는 대로 앞에서부터 이어진 부분만 판정한다 (검은 화면·깜박임·정지 구간·화면 전환 — videoDetect).
 //      꺼진 화면은 기준 밝기(그 영상에서 0.3초 넘게 이어진 가장 낮은 밝기)와의 차이로 본다:
 //      받는 중에 더 어두운 곳이 나오면 기준 밝기를 낮추고 그 영상을 처음부터 다시 판정한다
@@ -201,6 +201,8 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
   const filledRef = useRef<number[]>([])
   // 받는 루프는 시작할 때의 정지 기준을 쓰지 않게 (바꾸면 다시 판정)
   const staticRef = useRef(staticS)
+  // 영상마다 테스트가 시작한 영상 안 초 (그 앞은 재지 않는다, 모르면 0): Viewer가 Result 시각으로 정해 넣는다
+  const startsRef = useRef<number[]>([])
 
   // 결과 화면을 벗어나면 진행 중인 분석을 멈춘다
   useEffect(() => () => {
@@ -277,8 +279,9 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
     setRunning(true)
     const started = Date.now()
     const roi = roiMode === 'full' ? [0, 0, 1, 1] : roiMode === 'custom' ? customRoi : null
+    const starts = videos.map((_, i) => startsRef.current[i] ?? 0)
     try {
-      const { id } = await api.startVideoAnalysis(agentId, { paths: videos.map((v) => v.readPath), roi })
+      const { id } = await api.startVideoAnalysis(agentId, { paths: videos.map((v) => v.readPath), roi, starts })
       jobRef.current = id
       let video = 0
       let offset = 0
@@ -314,6 +317,11 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
         for (const chunk of next.chunks) {
           const prev = framesRef.current[chunk.video] ?? newFrames(videos[chunk.video]?.path ?? chunk.path)
           framesRef.current[chunk.video] = append(prev, chunk)
+          // 테스트 시작 전 프레임이 왔다 = 시작 초를 모르는 옛 에이전트 (검출에서만 뺀다)
+          const f = framesRef.current[chunk.video]
+          if (!prev.n && f.n && f.t[0] < starts[chunk.video] - 1.5) {
+            setWarning('이 PC의 에이전트는 테스트 시작 전 영상도 잽니다 (검출에서는 뺍니다). 에이전트를 업데이트하세요')
+          }
           const marks = (marksRef.current[chunk.video] ??= [])
           for (const m of chunk.marks ?? []) if (m > (marks.at(-1) ?? 0)) marks.push(m)
           touched.add(chunk.video)
@@ -364,7 +372,7 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
   return {
     open, setOpen, close, roiMode, setRoiMode, customRoi, setCustomRoi, staticS, changeStatic, showRoi, setShowRoi,
     picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit,
-    frames, results, setup, status, error, warning, running, retrying, elapsed, run, stop, picked, setPicked,
+    frames, results, setup, status, error, warning, running, retrying, elapsed, run, stop, picked, setPicked, startsRef,
   }
 }
 

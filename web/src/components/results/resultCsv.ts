@@ -70,6 +70,7 @@ export interface ParsedResult {
 
 /** 고정 열 표: 열 폭(grid, # 열 제외) · 가운데 정렬 열 · 결과 색 열 · 실패일 때만 색 칠할 열 · 시각 열 */
 export interface TableSpec {
+  /** grid 열 폭 (# 열 뒤). 'fit'은 그 열의 머리글·내용 중 가장 긴 것에 딱 맞춘다 */
   columns: string
   center: number[]
   statusCells: number[]
@@ -80,6 +81,8 @@ export interface TableSpec {
   /** 머리글 [전체 보기]로 내용 길이만큼 넓힐 열. expandColumns = 그때 앞 열들의 줄인 폭 */
   expandCell?: number
   expandColumns?: string
+  /** 글자를 1px 작게, 칸 여백을 좁게 (ATS) */
+  compact?: boolean
 }
 
 // ── RFW Message 표시: 핵심만 한 줄로 (원래 글은 마우스를 올리면)
@@ -486,13 +489,22 @@ export function statusTone(status: string): 'ok' | 'bad' | 'warn' | 'idle' | '' 
 export type ResultMode = 'ats' | 'rfw'
 export const RESULT_MODE_LABEL: Record<ResultMode, string> = { ats: 'ATS', rfw: 'RFW' }
 
-/** ATS: 원본 열 A·B·P·U·V·X·Y만 보여 준다 */
-const ATS_COLUMNS = [0, 1, 15, 20, 21, 23, 24]
-const ATS_FALLBACK = ['Time Stamp', 'ITERATION IN JOB', 'STATUS', 'ACTION CHECK', 'STEP REMARK', 'STEP RESULT', 'STEP RESULT(DETAIL)']
+/** ATS: 원본 열 A·B·N·O·P·U·V·X·Y만 보여 준다 */
+const ATS_COLUMNS = [0, 1, 13, 14, 15, 20, 21, 23, 24]
+const ATS_FALLBACK = ['Time Stamp', 'ITERATION IN JOB', 'DEVICE', 'Control', 'STATUS', 'ACTION CHECK', 'STEP REMARK', 'STEP RESULT', 'STEP RESULT(DETAIL)']
 /** ATS 화면 열: ACTION CHECK(OK/ERROR) · STEP RESULT(PASS/FAIL, 판정 스텝만) */
-export const ATS_ACTION_CELL = 3
-export const ATS_RESULT_CELL = 5
-const ATS_MAPPING: ResultMapping = { time: 0, cycle: 1, status: 5, name: 4, duration: -1, message: 6, durationUnit: 's', timeMode: 'absolute' }
+export const ATS_ACTION_CELL = 5
+export const ATS_RESULT_CELL = 7
+const ATS_DURATION_COL = 17
+const ATS_MAPPING: ResultMapping = { time: 0, cycle: 1, status: 7, name: 6, duration: -1, message: 8, durationUnit: 's', timeMode: 'absolute' }
+
+/** 벽시계 ms → ATS Time Stamp 모양 (2026-10-06 14:01:51.642000) */
+function atsStamp(ms: number): string {
+  const d = new Date(ms)
+  const p = (n: number, w = 2) => String(n).padStart(w, '0')
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} `
+    + `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}000`
+}
 
 /** ATS Result: 앞 6줄은 머리말, 그 뒤 첫 열이 [시각]인 줄까지만 데이터 */
 export function parseAts(text: string): ParsedResult {
@@ -500,29 +512,39 @@ export function parseAts(text: string): ParsedResult {
   const preamble = all.slice(0, 6).map((r) => r.join(',').trim()).filter(Boolean)
   // 머리말 마지막 줄이 열 이름 줄이면 그 이름을 쓴다
   const named = all[5] && all[5].length > 24 ? all[5].map(unq) : []
-  // 'ITERATION IN JOB'은 칸이 넓어지지 않게 'ITERATION'으로
-  const headers = ATS_COLUMNS.map((c, i) => named[c] || ATS_FALLBACK[i]).map((h) => h.replace(/^ITERATION IN JOB$/i, 'ITERATION'))
+  // 'ITERATION IN JOB'은 'CYCLE'로 (돈 횟수)
+  const headers = ATS_COLUMNS.map((c, i) => named[c] || ATS_FALLBACK[i]).map((h) => h.trim().replace(/^ITERATION IN JOB$/i, 'CYCLE'))
+  // R열 DURATION(ms): 스텝이 걸린 시간. Time Stamp는 스텝이 끝난 시각이라(앞 행과의 간격 = 이 행의 DURATION) 시작 = Time Stamp − DURATION
+  const durationNamed = named.findIndex((h) => /^\s*duration\s*$/i.test(h))
+  const durationAt = durationNamed >= 0 ? durationNamed : ATS_DURATION_COL
   const rows: ResultRow[] = []
   for (const r of all.slice(6)) {
     if (r.length === 0 || !r[0].includes('[') || !r[0].includes(']')) break
     const cells = ATS_COLUMNS.map((c) => unq(r[c] ?? ''))
     const v = parseTime(cells[0])
+    const dur = unq(r[durationAt] ?? '')
+    const durationMs = NUMBER.test(dur) ? Number(dur) : null
+    const time = v?.kind === 'absolute' ? v.ms - (durationMs ?? 0) : null
+    // 표의 시각 칸도 시작 시각으로 (영상 위치와 같게)
+    if (time !== null && durationMs) cells[0] = `[${atsStamp(time)}]`
     rows.push({
       index: rows.length,
       cells,
-      time: v?.kind === 'absolute' ? v.ms : null,
+      time,
       cycle: cells[ATS_MAPPING.cycle],
       // 판정 스텝은 STEP RESULT, 아니면 동작 실패(ACTION CHECK=ERROR)만 결과로
       status: cells[ATS_RESULT_CELL] || (statusTone(cells[ATS_ACTION_CELL]) === 'bad' ? cells[ATS_ACTION_CELL] : ''),
       name: cells[ATS_MAPPING.name],
-      durationMs: null,
+      durationMs,
       message: cells[ATS_MAPPING.message],
       images: [...new Set(r.join(' ').match(IMAGE_PATH) ?? [])].map((p) => p.replace(/\\\\/g, '\\')),
       ats: atsImages(r),
     })
   }
   const table: TableSpec = {
-    columns: '178px 66px minmax(80px, 1fr) 64px minmax(120px, 1.8fr) 62px minmax(80px, 1.2fr)',
+    // 짧은 열은 내용에 딱 맞게(fit), 긴 열(STATUS·STEP REMARK·DETAIL)이 남는 폭을 나눈다
+    columns: 'fit fit fit fit minmax(80px, 1fr) fit minmax(120px, 1.8fr) fit minmax(80px, 1.2fr)',
+    compact: true,
     center: [1, ATS_ACTION_CELL, ATS_RESULT_CELL],
     statusCells: [ATS_RESULT_CELL],
     alertCells: [ATS_ACTION_CELL],

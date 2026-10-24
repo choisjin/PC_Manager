@@ -170,6 +170,9 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             probes.Add(File.Exists(path) ? await VideoTrimmer.ProbeAsync(ffmpeg, path) : null);
         // 동시에 돌리는 ffmpeg 수 (테스트 PC가 버티게)
         var workers = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+        // 영상마다 재기 시작할 초 (테스트 시작 전은 재지 않음) · 그 영상을 통째로 건너뛰는지 (테스트 시작 전에 끝난 영상)
+        var froms = r.Paths.Select((_, i) => Math.Max(0, r.Starts is { } s && i < s.Length && double.IsFinite(s[i]) ? s[i] : 0)).ToArray();
+        bool Skipped(int i) => probes[i]?.Duration is { } d && froms[i] >= d - 0.05;
 
         // 화면 영역: 지정한 것 → 없으면 추정. 베젤은 화면을 직접 지정했을 때만
         Region roi;
@@ -180,8 +183,8 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         {
             lock (job)
                 job.Current = "화면 영역 추정";
-            var videos = r.Paths.Select((p, i) => (Path: p, probes[i]?.Duration, Ok: probes[i] is not null))
-                .Where(x => x.Ok).Take(SampleVideos).Select(x => (x.Path, x.Duration)).ToList();
+            var videos = r.Paths.Select((p, i) => (Path: p, probes[i]?.Duration, From: froms[i], Ok: probes[i] is not null && !Skipped(i)))
+                .Where(x => x.Ok).Take(SampleVideos).Select(x => (x.Path, x.Duration, x.From)).ToList();
             (roi, source) = await DetectScreenAsync(ffmpeg, videos, workers, token);
         }
         var bezel = Region.Parse(r.Roi) is not null ? FitBezel(roi, Region.Parse(r.Bezel)) : null;
@@ -194,7 +197,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         logger.LogInformation("영상 분석: 영상 {Count}개, 화면 영역 {Roi} ({Source}), 베젤 {Bezel}, ffmpeg {Workers}개",
             r.Paths.Count, roi, source, bezel?.ToString() ?? "없음", workers);
 
-        var total = Math.Max(1, probes.Sum(p => p?.Duration ?? 0));
+        var total = Math.Max(1, probes.Select((p, i) => Math.Max(0, (p?.Duration ?? 0) - froms[i])).Sum());
         double before = 0;
         foreach (var (path, index) in r.Paths.Select((p, i) => (p, i)))
         {
@@ -215,13 +218,21 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 }
                 continue;
             }
+            // 테스트 시작 전에 끝난 영상: 재지 않고 빈 결과로 끝낸다
+            if (Skipped(index))
+            {
+                lock (job)
+                    result.Done = true;
+                continue;
+            }
             var start = before;
+            var from = froms[index];
             try
             {
-                await MeasureVideoAsync(ffmpeg, path, probe.Duration, probe.Width, roi, bezel, workers, job, result, seconds =>
+                await MeasureVideoAsync(ffmpeg, path, probe.Duration, from, probe.Width, roi, bezel, workers, job, result, seconds =>
                 {
                     lock (job)
-                        job.Progress = Math.Min(1, (start + seconds) / total);
+                        job.Progress = Math.Min(1, (start + seconds - from) / total);
                 });
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -230,7 +241,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 lock (job)
                     result.Error = ex.Message;
             }
-            before += probe.Duration ?? 0;
+            before += Math.Max(0, (probe.Duration ?? 0) - from);
             lock (job)
                 result.Done = true;
         }
@@ -238,11 +249,11 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             job.Progress = 1;
     }
 
-    /// <summary>영상 하나: 구간마다 ffmpeg를 돌리되 모든 작업자가 앞 구간부터 가져가고, 결과는 앞에서부터 차례로 붙인다</summary>
-    private async Task MeasureVideoAsync(string ffmpeg, string path, double? duration, int width, Region roi, Region? bezel, int workers,
+    /// <summary>영상 하나 (from초부터): 구간마다 ffmpeg를 돌리되 모든 작업자가 앞 구간부터 가져가고, 결과는 앞에서부터 차례로 붙인다</summary>
+    private async Task MeasureVideoAsync(string ffmpeg, string path, double? duration, double from, int width, Region roi, Region? bezel, int workers,
         Job job, VideoResult result, Action<double> progress)
     {
-        var bounds = Chunks(duration ?? 0);
+        var bounds = Chunks(duration ?? 0, from);
         var outputs = bounds.Select(_ => new TaskCompletionSource<List<Row>>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(job.Cancel.Token);
         var next = -1;
@@ -303,23 +314,25 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         }
     }
 
-    /// <summary>영상 구간: 앞은 작게(1/4 → 1/2 → 1) 잘라 첫 결과가 빨리 나오게, 뒤로 가면 크게. 길이를 모르면 통째로 하나</summary>
-    private static List<(double Start, double? Length)> Chunks(double total)
+    /// <summary>
+    /// 영상 구간 (from초부터): 앞은 작게(1/4 → 1/2 → 1) 잘라 첫 결과가 빨리 나오게, 뒤로 가면 크게. 길이를 모르면 from부터 통째로 하나
+    /// </summary>
+    private static List<(double Start, double? Length)> Chunks(double total, double from)
     {
         var bounds = new List<(double, double?)>();
-        double pos = 0;
+        var pos = from;
         for (var k = 0; total - pos > 0.05; k++)
         {
             var size = k switch
             {
                 0 => ChunkSeconds / 4,
                 1 => ChunkSeconds / 2,
-                _ => pos < 10 * ChunkSeconds ? ChunkSeconds : 5 * ChunkSeconds,
+                _ => pos - from < 10 * ChunkSeconds ? ChunkSeconds : 5 * ChunkSeconds,
             };
             bounds.Add((pos, Math.Min(size, total - pos)));
             pos += size;
         }
-        return bounds.Count > 0 ? bounds : [(0, null)];
+        return bounds.Count > 0 ? bounds : [(from, null)];
     }
 
     /// <summary>
@@ -695,13 +708,13 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
 
     /// <summary>
     /// 화면 영역 추정: 영상마다 고르게 몇 장 뽑아 칸(8×6)별 윤곽 양의 변화폭이 큰 칸들을 감싸는 사각형.
-    /// 배경(케이블·벽)은 화면이 바뀌어도 윤곽 양이 거의 그대로다. 못 찾으면 화면 전체
+    /// 배경(케이블·벽)은 화면이 바뀌어도 윤곽 양이 거의 그대로다. 못 찾으면 화면 전체. 표본은 영상마다 From초(테스트 시작) 뒤에서
     /// </summary>
-    private static async Task<(Region Roi, string Source)> DetectScreenAsync(string ffmpeg, IReadOnlyList<(string Path, double? Duration)> videos,
-        int workers, CancellationToken token)
+    private static async Task<(Region Roi, string Source)> DetectScreenAsync(string ffmpeg,
+        IReadOnlyList<(string Path, double? Duration, double From)> videos, int workers, CancellationToken token)
     {
         var points = videos.SelectMany(v => Enumerable.Range(0, Samples)
-            .Select(k => (v.Path, At: v.Duration is { } d ? d * (k + 0.5) / Samples : k * 2.0))).ToList();
+            .Select(k => (v.Path, At: v.From + (v.Duration is { } d ? (d - v.From) * (k + 0.5) / Samples : k * 2.0)))).ToList();
         var frames = new ConcurrentBag<byte[]>();
         await Parallel.ForEachAsync(points, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = token }, async (p, ct) =>
         {

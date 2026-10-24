@@ -216,7 +216,8 @@ public record ImageSearchProgress(string State, double Progress, string? Current
 /// </summary>
 /// <param name="Roi">화면 영역. null이면 에이전트가 추정한다 (칸별 윤곽 변화가 큰 곳, 못 찾으면 화면 전체)</param>
 /// <param name="Bezel">베젤 외곽 (화면을 감싸는 모니터 테두리 바깥선). 주면 외곽에서 화면을 뺀 테두리 띠의 밝기도 잰다 (Roi가 있을 때만, 화면을 감싸야 함)</param>
-public record VideoAnalysisRequest(IReadOnlyList<string> Paths, double[]? Roi = null, double[]? Bezel = null);
+/// <param name="Starts">영상마다 이 초부터만 잰다 (테스트 시작 전은 재지 않음, Paths와 같은 차례). 영상 길이 이상이면 그 영상은 재지 않는다. null·0이면 처음부터</param>
+public record VideoAnalysisRequest(IReadOnlyList<string> Paths, double[]? Roi = null, double[]? Bezel = null, double[]? Starts = null);
 
 /// <summary>
 /// 영상 분석 결과 조각: Video번째 영상의 Offset번째 프레임부터. 프레임마다 31바이트 (little-endian):

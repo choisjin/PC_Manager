@@ -1,7 +1,8 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-24 · 최신 릴리스 **v0.8.99** (제외 구간: 고를 때 첫 Cycle만 · 고치기 · 깜박임은 기준 밝기 가까이까지 — 웹만 바뀜 = 서버만 업데이트,
-아래 1절의 0.8.99 항목. 그 앞 0.8.98: 검출 목록을 결과 표 아래로 · 제외 구간 · 베젤 대신 기준 밝기, 0.8.97: 꼭짓점 넷, **에이전트 업데이트 필요**)
+작성: 2026-10-24 · 최신 릴리스 **v0.8.100** (ATS 행 시각 = 스텝 시작(Time Stamp − DURATION) · ATS 표 CYCLE·DEVICE·Control 열, 좁은 열은
+내용에 맞춤 · 영상 분석은 테스트 시작 전을 재지 않음 — **에이전트·서버 업데이트 필요**, 아래 1절의 0.8.100 항목.
+그 앞 0.8.99: 제외 구간 첫 Cycle만·고치기·깜박임 기준 밝기, 0.8.98: 검출 목록을 결과 표 아래로 · 제외 구간 · 베젤 대신 기준 밝기)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -317,6 +318,25 @@ NuGet 경고 NU1903 (GHSA-334f-vvp4-7g6p, CVE-2026-70159, SignalR stateful recon
 - 깜박임 (`blinks`에 기준 밝기): 기존 조건(25%·최소 12 어두워짐, 0.6초 안에 복귀)에 더해 가장 어두운 프레임이
   기준 밝기 + (평소 밝기 − 기준 밝기)의 5% 미만 (`BLINK_FLOOR`) — 잠깐 꺼짐만. 기준 밝기가 아직 없으면 옛 조건만.
 - 확인: `tsc --noEmit`만 (실제 영상으로는 아직 안 봄).
+- 첫 태그 빌드가 en.ts 중복 키(TS1117)로 실패 → 고친 커밋(5aa9413)으로 v0.8.99 태그를 옮겨 다시 릴리스. 웹 검사는 CI와 같은 `npx tsc -b`로
+  (`tsc --noEmit -p .`은 루트 tsconfig가 하위 프로젝트만 참조해서 src 오류를 못 잡음).
+
+### 0.8.100: ATS 시각은 스텝 시작 · ATS 표 열 · 영상 분석은 테스트 시작부터
+사용자 요청: 스텝을 고르면 영상이 한 스텝쯤 앞서 감 · 시각 칸도 시작 시각으로 · ITERATION → CYCLE, 글자 1px 작게, DEVICE·Control 열, 열 폭·여백
+최대한 타이트하게 · 테스트 시작 전 영상은 분석하지 않음.
+- ATS `Time Stamp`는 스텝이 **끝난** 시각: `Reference/` 샘플 1123행에서 앞 행과의 간격 − 이 행 DURATION(R열, ms) 오차 중앙값 0.01초
+  (앞 행 DURATION과는 0.55초). `parseAts`: 행 시각 = Time Stamp − DURATION, `durationMs` = DURATION, 시각 칸(cells[0])도 시작 시각
+  (거르기·정렬·엑셀 내보내기 모두). DURATION이 없거나 0이면 그대로. RFW `Start Time`은 시작이 맞음(오차 0.013초 vs 끝으로 보면 0.116) → 그대로.
+  → 스텝 이동·따라가기·이미지 찾기 범위·자르기·제외 구간·테스트 시작이 모두 실제 시작 시각. 원본 Video_editor.py도 Time Stamp로 바로 이동했었음.
+- ATS 표 열: A·B·N(DEVICE)·O(Control)·P·U·V·X·Y (ACTION CHECK 5, STEP RESULT 7). `TableSpec.columns`의 `fit` = RowTable이 머리글·행 내용 중
+  가장 넓은 것에 맞춰 잼(canvas measureText, 표와 같은 글꼴, 260px까지, 거르기로 행이 줄어도 좁아지지 않음 — spec이 바뀌면 다시).
+  시각·CYCLE·DEVICE·Control·ACTION CHECK·STEP RESULT가 fit, STATUS·STEP REMARK·DETAIL이 남는 폭을 나눔. `compact`(ATS만): 본문 11px·머리글 10px,
+  칸 여백 3px(머리글 1px), # 열 34px. RFW 표는 그대로.
+- 테스트 시작 전: Viewer가 영상마다 첫 스텝의 영상 안 초(`testStarts`, 영상 시작을 모르면 0)를 `analysis.startsRef`로 넘김 →
+  `VideoAnalysisRequest.Starts` → 에이전트가 그 초부터 구간을 나눠 잼(`Chunks(total, from)`), 테스트 전에 끝난 영상은 빈 결과,
+  진행률은 잰 길이로, 화면 영역 추정 표본도 시작 뒤에서. 웹은 [0, 시작]을 제외 구간처럼 검출에서 빼고 그래프에 빗금
+  (옛 에이전트는 전체를 재므로 — 첫 프레임이 시작보다 1.5초 넘게 앞이면 "에이전트를 업데이트하세요" 경고). **에이전트·서버 업데이트 필요.**
+- 확인: `tsc -b` · dotnet build(Agent·Agent.Linux·Server) · ATS 샘플 파싱(시작 = 앞 행 끝, 오차 중앙값 10ms). 화면·실제 영상은 아직 안 봄.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)
