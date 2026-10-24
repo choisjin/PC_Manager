@@ -1,8 +1,8 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-24 · 최신 릴리스 **v0.8.100** (ATS 행 시각 = 스텝 시작(Time Stamp − DURATION) · ATS 표 CYCLE·DEVICE·Control 열, 좁은 열은
-내용에 맞춤 · 영상 분석은 테스트 시작 전을 재지 않음 — **에이전트·서버 업데이트 필요**, 아래 1절의 0.8.100 항목.
-그 앞 0.8.99: 제외 구간 첫 Cycle만·고치기·깜박임 기준 밝기, 0.8.98: 검출 목록을 결과 표 아래로 · 제외 구간 · 베젤 대신 기준 밝기)
+작성: 2026-10-24 · 최신 릴리스 **v0.8.101** (ATS 표: # 열 없앰 · 머리글 9px · Control 작은 글자 두 줄 · 겹쳐 보이던 열·하이라이트 고침 ·
+왼쪽 영상 칸 조금 좁게 — 웹만 바뀜 = 서버만 업데이트, 아래 1절의 0.8.101 항목. 그 앞 0.8.100: ATS 행 시각 = 스텝 시작 · ATS 표 열 ·
+영상 분석은 테스트 시작부터, **에이전트·서버 업데이트 필요**)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -337,6 +337,20 @@ NuGet 경고 NU1903 (GHSA-334f-vvp4-7g6p, CVE-2026-70159, SignalR stateful recon
   진행률은 잰 길이로, 화면 영역 추정 표본도 시작 뒤에서. 웹은 [0, 시작]을 제외 구간처럼 검출에서 빼고 그래프에 빗금
   (옛 에이전트는 전체를 재므로 — 첫 프레임이 시작보다 1.5초 넘게 앞이면 "에이전트를 업데이트하세요" 경고). **에이전트·서버 업데이트 필요.**
 - 확인: `tsc -b` · dotnet build(Agent·Agent.Linux·Server) · ATS 샘플 파싱(시작 = 앞 행 끝, 오차 중앙값 10ms). 화면·실제 영상은 아직 안 봄.
+
+### 0.8.101: ATS 표 — 겹쳐 보이던 열 · # 열 없앰 · Control 두 줄 · 왼쪽 영상 칸
+사용자 요청(스크린샷): 표가 병합돼 보이고 하이라이트가 이상함 · 인덱스 열 삭제 · 머리글 글자 1 더 작게 · Control 값만 글자를 줄여 폭 반, 내용이
+흐르게 해서 다 보이게 · 왼쪽 영상 칸 폭 조금 줄이기.
+- 원인: 열 폭 합(fit + minmax 최소)이 표보다 넓으면 grid가 행(absolute, left/right 0) 밖으로 넘쳐 행 배경·선택·머리글이 표 폭에서 끊김.
+  → RowTable이 열 폭 합을 `minWidth`로 행·머리글·본문에 걸어 가로 스크롤 (넓힌 RFW와 같은 방식). 600px에서 머리글·칸 위치가 같음 확인.
+- fit 폭: 행마다 폭의 99% 지점(드문 긴 값은 …, title로 전체) · 최대 `FIT_MAX` 200px. **`getComputedStyle().font`가 Chrome에서 빈 글** →
+  대체 글꼴(11px sans-serif)로 재서 시각이 잘렸음 → fontStyle·fontWeight·fontSize·fontFamily로 만들어 잼, `document.fonts.ready` 뒤 다시 잼.
+  RFW [전체 보기] 폭 계산도 같은 버그라 같이 고침.
+- `TableSpec.noIndex`(ATS): # 열 없음, 기준점 📍은 시각 칸 앞. `wrapCells`(ATS Control): `.rv-wrap` 9px·줄 높이 11px·break-all로 행 높이(26) 안에서
+  두 줄, fit 폭은 한 줄 폭의 반 + 4. 머리글(`compact`) 10 → 9px.
+- 왼쪽 영상 칸: `.rv-main` minmax(420px, 1.1fr) → minmax(400px, 0.9fr) (ATS·일반 Result, RFW `wide`는 그대로).
+- 확인: 임시 하네스(RowTable + `Reference/` ATS 샘플, vite)로 브라우저에서 — 시각 열 안 잘림, Control 두 줄, 가로 스크롤 정렬·하이라이트 끝까지.
+  `tsc -b`. 실제 앱 화면(테마 색)은 사용자 확인.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

@@ -31,6 +31,8 @@ type PutSlot = 'result' | 'video' | 'image' | 'ref'
 type Dialog = null | 'save' | 'trim'
 
 const ROW_HEIGHT = 26
+// 내용에 맞추는 열(TableSpec "fit")의 최대 폭: 더 긴 값은 … (마우스를 올리면 전체)
+const FIT_MAX = 200
 
 const sourceFromSet = (set: ResultSet): Source => ({
   mode: (set.config as ViewConfig | null)?.mode ?? 'rfw',
@@ -1391,7 +1393,7 @@ function splitColumns(columns: string): string[] {
   return out
 }
 
-function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, playing, trim, excluded, follow, anchors, videoTime, onPick }: {
+function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, playing, trim, excluded, follow, anchors, videoTime, onPick }: {
   /** ATS·RFW: 이 열 이름으로 행의 칸을 그대로 보여 준다 (null이면 자동 판별 공통 열) */
   headers: string[] | null
   spec: TableSpec | null
@@ -1424,7 +1426,8 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
     if (!context) return 0
     // 표 칸과 같은 글꼴로 잰다
     const sample = bodyRef.current.querySelector('.rv-row > span') ?? bodyRef.current
-    context.font = getComputedStyle(sample).font || '12px sans-serif'
+    const st = getComputedStyle(sample)
+    context.font = `${st.fontStyle} ${st.fontWeight} ${st.fontSize} ${st.fontFamily}`
     const show = (c: string) => (spec?.pathCells?.includes(expandCell) ? shortMessage(c) : c)
     let widest = 0
     for (const row of rows) widest = Math.max(widest, context.measureText(show(row.cells[expandCell] ?? '')).width)
@@ -1436,6 +1439,16 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
   // 넓어지기만 하고, 다른 표(spec)가 되면 다시 잰다
   const [fit, setFit] = useState<{ spec: TableSpec | null; widths: Map<number, number> }>({ spec: null, widths: new Map() })
   const fitWidths = fit.spec === spec ? fit.widths : null
+  // 웹 글꼴을 다 불러온 뒤 다시 잰다 (불러오기 전 대체 글꼴로 재면 좁게 나옴)
+  const [fontsReady, setFontsReady] = useState(() => document.fonts?.status === 'loaded')
+  useEffect(() => {
+    if (fontsReady || !document.fonts) return
+    let alive = true
+    void document.fonts.ready.then(() => alive && setFontsReady(true))
+    return () => {
+      alive = false
+    }
+  }, [fontsReady])
   useLayoutEffect(() => {
     const body = bodyRef.current
     const head = headRef.current
@@ -1443,9 +1456,16 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
     if (!spec || !headers || !body || !head || !tokens.includes('fit')) return
     const context = document.createElement('canvas').getContext('2d')
     if (!context) return
-    const fontOf = (el: Element | null, fallback: string) => (el ? getComputedStyle(el).font : '') || fallback
+    // 축약형 font는 빈 글이 올 때가 있어(Chrome) 세부 속성으로 만든다
+    const fontOf = (el: Element | null, fallback: string) => {
+      if (!el) return fallback
+      const st = getComputedStyle(el)
+      return `${st.fontStyle} ${st.fontWeight} ${st.fontSize} ${st.fontFamily}`
+    }
     const cellFont = fontOf(body.querySelector('.rv-row > span.ellipsis, .rv-row > span.rv-status'), '11px sans-serif')
     const monoFont = fontOf(body.querySelector('.rv-row > span.mono'), cellFont)
+    const wrapFont = fontOf(body.querySelector('.rv-row > span.rv-wrap'), cellFont)
+    const wrapping = new Set(spec.wrapCells ?? [])
     const headFont = fontOf(head.querySelector('.rv-colhead-label'), cellFont)
     const icoFont = fontOf(head.querySelector('.rv-colhead-ico'), headFont)
     const measure = (font: string, text: string) => {
@@ -1459,19 +1479,25 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
     tokens.forEach((t, i) => {
       if (t !== 'fit') return
       const time = i === spec.timeCell
-      const seen = new Set<string>()
-      let widest = 0
+      const wrap = wrapping.has(i)
+      // 같은 글은 한 번만 재고, 행마다의 폭에서 99%가 들어가는 폭 (드문 아주 긴 값 하나로 열이 넓어지지 않게 — 그 칸은 …, 마우스를 올리면 전체)
+      const sized = new Map<string, number>()
+      const widths: number[] = []
       for (const row of rows) {
         const text = time ? formatWall(row.time, true) || (row.cells[i] ?? '') : row.cells[i] ?? ''
-        if (seen.has(text)) continue
-        seen.add(text)
-        widest = Math.max(widest, measure(time ? monoFont : cellFont, text))
+        let w = sized.get(text)
+        if (w === undefined) sized.set(text, (w = measure(time ? monoFont : wrap ? wrapFont : cellFont, text)))
+        widths.push(w)
       }
+      widths.sort((a, b) => a - b)
+      const longest = widths.length ? widths[Math.min(widths.length - 1, Math.floor(widths.length * 0.99))] : 0
+      // 줄을 바꾸는 열은 두 줄에 들어가게 반 폭 (글자 단위로 끊기는 여유)
+      const widest = wrap ? longest / 2 + 4 : longest
       // 가운데 열 머리글은 낱말마다 줄을 바꾼다 (colHead)
       const words = centered.has(i) ? headers[i].split(/\s+/) : [headers[i]]
       const label = Math.max(...words.map((w) => measure(headFont, w)))
       // 칸 좌우 여백 3px씩 · 오른쪽 세로 줄 1px · 반올림 여유
-      out.set(i, Math.min(260, Math.ceil(Math.max(widest + 7, label + ico + 4)) + 1))
+      out.set(i, Math.min(FIT_MAX, Math.ceil(Math.max(widest + 7, label + ico + 4)) + 1))
     })
     setFit((prev) => {
       const widths = new Map(out)
@@ -1479,7 +1505,7 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
       const same = prev.spec === spec && widths.size === prev.widths.size && [...widths].every(([i, w]) => prev.widths.get(i) === w)
       return same ? prev : { spec, widths }
     })
-  }, [spec, headers, rows])
+  }, [spec, headers, rows, fontsReady])
   const [height, setHeight] = useState(400)
   const lastUserScroll = useRef(0)
 
@@ -1618,12 +1644,19 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
   const last = Math.min(rows.length, Math.ceil((scroll + height) / ROW_HEIGHT) + 10)
   const anchorRows = new Set(anchors.map((a) => a.row))
   const center = new Set(spec?.center ?? [])
-  const columns = spec ? splitColumns(spec.columns).map((t, i) => (t === 'fit' ? `${fitWidths?.get(i) ?? 60}px` : t)).join(' ') : ''
+  const columnList = spec ? splitColumns(spec.columns).map((t, i) => (t === 'fit' ? `${fitWidths?.get(i) ?? 60}px` : t)) : []
+  // 행 번호(#) 열 (ATS는 없음 — 기준점 📍은 시각 칸 앞에)
+  const index = !spec?.noIndex
+  const numberWidth = !index ? 0 : spec?.compact ? 34 : 40
+  const wrapping = new Set(spec?.wrapCells ?? [])
   const grid = spec
-    ? { gridTemplateColumns: wide ? `40px ${spec.expandColumns} minmax(${expandWidth}px, 1fr)` : `${spec.compact ? 34 : 40}px ${columns}` }
+    ? { gridTemplateColumns: wide ? `40px ${spec.expandColumns} minmax(${expandWidth}px, 1fr)` : `${index ? `${numberWidth}px ` : ''}${columnList.join(' ')}` }
     : undefined
   // 넓힌 표는 가로로 스크롤 (머리글도 같이)
   const wideWidth = wide ? 40 + (spec?.expandColumns ?? '').split(/\s+/).reduce((sum, w) => sum + (parseFloat(w) || 0), 0) + expandWidth : 0
+  // 열 폭의 합(px·minmax 최소)이 창보다 넓으면 행·머리글을 그만큼 넓혀 가로로 스크롤 (행 배경·선택이 끝까지, 머리글과 칸이 맞게)
+  const minWidth = wide ? wideWidth
+    : spec ? numberWidth + columnList.reduce((sum, t) => sum + (parseFloat(/^minmax\(\s*([\d.]+)px/.exec(t)?.[1] ?? t) || 0), 0) : 0
 
   const colHead = (h: string, i: number) => (
     <button
@@ -1642,9 +1675,9 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
   return (
     <div className={`rv-table${spec ? ' fixed' : ''}${spec?.compact ? ' compact' : ''}${wide ? ' expanded' : ''}`}>
       <div className="rv-head-scroll" ref={headRef}>
-        <div className="rv-row rv-row-head small" style={{ ...grid, ...(wide ? { minWidth: wideWidth } : null) }}>
+        <div className="rv-row rv-row-head small" style={{ ...grid, ...(minWidth ? { minWidth } : null) }}>
           {headers
-            ? <><span>#</span>{headers.map((h, i) => (canExpand && i === expandCell ? (
+            ? <>{index && <span>#</span>}{headers.map((h, i) => (canExpand && i === expandCell ? (
                 <span key={i} className="rv-colhead-wrap">
                   {colHead(h, i)}
                   <button
@@ -1673,7 +1706,7 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
         onKeyDown={onTableKey}
         tabIndex={headers && spec ? 0 : undefined}
       >
-        <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative', ...(wide ? { minWidth: wideWidth } : null) }}>
+        <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative', ...(minWidth ? { minWidth } : null) }}>
           {rows.slice(first, last).map((row, i) => {
             const pos = first + i
             const inRows = !!range && pos >= range.top && pos <= range.bottom
@@ -1693,7 +1726,7 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
               onClick={() => onPick(row)}
               title="누르면 영상의 이 시점으로"
             >
-              <span className={`muted${inRows ? ' rv-cell-rowsel' : ''}`} data-col={headers && spec ? -1 : undefined}>{anchorRows.has(row.index) ? '📍' : row.index + 1}</span>
+              {index && <span className={`muted${inRows ? ' rv-cell-rowsel' : ''}`} data-col={headers && spec ? -1 : undefined}>{anchorRows.has(row.index) ? '📍' : row.index + 1}</span>}
               {headers && spec ? row.cells.map((c, i) => {
                 const tone = statusTone(c)
                 // 결과 열은 늘 색, 알림 열(ACTION CHECK·Message Level)은 실패·경고일 때만
@@ -1702,10 +1735,11 @@ function RowTable({ headers, spec,filtered, sort, onHeader, rows, selected, play
                   <span
                     key={i}
                     data-col={i}
-                    className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}${cellClass(i)}`}
+                    className={`${i === spec.timeCell ? 'mono' : colored ? `rv-status cell-${tone || 'none'}` : wrapping.has(i) ? 'rv-wrap' : 'ellipsis'}${center.has(i) ? ' rv-center' : ''}${cellClass(i)}`}
                     title={c}
                   >
-                    {i === spec.timeCell ? formatWall(row.time, true) || c : spec.pathCells?.includes(i) ? shortMessage(c) : c}
+                    {i === spec.timeCell ? `${!index && anchorRows.has(row.index) ? '📍' : ''}${formatWall(row.time, true) || c}`
+                      : spec.pathCells?.includes(i) ? shortMessage(c) : c}
                   </span>
                 )
               }) : (

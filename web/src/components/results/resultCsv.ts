@@ -83,6 +83,10 @@ export interface TableSpec {
   expandColumns?: string
   /** 글자를 1px 작게, 칸 여백을 좁게 (ATS) */
   compact?: boolean
+  /** 행 번호(#) 열을 두지 않는다 */
+  noIndex?: boolean
+  /** 작은 글자로 줄을 바꿔 다 보여 줄 열 (행 높이 안에서 두 줄): 'fit'이면 한 줄 폭의 반으로 */
+  wrapCells?: number[]
 }
 
 // ── RFW Message 표시: 핵심만 한 줄로 (원래 글은 마우스를 올리면)
@@ -495,6 +499,7 @@ const ATS_FALLBACK = ['Time Stamp', 'ITERATION IN JOB', 'DEVICE', 'Control', 'ST
 /** ATS 화면 열: ACTION CHECK(OK/ERROR) · STEP RESULT(PASS/FAIL, 판정 스텝만) */
 export const ATS_ACTION_CELL = 5
 export const ATS_RESULT_CELL = 7
+const ATS_CONTROL_CELL = 3
 const ATS_DURATION_COL = 17
 const ATS_MAPPING: ResultMapping = { time: 0, cycle: 1, status: 7, name: 6, duration: -1, message: 8, durationUnit: 's', timeMode: 'absolute' }
 
@@ -545,6 +550,8 @@ export function parseAts(text: string): ParsedResult {
     // 짧은 열은 내용에 딱 맞게(fit), 긴 열(STATUS·STEP REMARK·DETAIL)이 남는 폭을 나눈다
     columns: 'fit fit fit fit minmax(80px, 1fr) fit minmax(120px, 1.8fr) fit minmax(80px, 1.2fr)',
     compact: true,
+    noIndex: true,
+    wrapCells: [ATS_CONTROL_CELL],
     center: [1, ATS_ACTION_CELL, ATS_RESULT_CELL],
     statusCells: [ATS_RESULT_CELL],
     alertCells: [ATS_ACTION_CELL],

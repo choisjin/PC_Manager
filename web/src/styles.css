@@ -5125,7 +5125,7 @@ th.sortable:hover {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(420px, 1.1fr) minmax(380px, 1fr);
+  grid-template-columns: minmax(400px, 0.9fr) minmax(380px, 1fr);
 }
 .rv-left { display: flex; flex-direction: column; min-height: 0; overflow: auto; border-right: 1px solid var(--border); }
 /* ATS: 영상이 남는 높이를 채우고 원본·결과 이미지는 아래에 고정 → 스크롤 없이 */
@@ -5484,11 +5484,13 @@ body.rv-open .pip { display: none; }
 .rv-colhead.center { justify-content: center; text-align: center; }
 /* ATS: 글자 1px 작게, 칸 여백을 좁게 (짧은 열 폭은 RowTable이 내용에 맞춰 잼) */
 .rv-table.compact .rv-row { font-size: 11px; }
-.rv-table.compact .rv-row-head { font-size: 10px; }
+.rv-table.compact .rv-row-head { font-size: 9px; }
+/* 줄을 바꿔 다 보여 주는 열 (ATS Control): 작은 글자로 행 높이 안에서 두 줄, 낱말 중간에서도 끊음 */
+.rv-table.fixed .rv-row > .rv-wrap { display: flex; align-items: center; white-space: normal; word-break: break-all; font-size: 9px; line-height: 11px; }
 .rv-table.compact .rv-row > * { padding: 0 3px; }
 .rv-table.compact .rv-row-head > * { padding: 0 1px; }
 .rv-table.compact .rv-colhead { gap: 1px; padding: 0 1px; }
-.rv-table.compact .rv-colhead-ico { font-size: 10px; }
+.rv-table.compact .rv-colhead-ico { font-size: 9px; }
 /* 머리글: 가로 스크롤은 본문을 따라감 · [전체 보기] 단추 (RFW Message) */
 .rv-head-scroll { flex: none; overflow: hidden; }
 .rv-table.fixed .rv-row-head > .rv-colhead-wrap { display: flex; align-items: stretch; gap: 0; padding: 0; }
