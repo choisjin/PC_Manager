@@ -34,6 +34,9 @@ public class PcGroupStore(AppPaths paths)
 
     public PcGroupsView Save(PcGroupsView view)
     {
+        // 별칭을 빼고 보낸 저장(옛 대시보드의 폴더 삭제 등)은 별칭을 그대로 둔다 — 빈 목록으로 보면 모든 별칭이 지워진다
+        if (view.Aliases is null)
+            view = view with { Aliases = Load().Aliases };
         var normalized = Normalize(view);
         lock (_lock)
         {

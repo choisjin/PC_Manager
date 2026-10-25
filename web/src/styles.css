@@ -2055,8 +2055,10 @@ tr.cut td {
 
 .remote-pclist {
   flex: none;
+  display: flex;
+  flex-direction: column;
   width: 170px;
-  overflow: auto;
+  overflow: hidden;
   background: var(--panel);
   border-right: 1px solid var(--border);
 }
@@ -2091,6 +2093,9 @@ tr.cut td {
 }
 
 .remote-pclist-items {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   margin: 0;
   padding: 2px 4px;
   list-style: none;
@@ -3622,6 +3627,9 @@ tr.drop-into > td,
   padding: 4px 6px 6px;
   font-size: 11px;
 }
+
+/* 원격조작 전체 화면의 반투명 PC 목록 안: 패널은 불투명하게 (글자가 화면 위에서도 읽히게) */
+.remote-pclist.overlay .pc-info { color: var(--text); background: var(--panel); border-radius: 0 0 10px 10px; }
 
 .pc-info-kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; margin: 0; }
 .pc-info-kv dt { color: var(--muted); white-space: nowrap; }

@@ -34,12 +34,12 @@ interface View {
 }
 
 interface Props {
-  /** 활성 탐색 창의 PC (창이 없거나 공유 서버면 null) */
+  /** 보여 줄 PC: 활성 탐색 창 · 원격조작 중인 PC · Result에서 고른 PC (없으면 null) */
   agent: Agent | null
   name: string | null
 }
 
-/** PC 목록 아래 PC 정보 패널: 시스템 · 디스크 · 프로세스 · 성능 · 장치. 접어 두거나 다른 탭을 보면 그 정보는 묻지 않는다 */
+/** PC 목록 아래 PC 정보 패널 (PC Manager 트리 · 원격조작 PC 목록 · Result PC 목록): 시스템 · 디스크 · 프로세스 · 성능 · 장치. 접어 두거나 다른 탭을 보면 그 정보는 묻지 않는다 */
 export function PcInfoPanel({ agent, name }: Props) {
   const [open, setOpen] = useState(() => load(OPEN_KEY) !== '0')
   const [tab, setTabState] = useState<InfoTab>(() => {
@@ -65,8 +65,9 @@ export function PcInfoPanel({ agent, name }: Props) {
     e.preventDefault()
     const startY = e.clientY
     const startHeight = height
-    const tree = e.currentTarget.closest('.pc-tree')
-    const max = Math.max(MIN_HEIGHT, (tree?.clientHeight ?? window.innerHeight) - 160)
+    // 패널을 담은 목록 (PC Manager 트리 · 원격조작 PC 목록 · Result PC 목록)
+    const box = e.currentTarget.parentElement?.parentElement
+    const max = Math.max(MIN_HEIGHT, (box?.clientHeight ?? window.innerHeight) - 160)
     let latest = startHeight
     const move = (ev: PointerEvent) => {
       latest = Math.round(Math.min(max, Math.max(MIN_HEIGHT, startHeight + startY - ev.clientY)))

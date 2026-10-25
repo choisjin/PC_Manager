@@ -136,10 +136,11 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   const remoteContext = useMemo<RemoteContextValue>(
     () => ({
       pcs: remotePcList(allSections, pcGroups, pcStatuses, remoteUsage),
+      agents,
       userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
       selfAgentId: selfOnline ? selfAgentId : null,
     }),
-    [allSections, pcGroups, pcStatuses, remoteUsage, org.users, selfOnline, selfAgentId],
+    [allSections, agents, pcGroups, pcStatuses, remoteUsage, org.users, selfOnline, selfAgentId],
   )
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)

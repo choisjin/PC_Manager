@@ -25,12 +25,6 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
     private const double ChunkSeconds = 60;
     // 구간마다 이만큼 앞에서 시작해 탐색 직후의 덜 준비된 프레임은 버린다 (첫 프레임의 프레임 차이도 앞 프레임과 비교되게)
     private const double Lead = 1.0;
-    // 화면 영역 추정: 영상마다 뽑는 표본 수 · 표본을 뽑는 영상 수 · 표본 크기 · 칸 · 윤곽으로 볼 이웃 픽셀 밝기 차
-    private const int Samples = 8;
-    private const int SampleVideos = 4;
-    private const int SampleWidth = 128, SampleHeight = 72;
-    private const int GridX = 8, GridY = 6;
-    private const int EdgeThreshold = 14;
     // 사다리꼴 영역은 펴기 전에 이 폭으로 줄인다 (어차피 320 폭으로 잰다)
     private const int WarpWidth = 640;
     // 편 화면은 가장자리를 이만큼(양쪽 3%) 안으로 잘라 잰다: 꼭짓점이 조금만 어긋나도 남는 배경 띠의 경계가 윤곽으로 잡혀
@@ -174,20 +168,11 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         var froms = r.Paths.Select((_, i) => Math.Max(0, r.Starts is { } s && i < s.Length && double.IsFinite(s[i]) ? s[i] : 0)).ToArray();
         bool Skipped(int i) => probes[i]?.Duration is { } d && froms[i] >= d - 0.05;
 
-        // 화면 영역: 지정한 것 → 없으면 추정. 베젤은 화면을 직접 지정했을 때만
-        Region roi;
-        string source;
-        if (Region.Parse(r.Roi) is { } given)
-            (roi, source) = (given, given.IsBox && given.Bounds == (0d, 0d, 1d, 1d) ? "화면 전체" : "직접 지정");
-        else
-        {
-            lock (job)
-                job.Current = "화면 영역 추정";
-            var videos = r.Paths.Select((p, i) => (Path: p, probes[i]?.Duration, From: froms[i], Ok: probes[i] is not null && !Skipped(i)))
-                .Where(x => x.Ok).Take(SampleVideos).Select(x => (x.Path, x.Duration, x.From)).ToList();
-            (roi, source) = await DetectScreenAsync(ffmpeg, videos, workers, token);
-        }
-        var bezel = Region.Parse(r.Roi) is not null ? FitBezel(roi, Region.Parse(r.Bezel)) : null;
+        // 화면 영역: 웹에서 직접 지정한 것 (없으면 화면 전체). 베젤은 화면을 지정했을 때만
+        var given = Region.Parse(r.Roi);
+        var roi = given ?? Region.Full;
+        var source = roi.IsBox && roi.Bounds == (0d, 0d, 1d, 1d) ? "화면 전체" : "직접 지정";
+        var bezel = given is not null ? FitBezel(roi, Region.Parse(r.Bezel)) : null;
         lock (job)
         {
             job.Roi = roi.ToArray();
@@ -704,105 +689,5 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         }
 
         public override string ToString() => string.Join(",", ToArray().Select(v => v.ToString(CultureInfo.InvariantCulture)));
-    }
-
-    /// <summary>
-    /// 화면 영역 추정: 영상마다 고르게 몇 장 뽑아 칸(8×6)별 윤곽 양의 변화폭이 큰 칸들을 감싸는 사각형.
-    /// 배경(케이블·벽)은 화면이 바뀌어도 윤곽 양이 거의 그대로다. 못 찾으면 화면 전체. 표본은 영상마다 From초(테스트 시작) 뒤에서
-    /// </summary>
-    private static async Task<(Region Roi, string Source)> DetectScreenAsync(string ffmpeg,
-        IReadOnlyList<(string Path, double? Duration, double From)> videos, int workers, CancellationToken token)
-    {
-        var points = videos.SelectMany(v => Enumerable.Range(0, Samples)
-            .Select(k => (v.Path, At: v.From + (v.Duration is { } d ? (d - v.From) * (k + 0.5) / Samples : k * 2.0)))).ToList();
-        var frames = new ConcurrentBag<byte[]>();
-        await Parallel.ForEachAsync(points, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = token }, async (p, ct) =>
-        {
-            if (await SampleAsync(ffmpeg, p.Path, p.At, ct) is { } frame)
-                frames.Add(frame);
-        });
-        if (frames.Count < 4)
-            return (Region.Full, "화면 전체 (표본 프레임 부족)");
-        var lo = new double[GridX * GridY];
-        var hi = new double[GridX * GridY];
-        Array.Fill(lo, double.MaxValue);
-        foreach (var frame in frames)
-        {
-            var cells = CellEdges(frame);
-            for (var i = 0; i < cells.Length; i++)
-            {
-                lo[i] = Math.Min(lo[i], cells[i]);
-                hi[i] = Math.Max(hi[i], cells[i]);
-            }
-        }
-        var range = lo.Select((l, i) => hi[i] - l).ToArray();
-        var top = range.Max();
-        var dynamic = Enumerable.Range(0, range.Length).Where(i => range[i] >= Math.Max(15, 0.3 * top)).ToList();
-        if (dynamic.Count < 4)
-            return (Region.Full, "화면 전체 (화면 영역을 찾지 못함)");
-        double x0 = dynamic.Min(i => i % GridX) / (double)GridX, x1 = (dynamic.Max(i => i % GridX) + 1) / (double)GridX;
-        double y0 = dynamic.Min(i => i / GridX) / (double)GridY, y1 = (dynamic.Max(i => i / GridX) + 1) / (double)GridY;
-        if ((x1 - x0) * (y1 - y0) < 0.15)
-            return (Region.Full, "화면 전체 (추정 영역이 너무 작음)");
-        return (Region.Box(Math.Round(x0, 4), Math.Round(y0, 4), Math.Round(x1, 4), Math.Round(y1, 4)), $"자동 추정 (표본 {frames.Count}장의 칸별 윤곽 변화)");
-    }
-
-    /// <summary>at초의 프레임 한 장 (SampleWidth×SampleHeight 회색조). 못 읽으면 null</summary>
-    private static async Task<byte[]?> SampleAsync(string ffmpeg, string path, double at, CancellationToken token)
-    {
-        var info = new ProcessStartInfo(ffmpeg)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardError = true,
-            RedirectStandardOutput = true,
-        };
-        foreach (var arg in new[]
-                 {
-                     "-hide_banner", "-loglevel", "error", "-nostdin", "-ss", Seconds(at), "-i", path, "-frames:v", "1",
-                     "-vf", $"scale={SampleWidth}:{SampleHeight},format=gray", "-f", "rawvideo", "-pix_fmt", "gray", "-",
-                 })
-            info.ArgumentList.Add(arg);
-        using var process = Process.Start(info);
-        if (process is null)
-            return null;
-        _ = process.StandardError.ReadToEndAsync(CancellationToken.None);
-        var frame = new byte[SampleWidth * SampleHeight];
-        try
-        {
-            var read = await process.StandardOutput.BaseStream.ReadAtLeastAsync(frame, frame.Length, throwOnEndOfStream: false, token);
-            await process.WaitForExitAsync(token);
-            return read == frame.Length ? frame : null;
-        }
-        finally
-        {
-            if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
-        }
-    }
-
-    /// <summary>칸별 윤곽 양: 이웃(오른쪽·아래) 픽셀과 밝기 차가 EdgeThreshold를 넘는 쌍의 수 × 100 / 칸 픽셀 수</summary>
-    private static double[] CellEdges(byte[] px)
-    {
-        const int cw = SampleWidth / GridX, ch = SampleHeight / GridY;
-        var cells = new double[GridX * GridY];
-        for (var gy = 0; gy < GridY; gy++)
-            for (var gx = 0; gx < GridX; gx++)
-            {
-                var count = 0;
-                for (var y = gy * ch; y < gy * ch + ch; y++)
-                {
-                    var row = y * SampleWidth + gx * cw;
-                    for (var x = 0; x < cw - 1; x++)
-                        if (Math.Abs(px[row + x] - px[row + x + 1]) > EdgeThreshold)
-                            count++;
-                    if (y + 1 < SampleHeight)
-                        for (var x = 0; x < cw; x++)
-                            if (Math.Abs(px[row + x] - px[row + SampleWidth + x]) > EdgeThreshold)
-                                count++;
-                }
-                cells[gy * GridX + gx] = count * 100.0 / (cw * ch);
-            }
-        return cells;
     }
 }

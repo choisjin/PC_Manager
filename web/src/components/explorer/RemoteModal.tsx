@@ -5,6 +5,7 @@ import { fileClipboard, type RemoteFileClip, useFileClipboard } from '../remote/
 import { RemoteContext } from '../remote/RemoteContext'
 import { MseSink, type VideoSink, WebCodecsSink, webCodecsAvailable } from '../remote/sinks'
 import { Icon, type IconName } from './Icon'
+import { PcInfoPanel } from './PcInfoPanel'
 
 interface Props {
   agentId: string
@@ -171,7 +172,7 @@ const LOCK_HINT = '키보드 잠금: Alt+Tab·Win·Alt+F4가 원격으로 전달
 export function RemoteModal({ agentId: initialAgentId, machineName: initialName, userId, onClose, tab = false, onAgentChange }: Props) {
   // PC 목록에서 다른 PC로 바꾸면 그 PC로 다시 연결한다
   const [agentId, setAgentId] = useState(initialAgentId)
-  const { pcs, userName, selfAgentId } = useContext(RemoteContext)
+  const { pcs, agents, userName, selfAgentId } = useContext(RemoteContext)
   const machineName = pcs.find((p) => p.id === agentId)?.name ?? (agentId === initialAgentId ? initialName : agentId.slice(0, 8))
   const [listOpen, setListOpen] = useState(() => {
     try {
@@ -973,6 +974,10 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     </ul>
   )
 
+  // PC 목록 아래 PC 정보 패널 (지금 원격조작 중인 PC)
+  const infoAgent = agents.find((a) => a.id === agentId) ?? null
+  const infoPanel = <PcInfoPanel agent={infoAgent} name={infoAgent ? machineName : null} />
+
   const pressSpecial = (k: SpecialKey) => {
     if (k.action === 'cad') {
       api.sendCtrlAltDel(agentId).catch((err: unknown) => showHint(err instanceof Error ? err.message : String(err)))
@@ -1092,6 +1097,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
         <aside className="remote-pclist">
           <div className="remote-pclist-title small muted">PC 목록 · 클릭하면 전환</div>
           {pcList}
+          {infoPanel}
         </aside>
       )}
       <div
@@ -1153,6 +1159,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
           >
             <div className="remote-pclist-title small">PC 목록 · 클릭하면 전환{fsPinned ? ' · 고정됨' : ''}</div>
             {pcList}
+            {infoPanel}
           </aside>
         )}
 

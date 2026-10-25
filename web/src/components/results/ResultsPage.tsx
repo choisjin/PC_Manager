@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Agent, type FileEntry, type Org, type PcGroups, type ResultPreset, type ResultProfile } from '../../api'
 import { formatBytes } from '../../format'
+import { PcInfoPanel } from '../explorer/PcInfoPanel'
 import { displayName } from '../explorer/pcGroups'
 import { projectAgents, remoteSections } from '../remote/remotePcs'
 import { RESULT_MODE_LABEL } from './resultCsv'
@@ -224,6 +225,7 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
             <p className="muted small rp-empty">{onlySet ? '결과 폴더를 정한 PC가 없습니다' : 'PC가 없습니다'}</p>
           )}
         </div>
+        <PcInfoPanel agent={agent} name={agent ? nameOf(agent) : null} />
       </aside>
 
       <section className="panel rp-main">

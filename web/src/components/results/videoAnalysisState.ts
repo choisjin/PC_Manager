@@ -18,8 +18,8 @@ import type { Exclusion } from './videoExclude'
 /** 영상 아래 탐색 막대에 그리는 검출 구간 색 */
 export const MARK_COLOR: Record<SegmentKind, string> = { black_screen: '#c9392f', flicker: '#d4972a', static: '#8a93a3' }
 
-/** 화면 영역: 에이전트가 추정 · 화면 전체 · 직접 지정 */
-export type RoiMode = 'auto' | 'full' | 'custom'
+/** 정지 기준의 가장 작은 값 (초): 실제로는 제외 구간 밖 스텝의 가장 짧은 DURATION (그보다 작으면 이 값) */
+export const STATIC_MIN = 1
 
 /** 받은 프레임 (영상 하나): 앞 n개만 유효, 모자라면 두 배로 늘린다 (20시간 30fps ≈ 216만 프레임 ≈ 80MB) */
 export interface VideoFrames {
@@ -46,7 +46,7 @@ export interface VideoFrames {
   error: string | null
 }
 
-/** 쓴 분석 조건 (에이전트가 정한 화면 영역): 직사각형 [x0, y0, x1, y1] 또는 꼭짓점 넷 (비율) */
+/** 쓴 분석 조건 (에이전트가 쓴 화면 영역): 직사각형 [x0, y0, x1, y1] 또는 꼭짓점 넷 (비율) */
 export interface AnalysisSetup {
   roi: number[] | null
   roiSource: string | null
@@ -163,8 +163,7 @@ function arraysOf(f: VideoFrames, n: number): FrameArrays {
  */
 export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
   const [open, setOpen] = useState(false)
-  const [roiMode, setRoiMode] = useState<RoiMode>('auto')
-  // 직접 지정한 화면: 꼭짓점 넷 (비스듬히 찍힌 화면도 그대로, 에이전트가 반듯하게 펴서 잰다)
+  // 화면 영역 (늘 직접 지정, 지정해야 분석): 꼭짓점 넷 (비스듬히 찍힌 화면도 그대로, 에이전트가 반듯하게 펴서 잰다)
   const [customRoi, setCustomRoi] = useState<Quad | null>(null)
   // 정지 구간 기준 (초): 바꾸면 받은 프레임으로 바로 다시 판정
   const [staticS, setStaticS] = useState(10)
@@ -281,7 +280,7 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
     setPicked(null)
     setRunning(true)
     const started = Date.now()
-    const roi = roiMode === 'full' ? [0, 0, 1, 1] : roiMode === 'custom' ? customRoi : null
+    const roi = customRoi
     const starts = videos.map((_, i) => startsRef.current[i] ?? 0)
     try {
       const { id } = await api.startVideoAnalysis(agentId, { paths: videos.map((v) => v.readPath), roi, starts })
@@ -312,7 +311,7 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
         if (next.roi) {
           setSetup({ roi: next.roi, roiSource: next.roiSource })
           // 꼭짓점 넷을 보냈는데 직사각형이 왔다 = 꼭짓점을 모르는 옛 에이전트 (화면 영역을 추정해 잰다)
-          if (roiMode === 'custom' && customRoi && next.roi.length !== 8) {
+          if (customRoi && next.roi.length !== 8) {
             setWarning('이 PC의 에이전트는 꼭짓점으로 지정한 영역을 몰라 화면 영역을 추정해 잽니다. 에이전트를 업데이트하세요')
           }
         }
@@ -373,7 +372,7 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
   }
 
   return {
-    open, setOpen, close, roiMode, setRoiMode, customRoi, setCustomRoi, staticS, changeStatic, showRoi, setShowRoi,
+    open, setOpen, close, customRoi, setCustomRoi, staticS, changeStatic, showRoi, setShowRoi,
     picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit, cycleDiff, setCycleDiff,
     frames, results, setup, status, error, warning, running, retrying, elapsed, run, stop, picked, setPicked, startsRef,
   }

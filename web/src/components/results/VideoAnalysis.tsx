@@ -6,7 +6,7 @@ import type { FrameShot, SearchVideo, StepSource } from './imageSearchState'
 import { QuadPickerDialog } from './QuadPicker'
 import { formatWall, type ResultRow, statusTone } from './resultCsv'
 import { rowAtTime } from './sync'
-import type { RoiMode, VideoAnalysisState, VideoFrames } from './videoAnalysisState'
+import type { VideoAnalysisState, VideoFrames } from './videoAnalysisState'
 import { CYCLE_COLOR, type CycleAnomaly, type CycleCompare, type CycleMap } from './videoCycle'
 import { bisectLeft, type DetectedSegment, type DetectResult, type SegmentKind } from './videoDetect'
 import { type Exclusion, type ExclusionDraft, spansOf } from './videoExclude'
@@ -45,7 +45,6 @@ const LEAD_S = 1.5
 // 그래프에 겹칠 Cycle 짝이 없을 때 (매번 새 배열을 만들지 않게)
 const NO_MAPS: CycleMap[] = []
 // 정지 기준 칸 (초)
-const STATIC_MIN = 1
 const STATIC_MAX = 86400
 
 /** 그래프에 그리는 것: 범례를 눌러 켜고 끈다 (끈 것은 이 브라우저에 기억) */
@@ -110,8 +109,8 @@ export function AnalysisOverlay({ state, videoRef, currentPath }: {
   const active = state.open && state.showRoi
   const { boxRef, view } = useVideoView(videoRef, active, currentPath)
   if (!active) return null
-  // 직접 지정이면 고른 영역, 아니면 분석에 쓴 영역 (추정한 것)
-  const roi = state.roiMode === 'custom' ? state.customRoi : state.setup?.roi ?? null
+  // 고른 영역 (없으면 분석에 쓴 영역)
+  const roi = state.customRoi ?? state.setup?.roi ?? null
   // 비율 꼭짓점 → 오버레이 안 위치 (비스듬한 영역도 그대로 다각형으로)
   const points = (r: number[]) => (view
     ? cornersOf(r).map(([x, y]) => `${view.left + x * view.vw * view.scale},${view.top + y * view.vh * view.scale}`).join(' ')
@@ -517,8 +516,10 @@ function NumberField({ value, min, max, onCommit }: { value: number; min: number
 
 // ─────────────────────────────── 패널 (영상 아래): 설정·진행·그래프·영상 정보
 
-export function VideoAnalysisPanel({ state, results, excluded, cycle, videos, steps, currentPath, grab, escape, nowSeconds, onSeek }: {
+export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle, videos, steps, currentPath, grab, escape, nowSeconds, onSeek }: {
   state: VideoAnalysisState
+  /** 정지 기준의 가장 작은 값 (초): 제외 구간 밖 스텝의 가장 짧은 DURATION */
+  staticMin: number
   /** 영상마다 제외 구간을 뺀 검출 */
   results: DetectResult[]
   /** 영상마다 제외 구간 (영상 안 초) */
@@ -539,7 +540,6 @@ export function VideoAnalysisPanel({ state, results, excluded, cycle, videos, st
   onSeek: (path: string, seconds: number) => void
 }) {
   const [grabError, setGrabError] = useState<string | null>(null)
-  const custom = state.roiMode === 'custom'
   const openPicker = () => {
     const frame = grab()
     setGrabError(frame ? null : '영상 프레임을 아직 읽지 못했습니다. 영상이 보이면 다시 누르세요')
@@ -580,7 +580,6 @@ export function VideoAnalysisPanel({ state, results, excluded, cycle, videos, st
     if (!frame) return null
     const quad = corners.flatMap(([x, y]) => [Math.round((x / frame.width) * 10000) / 10000, Math.round((y / frame.height) * 10000) / 10000]) as Quad
     state.setCustomRoi(quad)
-    state.setRoiMode('custom')
     state.setPicking(null)
     return null
   }
@@ -593,31 +592,24 @@ export function VideoAnalysisPanel({ state, results, excluded, cycle, videos, st
     <div className="rv-search rv-va">
       <div className="rv-search-bar">
         <strong title="화면 영역의 밝기·윤곽·변화량을 프레임마다 재서 검은 화면·깜박임·정지 구간·화면 전환을 찾습니다 (테스트 PC에서 ffmpeg)">영상 분석</strong>
-        <span className="rv-search-group">
-          <label className="small" title="밝기·윤곽을 잴 화면 부분. 자동 추정 = 칸별 윤곽 변화가 큰 곳 (웹캠으로 찍은 모니터 화면)">
-            화면 영역
-            <select
-              value={state.roiMode}
-              onChange={(e) => {
-                const mode = e.target.value as RoiMode
-                state.setRoiMode(mode)
-                if (mode === 'custom' && !state.customRoi) openPicker()
-              }}
-            >
-              <option value="auto">자동 추정</option>
-              <option value="full">화면 전체</option>
-              <option value="custom">직접 지정</option>
-            </select>
-          </label>
-          {custom && <button type="button" onClick={openPicker} title="지금 프레임을 크게 띄워 화면 부분을 고릅니다">영역 지정</button>}
-        </span>
+        <button
+          type="button"
+          className={state.customRoi ? '' : 'primary'}
+          onClick={openPicker}
+          title="밝기·윤곽을 잴 화면 부분: 지금 프레임을 크게 띄워 꼭짓점을 고릅니다 (분석 전에 지정)"
+        >
+          화면 영역
+        </button>
         <label className="small" title="영상 위에 화면 영역(빨강) 표시">
           <input type="checkbox" checked={state.showRoi} onChange={(e) => state.setShowRoi(e.target.checked)} />
           영상에 표시
         </label>
-        <label className="small" title="화면 변화가 이 시간 이상 없으면 정지 구간 (Enter 또는 칸을 벗어나면 적용 — 다시 재지 않고 바로 다시 나눕니다)">
+        <label
+          className="small"
+          title={`화면 변화가 이 시간 이상 없으면 정지 구간 (Enter 또는 칸을 벗어나면 적용 — 다시 재지 않고 바로 다시 나눕니다). 가장 작은 값 = 제외 구간 밖 스텝의 가장 짧은 DURATION (${staticMin}초)`}
+        >
           정지 기준
-          <NumberField key={state.staticS} value={state.staticS} min={STATIC_MIN} max={STATIC_MAX} onCommit={state.changeStatic} />
+          <NumberField key={state.staticS} value={state.staticS} min={staticMin} max={STATIC_MAX} onCommit={state.changeStatic} />
           초
         </label>
         <button
@@ -636,7 +628,8 @@ export function VideoAnalysisPanel({ state, results, excluded, cycle, videos, st
               <button
                 type="button"
                 className="primary"
-                disabled={videos.length === 0 || (custom && !state.customRoi) || state.picking !== null}
+                disabled={videos.length === 0 || !state.customRoi || state.picking !== null}
+                title={state.customRoi ? undefined : '[화면 영역]을 먼저 지정하세요'}
                 onClick={() => void state.run()}
               >
                 {hasResult ? '다시 분석' : '분석'}
@@ -658,7 +651,9 @@ export function VideoAnalysisPanel({ state, results, excluded, cycle, videos, st
       {state.frames.filter((f) => f?.error).map((f) => <p key={f.path} className="error small">{`${nameOf(f.path)}: ${f.error}`}</p>)}
       {!hasResult && !state.running && !state.error && (
         <p className="small muted">
-          {`[분석]을 누르면 이 실행의 영상 ${videos.length}개를 테스트 PC에서 프레임마다 재서 검은 화면·깜박임·정지 구간·화면 전환을 찾습니다.`}
+          {state.customRoi
+            ? `[분석]을 누르면 이 실행의 영상 ${videos.length}개를 테스트 PC에서 프레임마다 재서 검은 화면·깜박임·정지 구간·화면 전환을 찾습니다.`
+            : '[화면 영역]을 눌러 잴 화면 부분을 먼저 지정하세요. 그다음 [분석]을 누릅니다.'}
         </p>
       )}
       {hasResult && (

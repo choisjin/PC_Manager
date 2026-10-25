@@ -24,7 +24,7 @@ import { VideoTransport } from './VideoTransport'
 import { CropOverlay, ImageSearchPanel } from './ImageSearch'
 import { grabFrame, type SearchVideo, type StepSource, useImageSearch } from './imageSearchState'
 import { AnalysisOverlay, ExcludeBar, VideoAnalysisPanel, VideoAnalysisResults } from './VideoAnalysis'
-import { MARK_COLOR, useVideoAnalysis } from './videoAnalysisState'
+import { MARK_COLOR, STATIC_MIN, useVideoAnalysis } from './videoAnalysisState'
 import { compareCycles, CYCLE_COLOR } from './videoCycle'
 import { applyExclusions, type ExclusionDraft, mergeSpans, spansOf } from './videoExclude'
 
@@ -709,8 +709,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     }, analysis.frames, analysis.cycleDiff, excludeSpans)
   }, [vaOpen, analysis.frames, analysis.cycleDiff, sortedRows, stepSource, searchVideos, excludeSpans])
   // 제외 구간에 드는 행 (표에 빗금): 둘 다 시각순이라 한 번 훑는다
-  const excludedRows = useMemo(() => {
-    if (!vaOpen || !excludeWall.length) return null
+  const rowsInExclude = useMemo(() => {
     const rowsIn = new Set<number>()
     let k = 0
     for (const r of sortedRows) {
@@ -718,7 +717,19 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
       if (k < excludeWall.length && r.time! >= excludeWall[k][0]) rowsIn.add(r.index)
     }
     return rowsIn
-  }, [vaOpen, excludeWall, sortedRows])
+  }, [excludeWall, sortedRows])
+  const excludedRows = vaOpen && excludeWall.length ? rowsInExclude : null
+  // 정지 기준의 가장 작은 값: 제외 구간 밖 스텝의 가장 짧은 DURATION (0.1초 올림, 걸린 시간이 없으면 STATIC_MIN)
+  const staticMin = useMemo(() => {
+    let low = Infinity
+    for (const r of sortedRows) if (r.durationMs && !rowsInExclude.has(r.index)) low = Math.min(low, r.durationMs)
+    return low === Infinity ? STATIC_MIN : Math.max(STATIC_MIN, Math.ceil(low / 100) / 10)
+  }, [sortedRows, rowsInExclude])
+  // 정지 기준이 가장 작은 값보다 작아지면 (제외 구간을 바꿈 등) 그 값으로 올린다
+  useEffect(() => {
+    if (analysis.staticS < staticMin) analysis.changeStatic(staticMin)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staticMin, analysis.staticS])
   const draftRow = (index: number | null) => (index === null ? null : sortedRows[trim.order.get(index) ?? -1] ?? null)
 
   // 영상 분석을 열면 결과 표 아래 검출 탭 줄을 영상 조작 줄(재생·이동…)과 같은 높이에 맞춘다
@@ -928,6 +939,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           {vaOpen && (
             <VideoAnalysisPanel
               state={analysis}
+              staticMin={staticMin}
               results={shownResults}
               excluded={excludeSpans}
               cycle={cycleCompare}

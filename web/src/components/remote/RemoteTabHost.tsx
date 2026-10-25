@@ -47,6 +47,7 @@ export function RemoteTabHost({ initialAgentId, agents, pcGroups, org, filterPro
     const { allSections } = remoteSections(pcGroups, candidates, org, filterProjectId, selfUserId, null)
     return {
       pcs: remotePcList(allSections, pcGroups, pcStatuses, remoteUsage),
+      agents,
       userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
       selfAgentId,
     }

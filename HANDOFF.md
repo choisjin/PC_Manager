@@ -1,7 +1,8 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-24 · 최신 릴리스 **v0.8.103** (영상 분석 Cycle 비교 — 첫 Cycle 기준 특이점 · ATS 표 머리글 가운데·글자 9px 통일 — 웹만 바뀜 =
-서버만 업데이트, 아래 1절의 0.8.103 항목. 그 앞 0.8.100: ATS 행 시각 = 스텝 시작 · 영상 분석은 테스트 시작부터, **에이전트·서버 업데이트 필요**)
+작성: 2026-10-26 · 최신 릴리스 **v0.8.104** (PC 폴더를 지우면 모든 별칭이 지워지던 버그 · PC 정보 패널을 Result·원격조작 창/전체 화면에도 ·
+영상 분석 화면 영역은 늘 직접 지정, 정지 기준 최소값 = 제외 구간 밖 가장 짧은 DURATION — **서버 업데이트**, 에이전트는 자동 추정 코드만 지움(업데이트 안 해도 됨),
+아래 1절의 0.8.104 항목. 그 앞 0.8.100: ATS 행 시각 = 스텝 시작 · 영상 분석은 테스트 시작부터, **에이전트·서버 업데이트 필요**)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -372,6 +373,22 @@ NuGet 경고 NU1903 (GHSA-334f-vvp4-7g6p, CVE-2026-70159, SignalR stateful recon
 - ATS 표(`compact`): 본문도 9px(머리글·Control과 같게, DEVICE 전용 작은 글자 설정 없앰), 머리글 모두 가운데 (▾는 글자 옆).
 - 확인: scratchpad `cycle/run.ts` — ATS 샘플(6 Cycle) 스텝마다 이름별 밝기 모양 + Cycle마다 ±0.3초 어긋남·잡음, 3번째 Cycle 2초 꺼짐 → 특이점 1건
   (#417 +1.8초, 133 → 8), 4번째 Cycle 0.3초 튐은 안 잡힘, 579스텝 비교. 임시 하네스(VideoAnalysisPanel·Results)로 탭·목록·겹침선·음영 확인. `tsc -b`.
+
+### 0.8.104: 별칭 지워짐 버그 · PC 정보 패널 확대 · 영상 분석 화면 영역 직접 지정 · 정지 기준 최소값
+사용자 보고: Renault 서버에 등록한 PC 별칭이 가끔 초기화됨. 요청: PC 정보 패널을 Result·원격 창 모드·전체 모드에도 / 화면 영역 자동 추정 삭제(버튼 하나) /
+정지 기준 최소값 = 제외 구간을 뺀 최소 duration.
+- 별칭 버그 원인: `pcGroups.ts` `deleteFolder`가 `{ folders, assignments }`만 돌려줘 aliases가 빠짐 → PUT `/api/pc-groups`(문서 통째 저장)에서
+  서버 `Normalize`가 `Aliases ?? 빈 사전` → 폴더를 지울 때마다 그 서버의 별칭 전부 삭제. 고침: `...groups` 유지 + 서버 `PcGroupStore.Save`는
+  Aliases가 null이면 저장된 별칭 유지(옛 탭 방어). 지워진 별칭은 복구 불가. 남은 위험: 통째 저장(last-write-wins)이라 연결 끊겼던 오래된 탭이
+  그사이 바뀐 것을 덮어쓸 수 있음 — 사용자에게 알림, 차이만 보내는 PATCH는 하지 않음.
+- PC 정보 패널(`PcInfoPanel`)을 Result PC 목록(`ResultsPage` aside 아래, 고른 PC) · 원격조작 PC 목록(`RemoteModal`, 창 모드 aside와 전체 화면 overlay,
+  지금 PC) 아래에도. `RemoteContextValue.agents` 추가(FileExplorer·RemoteTabHost가 넣음). `.remote-pclist`는 flex 세로 + 목록만 스크롤,
+  overlay 안 패널은 불투명 배경. 높이 조절 최대는 패널을 담은 목록 높이(`parentElement.parentElement`). 접힘·탭·높이 localStorage는 네 곳 공유.
+- 영상 분석 화면 영역: `RoiMode`(자동 추정·화면 전체·직접 지정) 없앰 → [화면 영역] 버튼(지정 전엔 primary) 하나, 지정 전엔 [분석] 비활성.
+  에이전트 `DetectScreenAsync`·`SampleAsync`·`CellEdges`와 표본 상수 삭제, Roi가 null이면 화면 전체.
+- 정지 기준: 최소값 = 제외 구간 밖(`rowsInExclude`) 스텝 중 가장 짧은 DURATION(0.1초 올림, `STATIC_MIN` 1초 미만이면 1, DURATION 없으면 1).
+  지금 값이 최소보다 작으면 Viewer effect가 `changeStatic(최소)`로 올림 (최소가 다시 내려가도 값은 그대로).
+- 확인: `tsc -b`, 서버·에이전트(Windows·Linux) 빌드. 화면 확인은 하지 않음.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

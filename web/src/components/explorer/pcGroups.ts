@@ -157,7 +157,7 @@ export function deleteFolder(groups: PcGroups, id: string): PcGroups {
   const assignments = Object.fromEntries(
     Object.entries(groups.assignments).filter(([, folderId]) => !toDelete.has(folderId)),
   )
-  return { folders: groups.folders.filter((f) => !toDelete.has(f.id)), assignments }
+  return { ...groups, folders: groups.folders.filter((f) => !toDelete.has(f.id)), assignments }
 }
 
 export function assignAgent(groups: PcGroups, agentId: string, folderId: string | null): PcGroups {
