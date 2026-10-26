@@ -1,7 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.9.0** (0.9로 올림 — 이후 0.9.x · GPU 고르기: 가상 디스플레이 빼고 외장 → 내장, GPU 디코딩 실패는 그 영상만 CPU로 —
-**에이전트 업데이트**, 아래 1절의 0.9.0 항목. 그 앞 0.8.108: 원격 변환 SIMD·GPU 사용 표시, 에이전트·서버 업데이트 필요)
+작성: 2026-10-26 · 최신 릴리스 **v0.9.1** (영상 분석 동시 ffmpeg 수·필터 스레드 조정으로 13~21% 빠르게 — **에이전트 업데이트**, 아래 1절의 0.9.1 항목.
+그 앞 0.9.0: GPU 고르기(가상 디스플레이 제외, 외장 → 내장)·GPU 디코딩 실패는 그 영상만 CPU로. 버전은 0.9.x)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -471,6 +471,19 @@ CPU (GPU 디코딩이 실패해 바꿈)'. 요청: 가상 디스플레이는 자�
 - 호출: `VideoAnalyzer.MeasureAsync`·`VideoImageSearch.ScanAsync`(한 프레임도 못 읽으면 실패)가 `DecodeAsync`, `VideoTrimmer.RunGpuAsync(ffmpeg, path, …)`.
 - 확인: 에이전트(Windows·Linux) 빌드, 임시 콘솔로 개발 PC Adapters(NVIDIA 0 → AMD 2)·DecodeOptions·Status·MFT 차례(NVIDIA, AMD)·하드웨어 인코딩
   60장, ffmpeg d3d11va 장치 번호 지정(0·1·2 — 1은 같은 NVIDIA). 사용자 PC(가상 디스플레이)로는 못 봄.
+
+### 0.9.1: 영상 분석 동시 실행 수·필터 스레드
+사용자 보고: GPU 디코딩이 되자 GPU 사용률 60%+인데 분석 속도는 그대로. → 같은 ffmpeg(서버 패키지 tools/ffmpeg 9.0.2 gyan essentials)로 1080p30
+2분 8Mbps 영상·꼭짓점 영역 측정 (scratchpad bench): ffmpeg 하나 기준 디코딩만 1.6초, +자르기·펴기·축소 2.1, +밝기 통계 2.5, +윤곽(edgedetect)
+·통계 5.0, 전체 5.3초 — 시간의 약 70%가 디코딩 뒤 CPU 측정 필터(특히 edgedetect, 프레임마다 차례로). GPU 디코딩은 CPU 시간(34→22초)만 줄이고,
+1080p 프레임을 GPU→CPU로 내려받는 비용으로 강한 CPU에선 오히려 조금 느림. GPU %는 디코딩 엔진일 것.
+- 효과 없던 것: filter_threads 1(2배 느림), scale_d3d11(텍스처 생성 오류), scale_cuda(더 느림), 필터 두 갈래 출력(6%), edgedetect planes=y(값 같고 시간 같음).
+  h264_cuvid -resize는 디코딩만 빠름(NVIDIA 전용, 필터 몫은 그대로).
+- 바꾼 것 `VideoAnalyzer`: `Workers` = 논리 코어/2 (1~8, 전엔 최대 4) · `FilterThreads` = 논리 코어/Workers (1~3) → ffmpeg 인자 `-filter_threads`·
+  `-filter_complex_threads` (기본은 ffmpeg마다 코어 수만큼이라 넘침). 측정: 24스레드 4개·기본 1355 → 8개·3개 1616 fps(CPU 디코딩, +19%), GPU 1207 →
+  1296(+7%) / 16스레드로 제한 1143 → 1379(+21%), GPU 1152 → 1299(+13%) / 8스레드 748 → 786, GPU 913 → 976. 결과 값은 같음.
+- 더 빠르게 하려면(사용자에게 제안, 보류): ffmpeg는 풀고 줄이기만, 밝기·차이·윤곽은 에이전트가 여러 프레임 동시에 SIMD로 (2~4배 예상, ffmpeg
+  signalstats·edgedetect 계산을 그대로 옮겨 값 맞추기가 큰 일).
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

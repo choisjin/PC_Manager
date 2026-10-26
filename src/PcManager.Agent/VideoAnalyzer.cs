@@ -25,6 +25,11 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
     private const double ChunkSeconds = 60;
     // 구간마다 이만큼 앞에서 시작해 탐색 직후의 덜 준비된 프레임은 버린다 (첫 프레임의 프레임 차이도 앞 프레임과 비교되게)
     private const double Lead = 1.0;
+    // 동시에 돌리는 ffmpeg 수 · ffmpeg 하나의 필터 스레드 수. 측정 필터(펴기·통계·윤곽)는 프레임마다 차례로 돌아 ffmpeg 하나로는 코어를
+    // 다 못 쓰므로 여러 구간을 동시에 재고, 필터 스레드는 코어를 나눠 준다 (기본값은 ffmpeg마다 코어 수만큼이라 넘친다).
+    // 측정(1080p 2분, 꼭짓점 영역): 16스레드에서 4개·기본 → 8개·2개로 CPU 디코딩 21%·GPU 디코딩 13% 빠름, 24스레드(8개·3개) 19%·7%
+    private static readonly int Workers = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
+    private static readonly int FilterThreads = Math.Clamp(Environment.ProcessorCount / Workers, 1, 3);
     // 사다리꼴 영역은 펴기 전에 이 폭으로 줄인다 (어차피 320 폭으로 잰다)
     private const int WarpWidth = 640;
     // 편 화면은 가장자리를 이만큼(양쪽 3%) 안으로 잘라 잰다: 꼭짓점이 조금만 어긋나도 남는 배경 띠의 경계가 윤곽으로 잡혀
@@ -164,8 +169,8 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         var probes = new List<VideoTrimmer.Probe?>();
         foreach (var path in r.Paths)
             probes.Add(File.Exists(path) ? await VideoTrimmer.ProbeAsync(ffmpeg, path) : null);
-        // 동시에 돌리는 ffmpeg 수 (테스트 PC가 버티게)
-        var workers = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+        // 동시에 돌리는 ffmpeg 수 (Workers 참고)
+        var workers = Workers;
         // 영상마다 재기 시작할 초 (테스트 시작 전은 재지 않음) · 그 영상을 통째로 건너뛰는지 (테스트 시작 전에 끝난 영상)
         var froms = r.Paths.Select((_, i) => Math.Max(0, r.Starts is { } s && i < s.Length && double.IsFinite(s[i]) ? s[i] : 0)).ToArray();
         bool Skipped(int i) => probes[i]?.Duration is { } d && froms[i] >= d - 0.05;
@@ -341,7 +346,8 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         {
             var seek = Math.Max(start - Lead, 0);
             var end = length is { } l ? start + l : double.PositiveInfinity;
-            var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin" };
+            var threads = FilterThreads.ToString(CultureInfo.InvariantCulture);
+            var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-filter_threads", threads, "-filter_complex_threads", threads };
             if (start > 0)
                 args.AddRange(["-ss", Seconds(seek)]);
             if (length is { } span)
