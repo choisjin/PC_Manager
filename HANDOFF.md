@@ -1,8 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.8.104** (PC 폴더를 지우면 모든 별칭이 지워지던 버그 · PC 정보 패널을 Result·원격조작 창/전체 화면에도 ·
-영상 분석 화면 영역은 늘 직접 지정, 정지 기준 최소값 = 제외 구간 밖 가장 짧은 DURATION — **서버 업데이트**, 에이전트는 자동 추정 코드만 지움(업데이트 안 해도 됨),
-아래 1절의 0.8.104 항목. 그 앞 0.8.100: ATS 행 시각 = 스텝 시작 · 영상 분석은 테스트 시작부터, **에이전트·서버 업데이트 필요**)
+작성: 2026-10-26 · 최신 릴리스 **v0.8.105** (Result 예약 분석 · 영상 분석·이미지 찾기가 탭을 닫아도 계속 돌고 PiP·완료 알림·PC 목록 표시 ·
+PC 목록 폭 260px 통일 — **서버·에이전트 업데이트 필요**(옛 에이전트는 끝난 결과를 15분 뒤 지움), 아래 1절의 0.8.105 항목)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -389,6 +388,32 @@ NuGet 경고 NU1903 (GHSA-334f-vvp4-7g6p, CVE-2026-70159, SignalR stateful recon
 - 정지 기준: 최소값 = 제외 구간 밖(`rowsInExclude`) 스텝 중 가장 짧은 DURATION(0.1초 올림, `STATIC_MIN` 1초 미만이면 1, DURATION 없으면 1).
   지금 값이 최소보다 작으면 Viewer effect가 `changeStatic(최소)`로 올림 (최소가 다시 내려가도 값은 그대로).
 - 확인: `tsc -b`, 서버·에이전트(Windows·Linux) 빌드. 화면 확인은 하지 않음.
+
+### 0.8.105: 결과 확인 작업 유지(PiP·완료 알림) · 예약 분석 · PC 목록 폭 통일
+사용자 요청: 영상 분석·이미지 찾기는 멈추지 않는 한 계속, 진행을 PiP(결과 확인 탭에도 대시보드와 같은 PiP)에, 완료 알림, 탭을 닫거나 새로 고쳐도
+유지(15분 보관 아님), 완료되면 PC 목록에 '분석 완료' / Result 예약 분석(첫 Cycle 뒤 영역·제외 구간을 정하고 날짜·시각 → 그때 에이전트에서 시작,
+영상은 사이클별 파일·통 파일 모두, Result와 싱크) / 원격 PC 목록 폭 = PC Manager 트리와 같게 (모든 곳).
+- 에이전트 `VideoAnalyzer`·`VideoImageSearch`: 묻는 웹이 없으면 2분 뒤 멈추던 것(Abandoned·Polled)과 끝난 뒤 15분 삭제(Keep) 없앰 →
+  끝난 작업은 최근 4개(분석)·8개(찾기), 7일까지 (`Prune`, 메모리 — 에이전트 다시 시작하면 사라짐).
+- 서버 `ResultJobStore`(result-jobs.json, 웹 설정 Params는 목록과 따로) · `ResultJobPoller`(2초마다 running 작업을 에이전트에 물음:
+  분석 GetVideoAnalysisChunks(id, int.MaxValue, 0), 찾기 GetImageSearch(id, int.MaxValue) — 옛 에이전트도 이 묻기로 안 멈춤, 없어지면 lost)
+  · Hub `ResultJobsChanged` · API `/api/result-jobs` (GET · POST 등록 · /{id}/params GET·PUT · /{id}/seen · DELETE=돌면 멈추고 뺌).
+- 웹 `resultJobs.ts`: 목록 스토어(useResultJobs, 받기 전 null → 처음 받은 건 알리지 않음) · `sourceKeyOf` = agentId|resultPath (영상은 예약이
+  더 모아 달라질 수 있어 뺌) · `openJob`(이 탭에 그 결과가 있으면 그 화면+패널, 없으면 새 결과 확인 탭 `ResultTabRequest.panel`).
+  `useVideoAnalysis`·`useImageSearch(ctx: JobContext, videos)`: 시작하면 등록(설정 params 포함), 화면을 닫으면 받기만 그만(취소 안 함),
+  열면 영상 목록이 정해진 뒤 한 번 findJob → params 되살리고 `follow(id)`로 처음부터 다시 받음. 받은 영상은 **경로로** 화면 영상에 맞춤
+  (readPath·path, 없으면 건너뛰고 경고). 설정 바꾸면 1초 뒤 params PUT. 패널에서 끝난 결과를 보면 seen.
+  PiP(`TransfersPip`, 결과 확인 탭에도 렌더, `body.rv-open .pip` 숨김 규칙 삭제): '영상 분석 · 이미지 찾기' 항목(내 것만, 열기·멈춤·✕),
+  running→끝남이면 펼치고 윈도우 알림(tag pcm-job-id)+알림음. ResultsPage PC 목록: '분석 n%' · '분석 완료'(안 본 것, 누르면 openJob).
+- 예약: 서버 `ResultScheduleStore`(result-schedules.json) · `ResultScheduler`(10초마다, 시각 지난 pending + PC 온라인이면 시작) · Hub
+  `ResultSchedulesChanged` · API `/api/result-schedules`(GET·POST·DELETE). 시작: 고른 영상 폴더들을 ListDirectory → 고른 영상 중 가장 이른
+  수정 시각 이후 영상 + 고른 영상, 수정 시각순 → StartVideoAnalysis(Paths, Starts: 고른 영상은 예약 때 testStarts, 새 영상 0) ·
+  StartImageSearch(Paths, Ranges=null 영상 전체) → ResultJobStore 등록 (Open = {source: 모은 videoPaths}, 분석 params.starts 바꿈).
+  웹 `ScheduleDialog`(결과 확인 상단 [⏰ 예약 분석]): 시각(datetime-local, 기본 지금+첫 Cycle 길이), 영상 분석(화면 영역 있어야)·이미지
+  찾기(크롭 있어야) 체크, 첫 Cycle 안내, 이 결과의 예약 목록·취소. `schedulePayload()`가 요청·params(paths 비움). PiP '예약 분석'·PC 목록 '⏰ 시각'.
+- PC 목록 폭: `--pc-list-w: 260px` (PC Manager 트리 · Result PC 목록(300→260) · 원격조작 창 모드(170)·전체 화면(190)).
+- 확인: `tsc -b`, oxlint(새 경고 없음), 서버·에이전트(Windows·Linux) 빌드, 임시 서버로 result-jobs·result-schedules API(등록·params·seen·삭제·
+  검증 400·재시작 후 다시 읽기). 에이전트와 실제 영상으로 끝까지는 확인 못 함 (예약 시작·이어 받기·알림 — 첫 사용 때 확인 필요).
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

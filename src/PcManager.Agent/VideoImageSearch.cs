@@ -17,9 +17,9 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
     private const double MaxFps = 60;
     // 한 번에 돌려주는 유사도 (base64로 1.4MB: 서버 SignalR 메시지 한도 2MB를 넘으면 서버가 에이전트 연결을 끊는다. 20시간 60fps 영상은 4MB)
     private const int ChunkBytes = 1_000_000;
-    // 끝난 작업을 남겨 두는 시간 · 웹이 이만큼 진행을 묻지 않으면 버려진 것으로 보고 멈춘다
-    private static readonly TimeSpan Keep = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan Abandoned = TimeSpan.FromMinutes(2);
+    // 끝난 작업은 웹을 닫아도 남긴다 (다시 열면 이어 받는다): 최근 몇 개만, 오래된 것은 버림. 묻는 웹이 없어도 멈추지 않는다 (멈춤은 사용자가)
+    private const int KeepFinished = 8;
+    private static readonly TimeSpan KeepAge = TimeSpan.FromDays(7);
 
     /// <summary>영상 하나의 결과. Scores에는 확정된 프레임만 (훑는 중에는 다시 잴 수 있는 마지막 Step개 전까지)</summary>
     private sealed class VideoResult(string path, double fps)
@@ -41,16 +41,13 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         public int Scale = 1;
         public string? Error;
         public DateTime Finished = DateTime.MaxValue;
-        public DateTime Polled = DateTime.UtcNow;
     }
 
     private readonly ConcurrentDictionary<string, Job> _jobs = new();
 
     public string Start(ImageSearchRequest request)
     {
-        foreach (var (key, old) in _jobs)
-            if (DateTime.UtcNow - old.Finished > Keep)
-                _jobs.TryRemove(key, out _);
+        Prune();
         var id = Guid.NewGuid().ToString("N");
         var job = new Job();
         _jobs[id] = job;
@@ -88,6 +85,14 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         return id;
     }
 
+    /// <summary>끝난 작업: 최근 KeepFinished개만, KeepAge보다 오래된 것은 버린다</summary>
+    private void Prune()
+    {
+        var finished = _jobs.Where(kv => kv.Value.Finished != DateTime.MaxValue).OrderByDescending(kv => kv.Value.Finished).ToList();
+        foreach (var (key, _) in finished.Skip(KeepFinished).Concat(finished.Where(kv => DateTime.UtcNow - kv.Value.Finished > KeepAge)))
+            _jobs.TryRemove(key, out _);
+    }
+
     /// <summary>옛 대시보드: 끝난 영상을 통째로</summary>
     public ImageSearchStatus? Get(string id, int have)
     {
@@ -95,7 +100,6 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
             return null;
         lock (job)
         {
-            job.Polled = DateTime.UtcNow;
             var videos = job.Results.Where(r => r.Done).Skip(Math.Max(0, have))
                 .Select(r => new ImageSearchVideo(r.Path, r.Fps, r.Scores.ToArray(), r.Error)).ToList();
             return new ImageSearchStatus(job.State, job.Progress, job.Current, videos, job.Scale, job.Error);
@@ -109,7 +113,6 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
             return null;
         lock (job)
         {
-            job.Polled = DateTime.UtcNow;
             var chunks = new List<ImageSearchChunk>();
             var budget = ChunkBytes;
             var more = false;
@@ -351,8 +354,6 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
                         // 위에서 다시 재는 건 마지막 Step개 안쪽뿐 → 그 앞은 확정이라 훑는 중에도 웹이 받아 간다
                         for (var k = result.Scores.Count; k < scores.Count - matcher.Step; k++)
                             result.Scores.Add(scores[k]);
-                        if (DateTime.UtcNow - job.Polled > Abandoned)
-                            job.Cancel.Cancel();
                     }
                 }
             }

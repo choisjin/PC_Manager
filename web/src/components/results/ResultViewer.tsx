@@ -16,6 +16,8 @@ import {
   type Anchor, baseSeconds, emptySync, resolveStart, rowAtTime, START_SOURCE_LABEL, type SyncState,
   toRowTime, toVideoTime, type VideoInfo, videoForRow,
 } from './sync'
+import { type FirstCycle, ScheduleDialog } from './ScheduleDialog'
+import { requestPanel, sourceKeyOf, subscribePanelRequest, takePanelRequest } from './resultJobs'
 import { openResultTab, readResultTab, RESULT_TAB_ID, type ResultTabRequest, updateResultTab } from './resultTab'
 import { findRun } from './resultFinder'
 import { type ColFilters, ColumnFilterMenu, type ColSort } from './ColumnFilter'
@@ -29,7 +31,7 @@ import { compareCycles, CYCLE_COLOR } from './videoCycle'
 import { applyExclusions, type ExclusionDraft, mergeSpans, spansOf } from './videoExclude'
 
 type PutSlot = 'result' | 'video' | 'image' | 'ref'
-type Dialog = null | 'save' | 'trim'
+type Dialog = null | 'save' | 'trim' | 'schedule'
 
 const ROW_HEIGHT = 26
 // 내용에 맞추는 열(TableSpec "fit")의 최대 폭: 더 긴 값은 … (마우스를 올리면 전체)
@@ -438,9 +440,37 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     () => rawVideos.map((v) => ({ path: v.path, readPath: v.playPath ?? v.path, name: v.name, duration: v.duration })),
     [rawVideos],
   )
-  const search = useImageSearch(source.agentId, searchVideos)
+  // 영상 분석·이미지 찾기 작업을 서버 목록에 적고, 다시 열 때 이 결과의 작업을 찾는 데 쓰는 정보
+  const sourceKey = sourceKeyOf(source)
+  const title = sessionTitle(session)
+  const jobContext = useMemo(
+    () => ({ agentId: source.agentId, machineName: source.machineName, title, sourceKey, open: set ? { setId: set.id } : { source } }),
+    [source, set, title, sourceKey],
+  )
+  const search = useImageSearch(jobContext, searchVideos)
   // 영상 분석: 검은 화면·깜박임·정지 구간·화면 전환 (이미지 찾기와 같은 자리, 하나만 연다)
-  const analysis = useVideoAnalysis(source.agentId, searchVideos)
+  const analysis = useVideoAnalysis(jobContext, searchVideos)
+  // PiP·PC 목록에서 이 결과의 작업을 열면 그 패널을 펼친다 (새 탭으로 열었으면 주소에 적힌 요청을 한 번)
+  useEffect(() => {
+    const request = RESULT_TAB_ID ? readResultTab(RESULT_TAB_ID) : null
+    if (RESULT_TAB_ID && request?.panel) {
+      requestPanel(sourceKey, request.panel)
+      updateResultTab(RESULT_TAB_ID, { ...request, panel: undefined })
+    }
+    const check = () => {
+      const kind = takePanelRequest(sourceKey)
+      if (kind === 'analysis') {
+        search.close()
+        analysis.setOpen(true)
+      } else if (kind === 'search') {
+        analysis.close()
+        search.setOpen(true)
+      }
+    }
+    check()
+    return subscribePanelRequest(check)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceKey])
   // 영상 분석 제외 구간: 고르는 중인 시작·끝 스텝 (자르기처럼 표에서)
   const [exDraft, setExDraft] = useState<ExclusionDraft>({ start: null, end: null, everyCycle: true, editing: null })
   const mainRef = useRef<HTMLDivElement>(null)
@@ -475,6 +505,15 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   const absolute = parsed?.timeKind === 'absolute'
   const rows = useMemo(() => parsed?.rows ?? [], [parsed])
   const sortedRows = useMemo(() => rows.filter((r) => r.time !== null).sort((a, b) => a.time! - b.time! || a.index - b.index), [rows])
+  // 첫 Cycle (예약 분석 안내: 끝났는지 · 길이)
+  const firstCycle = useMemo((): FirstCycle | null => {
+    const name = sortedRows.find((r) => r.cycle)?.cycle
+    if (!name) return null
+    const own = sortedRows.filter((r) => r.cycle === name)
+    const last = own[own.length - 1]
+    const end = last.time! + (last.durationMs ?? 0)
+    return { name, seconds: (end - own[0].time!) / 1000, done: sortedRows.some((r) => r.cycle && r.cycle !== name) }
+  }, [sortedRows])
   const firstTime = sortedRows[0]?.time ?? null
   // 표 위 요약: 시작 · 종료(마지막 스텝이 끝난 시각) · 총 시간 · Cycle(돈 횟수 / 계획)
   const runInfo = useMemo<RunInfo | null>(() => {
@@ -1108,6 +1147,19 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
           onClose={() => setFilterMenu(null)}
         />
       )}
+      {dialog === 'schedule' && (
+        <ScheduleDialog
+          source={source}
+          title={title}
+          sourceKey={sourceKey}
+          videos={searchVideos}
+          starts={testStarts}
+          analysis={analysis}
+          search={search}
+          firstCycle={firstCycle}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog === 'save' && parsed && (
         <SaveDialog
           source={source}
@@ -1163,6 +1215,13 @@ function ViewerHead({ session, sessions, onBack, setDialog }: {
         </span>
       )}
       <span className="rv-spacer" />
+      <button
+        type="button"
+        onClick={() => setDialog('schedule')}
+        title="영상 분석·이미지 찾기를 미리 설정해 두고 정한 시각에 테스트 PC에서 시작 (녹화·테스트 진행 중일 때)"
+      >
+        ⏰ 예약 분석
+      </button>
       <button type="button" onClick={openSets} title="저장해 둔 결과 확인 불러오기">불러오기</button>
       <button
         type="button"

@@ -12,6 +12,8 @@
              src: local('Pretendard Bold'), url('/fonts/Pretendard-Bold.subset.woff2') format('woff2'); }
 
 :root {
+  /* PC 목록 폭: PC Manager 트리 · Result PC 목록 · 원격조작 PC 목록(창 모드·전체 화면) 모두 같게 */
+  --pc-list-w: 260px;
   /* APMS 원본 토큰 */
   --apms-brand: #a50034; /* LG Active Red · 주 버튼 · 선택 표시 · 포커스 */
   --apms-brand-hover: #870029;
@@ -1567,7 +1569,7 @@ button.small-btn {
 /* 파일 탐색기 (트리 + 멀티패널) */
 .explorer-shell {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: var(--pc-list-w) minmax(0, 1fr);
   gap: 6px;
   min-height: 0;
 }
@@ -2057,7 +2059,7 @@ tr.cut td {
   flex: none;
   display: flex;
   flex-direction: column;
-  width: 170px;
+  width: var(--pc-list-w);
   overflow: hidden;
   background: var(--panel);
   border-right: 1px solid var(--border);
@@ -2079,7 +2081,7 @@ tr.cut td {
   left: 6px;
   animation: pclist-slide 0.12s ease-out;
   z-index: 2;
-  width: 190px;
+  width: var(--pc-list-w);
   color: #fff;
   background: rgb(20 24 30 / 75%);
   border: 1px solid rgb(255 255 255 / 25%);
@@ -5355,7 +5357,6 @@ th.sortable:hover {
 .rv-time { font-size: 12px; min-width: 120px; }
 .rv-mini { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; white-space: nowrap; }
 .rv-mini select, .rv-transport select, .rv-filters select { width: auto; }
-body.rv-open .pip { display: none; }
 
 /* 결과 확인: 경로 지정 창 (떠 있음, 탐색기에서 끌어다 놓기) */
 .rv-setup-pop { position: fixed; z-index: 2900; width: min(470px, 94vw); max-height: calc(100vh - 20px); overflow: auto; padding: 8px 12px 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28); }
@@ -5564,6 +5565,14 @@ body.rv-open .pip { display: none; }
 .rv-modal-box { width: min(500px, 94vw); max-height: 90vh; overflow: auto; padding: 14px 16px; }
 .rv-modal-box.wide { width: min(780px, 94vw); }
 .rv-modal-box progress { width: 100%; }
+/* 예약 분석 창 */
+.rv-schedule { display: flex; flex-direction: column; gap: 8px; }
+.rv-schedule .hint { margin: 0; }
+.rv-schedule-kind { display: flex; align-items: flex-start; gap: 6px; }
+.rv-schedule-kind.disabled { opacity: 0.6; }
+.rv-schedule-videos { max-height: 90px; margin: 2px 0 0; padding-left: 16px; overflow: auto; }
+.rv-schedule-list { margin: 2px 0 0; padding: 0; list-style: none; }
+.rv-schedule-list li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 
 /* 표 머리글 위: 테스트 시작 · 종료 · 총 시간 · Cycle */
 .rv-run-info { display: flex; flex-wrap: wrap; gap: 2px 14px; padding: 3px 8px; border-bottom: 1px solid var(--border); }
@@ -5987,7 +5996,7 @@ body.rv-open .pip { display: none; }
   font-weight: 600;
 }
 /* ═══ 결과 확인 탭: PC별 결과 폴더 → 날짜 → 실행 ═══ */
-.rp { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 6px; min-height: 0; height: 100%; }
+.rp { display: grid; grid-template-columns: var(--pc-list-w) minmax(0, 1fr); gap: 6px; min-height: 0; height: 100%; }
 .rp-pcs, .rp-main { min-height: 0; overflow: hidden; }
 .rp-only { display: inline-flex; align-items: center; gap: 4px; }
 .rp-pc-list { flex: 1; min-height: 0; overflow: auto; padding: 4px; }
@@ -6000,6 +6009,10 @@ body.rv-open .pip { display: none; }
 .rp-pc.offline .rp-pc-name { color: var(--muted); }
 .rp-pc-name { flex: 1; min-width: 0; }
 .rp-latest { flex: none; padding: 1px 6px; }
+/* PC 목록: 영상 분석·이미지 찾기 진행·완료 (누르면 결과를 연다) */
+.rp-job { flex: none; padding: 0 6px; font-size: 10px; font-weight: 600; line-height: 16px; color: var(--muted); background: var(--surface2); border: 0; border-radius: 8px; }
+.rp-job.done { color: #fff; background: var(--ok); }
+.rp-job.scheduled { color: var(--accent); background: var(--accent-soft); }
 .rp-chip { display: inline-block; padding: 0 6px; font-size: 10px; font-weight: 600; line-height: 16px; color: var(--accent); background: var(--accent-soft); border-radius: 8px; vertical-align: middle; }
 .rp-empty { padding: 8px; }
 .rp-placeholder { margin: auto; }

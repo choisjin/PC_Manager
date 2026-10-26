@@ -16,6 +16,8 @@ export interface ResultTabRequest {
     path?: string
     day?: string | null
   }
+  /** 열고 나서 펼칠 패널 (PiP·PC 목록에서 끝난 영상 분석·이미지 찾기를 열 때) */
+  panel?: 'analysis' | 'search'
 }
 
 const PREFIX = 'pcm.result.'

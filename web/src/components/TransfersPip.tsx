@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTopLayer } from '../useTopLayer'
-import { api, type ChatMessage, type ChatRoom, type Org, type Transfer } from '../api'
+import { api, type ChatMessage, type ChatRoom, type Org, type ResultJob, type Transfer } from '../api'
 import { roomTitle } from '../chatRoom'
 import { type ChatActions, ChatPanel } from './ChatPanel'
 import { NotesPanel } from './NotesPanel'
@@ -9,6 +9,7 @@ import type { NoteEvent } from '../useDashboard'
 import { formatBytes } from '../format'
 import { kindLabel } from './explorer/useTransfers'
 import { RESULT_MODE_LABEL } from './results/resultCsv'
+import { JOB_KIND_LABEL, JOB_STATE_LABEL, openJob, resultJobsLoaded, scheduleTimeText, useResultJobs, useResultSchedules } from './results/resultJobs'
 import { openViewer, removeSession, type ResultSession, sessionTitle, startSession, useResults } from './results/resultSessions'
 
 interface Props {
@@ -212,6 +213,23 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
       }, 900)
     }
   }
+  /** 작업이 끝남: 윈도우 알림(누르면 결과를 연다) + 알림음 (대시보드·결과 확인 탭이 함께 띄워도 같은 tag라 하나만) */
+  const notifyJob = (j: ResultJob) => {
+    const what = `${JOB_KIND_LABEL[j.kind]} ${JOB_STATE_LABEL[j.state]}`
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        const n = new Notification(`${what} · ${j.title}`, { body: j.error ?? j.machineName ?? '', tag: `pcm-job-${j.id}`, silent: true })
+        n.onclick = () => {
+          window.focus()
+          openJob(j)
+          n.close()
+        }
+      } catch {
+        // 알림 못 띄우면 무시
+      }
+    }
+    beep()
+  }
   const stopTitleFlash = () => {
     if (titleTimerRef.current) {
       clearInterval(titleTimerRef.current)
@@ -263,6 +281,29 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
     sessionCount.current = sessions.length
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessions.length])
+
+  // 결과 확인 작업(영상 분석·이미지 찾기): 내가 시작한 것만. 새로 시작하거나 끝나면 탭을 펼치고, 끝나면 윈도우 알림
+  const allJobs = useResultJobs()
+  const jobs = allJobs.filter((j) => !selfUserId || !j.userId || j.userId === selfUserId)
+  const runningJobs = jobs.filter((j) => j.state === 'running').length
+  const freshJobs = jobs.filter((j) => j.state === 'done' && !j.seen).length
+  // 예약 분석: 내가 예약한 것 (대기 중 · 시작 못 함)
+  const schedules = useResultSchedules().filter((s) => s.state !== 'started' && (!selfUserId || !s.userId || s.userId === selfUserId))
+  const jobStatesRef = useRef<Map<string, ResultJob['state']> | null>(null)
+  useEffect(() => {
+    // 서버에서 처음 받은 목록은 알리지 않는다
+    if (!resultJobsLoaded()) return
+    const prev = jobStatesRef.current
+    jobStatesRef.current = new Map(jobs.map((j) => [j.id, j.state]))
+    if (!prev) return
+    const ended = jobs.filter((j) => prev.get(j.id) === 'running' && j.state !== 'running')
+    if (ended.length || jobs.some((j) => !prev.has(j.id))) {
+      switchTab('transfers')
+      setCollapsed(false)
+    }
+    for (const j of ended) notifyJob(j)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allJobs])
 
   // 안 읽은 메시지 합계 → 채팅 탭 배지·브라우저 탭 제목
   const unread = chatRooms.reduce((sum, r) => sum + r.unread, 0)
@@ -387,8 +428,8 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
             </button>
             <button type="button" role="tab" aria-selected={tab === 'transfers'} className={tab === 'transfers' ? 'active' : ''} onClick={() => switchTab('transfers')}>
               진행상황
-              {activeList.length + loadingCount > 0 && <span className="pip-count">{activeList.length + loadingCount}</span>}
-              {freshReady > 0 && <span className="pip-count ready" title="열어 볼 수 있는 결과 확인">{freshReady}</span>}
+              {activeList.length + loadingCount + runningJobs > 0 && <span className="pip-count">{activeList.length + loadingCount + runningJobs}</span>}
+              {freshReady + freshJobs > 0 && <span className="pip-count ready" title="열어 볼 수 있는 결과 확인·끝난 분석">{freshReady + freshJobs}</span>}
             </button>
           </span>
         </span>
@@ -420,7 +461,31 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
 
       {!collapsed && tab === 'transfers' && (
         <div className="pip-body" style={bodyStyle}>
-          {activeList.length === 0 && recent.length === 0 && sessions.length === 0 && <div className="pip-empty muted small">진행 중인 작업 없음</div>}
+          {activeList.length === 0 && recent.length === 0 && sessions.length === 0 && jobs.length === 0 && schedules.length === 0 && <div className="pip-empty muted small">진행 중인 작업 없음</div>}
+
+          {schedules.length > 0 && (
+            <div className="pip-results">
+              <div className="pip-recent-title muted small">예약 분석</div>
+              {schedules.map((s) => (
+                <div key={s.id} className={`pip-note small${s.state === 'failed' ? ' error' : ''}`} title={s.error ?? s.videos.join(', ')}>
+                  <span className="ellipsis">
+                    ⏰ {scheduleTimeText(s.at)} · {[s.analysis && JOB_KIND_LABEL.analysis, s.search && JOB_KIND_LABEL.search].filter(Boolean).join(' + ')} · {s.title}
+                  </span>
+                  <span className="muted">{s.state === 'failed' ? '실패' : s.machineName ?? ''}</span>
+                  <button type="button" className="icon-mini" title={s.state === 'pending' ? '예약 취소' : '목록에서 빼기'} onClick={() => void api.removeResultSchedule(s.id).catch(() => {})}>
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {jobs.length > 0 && (
+            <div className="pip-results">
+              <div className="pip-recent-title muted small">영상 분석 · 이미지 찾기</div>
+              {jobs.map((j) => <JobItem key={j.id} job={j} />)}
+            </div>
+          )}
 
           {sessions.length > 0 && (
             <div className="pip-results">
@@ -497,6 +562,46 @@ function ResultItem({ session: s }: { session: ResultSession }) {
       <div className={`pip-sub small ellipsis${s.state === 'failed' ? ' error' : ' muted'}`} title={s.error ?? s.step}>
         {s.source.machineName}
         {s.state === 'loading' ? ` · ${s.step}` : s.state === 'failed' ? ` · ${s.error ?? '실패'}` : ` · 준비 완료 (영상 ${s.videos.length}개${s.videos.some((v) => v.prep === 'failed') ? ', 일부 실패' : ''})`}
+      </div>
+    </div>
+  )
+}
+
+/** 진행상황: 영상 분석·이미지 찾기 한 건 (결과 확인 탭을 닫아도 테스트 PC에서 계속 돈다) */
+function JobItem({ job: j }: { job: ResultJob }) {
+  const running = j.state === 'running'
+  const pct = Math.round(j.progress * 100)
+  const tone = running ? 'loading' : j.state === 'done' ? 'ready' : 'failed'
+  const stop = () => {
+    const call = j.kind === 'analysis' ? api.cancelVideoAnalysis(j.agentId, j.id) : api.cancelImageSearch(j.agentId, j.id)
+    call.catch((err: unknown) => window.alert(`멈추지 못했습니다: ${err instanceof Error ? err.message : String(err)}`))
+  }
+  const remove = () => {
+    if (running && !window.confirm(`진행 중인 ${JOB_KIND_LABEL[j.kind]}을(를) 멈추고 목록에서 뺄까요?`)) return
+    void api.removeResultJob(j.id).catch(() => {})
+  }
+  const open = () => {
+    if (!openJob(j)) window.alert('새 탭을 열지 못했습니다 (팝업 차단). 이 사이트의 팝업을 허용해 주세요.')
+  }
+  return (
+    <div className={`pip-item pip-result ${tone}${j.state === 'done' && !j.seen ? ' fresh' : ''}`} title={j.sourceKey}>
+      <div className="pip-item-top">
+        <button type="button" className="pip-result-name small ellipsis" onClick={open}>
+          {JOB_KIND_LABEL[j.kind]} · {j.title}
+        </button>
+        {running && <span className="pip-pct small">{pct}%</span>}
+        <button type="button" className="primary small pip-result-open" onClick={open}>열기</button>
+        {running && <button type="button" className="small" title="거기까지 잰 결과는 남깁니다" onClick={stop}>멈춤</button>}
+        <button type="button" className="icon-mini" title="목록에서 빼기" onClick={remove}>✕</button>
+      </div>
+      {running && (
+        <div className="pip-bar">
+          <div className="pip-bar-fill" style={{ width: `${Math.max(4, pct)}%` }} />
+        </div>
+      )}
+      <div className={`pip-sub small ellipsis${j.state === 'failed' || j.state === 'lost' ? ' error' : ' muted'}`} title={j.error ?? j.current ?? undefined}>
+        {j.machineName ?? ''}
+        {running ? ` · ${j.current ?? '진행 중'}` : ` · ${JOB_STATE_LABEL[j.state]}${j.error ? ` (${j.error})` : ''}`}
       </div>
     </div>
   )

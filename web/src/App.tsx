@@ -327,6 +327,19 @@ export default function App() {
         <div className="app">
           <PinDialog />
           <ResultHost machineName={machineName} />
+          {/* 대시보드와 같은 PiP: 영상 분석·이미지 찾기 진행·완료 알림도 여기에 */}
+          <TransfersPip
+            transfers={transfers}
+            machineName={machineName}
+            userName={userName}
+            org={org}
+            selfUserId={auth.user.id}
+            chatRooms={chatRooms}
+            chatMessages={chatMessages}
+            chatActions={chatActions}
+            subscribeChat={subscribeChat}
+            subscribeNotes={subscribeNotes}
+          />
         </div>
       </PermsContext.Provider>
     )

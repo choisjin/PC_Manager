@@ -747,6 +747,71 @@ export interface ResultPreset {
   updatedAt?: string | null
 }
 
+/** 결과 확인 작업 (영상 분석·이미지 찾기): 결과 확인 탭을 닫아도 테스트 PC에서 계속 돌고, 서버가 진행을 물어 알린다 */
+export interface ResultJob {
+  /** 에이전트 작업 id */
+  id: string
+  kind: 'analysis' | 'search'
+  agentId: string
+  machineName: string | null
+  /** 결과 이름 (셋 이름 또는 Result 파일 이름) */
+  title: string
+  /** 어느 결과의 작업인지 (PC·Result·영상 경로): 결과 확인을 다시 열면 이걸로 찾아 이어 받는다 */
+  sourceKey: string
+  userId: string | null
+  /** 이 결과를 새 탭에서 다시 여는 요청 (ResultTabRequest) */
+  open: unknown
+  /** running · done · canceled · failed · lost(에이전트에서 작업이 사라짐) */
+  state: 'running' | 'done' | 'canceled' | 'failed' | 'lost'
+  progress: number
+  current: string | null
+  error: string | null
+  started: string
+  finished: string | null
+  /** 끝난 뒤 결과를 열어 봤는지 */
+  seen: boolean
+}
+
+/** 결과 확인 예약 분석: 그 시각에 서버가 영상을 다시 모아(같은 폴더에 그 뒤 저장된 영상까지) 테스트 PC에서 분석을 시작한다 */
+export interface ResultSchedule {
+  id: string
+  agentId: string
+  machineName: string | null
+  title: string
+  sourceKey: string
+  userId: string | null
+  /** 시작할 시각 (UTC ISO) */
+  at: string
+  /** 예약할 때 고른 영상 */
+  videos: string[]
+  analysis: boolean
+  search: boolean
+  /** pending · started · failed */
+  state: 'pending' | 'started' | 'failed'
+  error: string | null
+  created: string
+  startedAt: string | null
+  /** 시작할 때 모은 영상 (시각순) */
+  startedVideos: string[] | null
+}
+
+export interface CreateResultSchedule {
+  agentId: string
+  machineName: string | null
+  title: string
+  sourceKey: string
+  /** 결과 확인을 다시 여는 경로 정보 (Source) */
+  source: unknown
+  at: string
+  videos: string[]
+  /** videos마다 테스트 시작 초 */
+  starts: number[]
+  analysis: VideoAnalysisRequest | null
+  analysisParams: unknown
+  search: ImageSearchRequest | null
+  searchParams: unknown
+}
+
 export interface ResultProfiles {
   profiles: Record<string, ResultProfile>
   /** 프리셋 id → 프리셋 (처음엔 서버 기본 ATS·RFW) */
@@ -1108,6 +1173,21 @@ export const api = {
     request<VideoAnalysisProgress>(`/api/agents/${agentId}/video/analysis/${id}?${query({ video, offset })}`),
   cancelVideoAnalysis: (agentId: string, id: string) =>
     request<void>(`/api/agents/${agentId}/video/analysis/${id}`, { method: 'DELETE' }),
+  /** 결과 확인 작업 목록 (새로 시작한 것부터) */
+  resultJobs: () => request<ResultJob[]>('/api/result-jobs'),
+  /** 시작한 작업을 적어 둔다 (params: 다시 열 때 되살릴 웹 설정) */
+  registerResultJob: (body: Pick<ResultJob, 'id' | 'kind' | 'agentId' | 'machineName' | 'title' | 'sourceKey' | 'open'> & { params: unknown }) =>
+    request<ResultJob>('/api/result-jobs', { method: 'POST', body: JSON.stringify(body) }),
+  resultJobParams: (id: string) => request<unknown>(`/api/result-jobs/${id}/params`),
+  saveResultJobParams: (id: string, params: unknown) =>
+    request<void>(`/api/result-jobs/${id}/params`, { method: 'PUT', body: JSON.stringify(params) }),
+  markResultJobSeen: (id: string) => request<void>(`/api/result-jobs/${id}/seen`, { method: 'POST' }),
+  resultSchedules: () => request<ResultSchedule[]>('/api/result-schedules'),
+  addResultSchedule: (body: CreateResultSchedule) =>
+    request<ResultSchedule>('/api/result-schedules', { method: 'POST', body: JSON.stringify(body) }),
+  removeResultSchedule: (id: string) => request<void>(`/api/result-schedules/${id}`, { method: 'DELETE' }),
+  /** 목록에서 빼기 (돌고 있으면 멈춤) */
+  removeResultJob: (id: string) => request<void>(`/api/result-jobs/${id}`, { method: 'DELETE' }),
   /** '원격 사용 중' 표시가 남았을 때 지우기 */
   clearRemoteUsage: (agentId: string) => request<void>(`/api/remote-usage/${agentId}`, { method: 'DELETE' }),
   /** Linux PC: Wayland를 끄고(Xorg) 재부팅 */

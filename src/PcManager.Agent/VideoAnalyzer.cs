@@ -30,9 +30,10 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
     // 편 화면은 가장자리를 이만큼(양쪽 3%) 안으로 잘라 잰다: 꼭짓점이 조금만 어긋나도 남는 배경 띠의 경계가 윤곽으로 잡혀
     // 꺼진 화면을 켜진 것으로 보지 않게
     private const double WarpInset = 0.03;
-    // 끝난 작업을 남겨 두는 시간 · 웹이 이만큼 진행을 묻지 않으면 버려진 것으로 보고 멈춘다
-    private static readonly TimeSpan Keep = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan Abandoned = TimeSpan.FromMinutes(2);
+    // 끝난 작업은 웹을 닫아도 남긴다 (다시 열면 이어 받는다): 프레임 값이 커서(20시간 30fps ≈ 67MB) 끝난 것은 최근 몇 개만, 오래된 것은 버림.
+    // 묻는 웹이 없어도 멈추지 않는다 (멈춤은 사용자가)
+    private const int KeepFinished = 4;
+    private static readonly TimeSpan KeepAge = TimeSpan.FromDays(7);
 
     private sealed class VideoResult(string path)
     {
@@ -57,7 +58,6 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         public string? RoiSource;
         public double[]? Bezel;
         public DateTime Finished = DateTime.MaxValue;
-        public DateTime Polled = DateTime.UtcNow;
     }
 
     /// <summary>프레임 한 장의 측정값 (T: 영상 안 초)</summary>
@@ -67,9 +67,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
 
     public string Start(VideoAnalysisRequest request)
     {
-        foreach (var (key, old) in _jobs)
-            if (DateTime.UtcNow - old.Finished > Keep)
-                _jobs.TryRemove(key, out _);
+        Prune();
         var id = Guid.NewGuid().ToString("N");
         var job = new Job();
         _jobs[id] = job;
@@ -101,11 +99,16 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 job.Current = null;
                 job.Finished = DateTime.UtcNow;
             }
-            // 프레임 값은 크다 (20시간 30fps ≈ 67MB): 다음 분석을 기다리지 않고 잠시 뒤 버린다
-            await Task.Delay(Keep);
-            _jobs.TryRemove(id, out _);
         });
         return id;
+    }
+
+    /// <summary>끝난 작업: 최근 KeepFinished개만, KeepAge보다 오래된 것은 버린다</summary>
+    private void Prune()
+    {
+        var finished = _jobs.Where(kv => kv.Value.Finished != DateTime.MaxValue).OrderByDescending(kv => kv.Value.Finished).ToList();
+        foreach (var (key, _) in finished.Skip(KeepFinished).Concat(finished.Where(kv => DateTime.UtcNow - kv.Value.Finished > KeepAge)))
+            _jobs.TryRemove(key, out _);
     }
 
     /// <summary>진행과 video번째 영상의 offset 프레임부터 이어지는 결과 (한 번에 ChunkFrames까지, 재는 중인 영상은 앞에서부터 이어진 부분까지)</summary>
@@ -115,7 +118,6 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             return null;
         lock (job)
         {
-            job.Polled = DateTime.UtcNow;
             var chunks = new List<VideoAnalysisChunk>();
             var budget = ChunkFrames;
             var more = false;
@@ -278,8 +280,6 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                     // 마지막 구간은 끝남과 함께 (웹이 마지막 판정을 한 번에 닫게)
                     if (i == bounds.Count - 1)
                         result.Done = true;
-                    if (DateTime.UtcNow - job.Polled > Abandoned)
-                        job.Cancel.Cancel();
                 }
                 progress(bounds[i].Length is { } length ? bounds[i].Start + length : Math.Max(0, last));
             }

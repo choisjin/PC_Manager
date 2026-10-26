@@ -40,6 +40,10 @@ public interface IDashboardClient
     Task NoteRemoved(string noteId);
     /// <summary>PC 잠금이 바뀜 (풀림 여부는 브라우저마다 달라 목록을 다시 받는다)</summary>
     Task PcLocksChanged();
+    /// <summary>결과 확인 작업(영상 분석·이미지 찾기) 목록·진행이 바뀜</summary>
+    Task ResultJobsChanged(IReadOnlyList<ResultJobView> jobs);
+    /// <summary>결과 확인 예약 분석 목록이 바뀜</summary>
+    Task ResultSchedulesChanged(IReadOnlyList<ResultScheduleView> schedules);
 }
 
 /// <summary>웹 대시보드가 접속하는 Hub. 출력은 보고 있는 실행에만 전달한다.</summary>

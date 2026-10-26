@@ -32,6 +32,7 @@ import {
   type UpdateStatus,
 } from './api'
 import { EMPTY_GROUPS } from './components/explorer/pcGroups'
+import { reloadResultJobs, reloadResultSchedules, setResultJobs, setResultSchedules } from './components/results/resultJobs'
 import { pcLockStore } from './pcLocks'
 
 /** 메모 변경: 바뀐 메모 / 지운 메모 id / 다시 연결됨(목록 새로 불러오기) */
@@ -220,6 +221,9 @@ export function useDashboard() {
     })
     connection.on('PcStatusesChanged', (v: PcStatuses) => setPcStatuses(v.statuses))
     connection.on('ResultProfilesChanged', applyResultProfiles)
+    // 결과 확인 작업(영상 분석·이미지 찾기) 진행: PiP·Result PC 목록·결과 확인이 같은 목록을 본다
+    connection.on('ResultJobsChanged', setResultJobs)
+    connection.on('ResultSchedulesChanged', setResultSchedules)
     connection.on('RemoteUsageChanged', (v: RemoteUsage) => setRemoteUsage(v.inUseBy))
     // 채팅: 서버는 내가 속한 방의 것만 보낸다
     // 전체 방은 맨 위에 고정, 나머지는 최근 대화 순
@@ -320,6 +324,8 @@ export function useDashboard() {
       if (onlineUserRef.current) connection.invoke('SetUser', onlineUserRef.current).catch(() => {})
       api.stateLayout().then(setStateLayout, () => {})
       api.resultProfiles().then(applyResultProfiles, () => {})
+      void reloadResultJobs()
+      void reloadResultSchedules()
       for (const jobRunId of loadedJobIds) {
         api
           .job(jobRunId)

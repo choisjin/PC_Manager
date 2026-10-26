@@ -134,6 +134,9 @@ export function useResults(): State {
   return useSyncExternalStore(subscribe, () => state)
 }
 
+/** 지금 이 탭의 세션 (React 밖에서) */
+export const currentSessions = () => state.sessions
+
 export const baseName = (p: string) => p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? p
 export const dirName = (p: string) => p.replace(/[\\/][^\\/]*$/, '')
 export const toMessage = (err: unknown) => (err instanceof Error ? err.message : String(err))

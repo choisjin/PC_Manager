@@ -5,6 +5,7 @@ import { PcInfoPanel } from '../explorer/PcInfoPanel'
 import { displayName } from '../explorer/pcGroups'
 import { projectAgents, remoteSections } from '../remote/remotePcs'
 import { RESULT_MODE_LABEL } from './resultCsv'
+import { JOB_KIND_LABEL, openJob, scheduleTimeText, useResultJobs, useResultSchedules } from './resultJobs'
 import { buildSource, cachedRuns, type FoundSource, type ResultRun, type RunScan, scanRuns } from './resultFinder'
 import { dirName, toMessage } from './resultSessions'
 import { openResultTab, type ResultTabRequest } from './resultTab'
@@ -70,6 +71,11 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
   const [notice, setNotice] = useState<string | null>(null)
 
   const agent = agents.find((a) => a.id === selectedId) ?? null
+  // PC마다 결과 확인 작업 표시: 진행 중이면 진행률, 끝나고 아직 안 봤으면 '분석 완료' (누르면 그 결과를 연다)
+  const jobs = useResultJobs()
+  const schedules = useResultSchedules()
+  const jobOf = (agentId: string) =>
+    jobs.find((j) => j.agentId === agentId && j.state === 'running') ?? jobs.find((j) => j.agentId === agentId && j.state === 'done' && !j.seen)
   const profile = selectedId ? profiles[selectedId] ?? null : null
   const nameOf = (a: Agent) => displayName(a, pcGroups)
 
@@ -201,6 +207,33 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
                     >
                       <span className={`dot ${a.online ? 'on' : 'off'}`} />
                       <span className="rp-pc-name ellipsis" title={a.machineName}>{nameOf(a)}</span>
+                      {(() => {
+                        // 예약 분석 대기 (가장 이른 것)
+                        const next = schedules.find((s) => s.agentId === a.id && s.state === 'pending')
+                        return next && (
+                          <span className="rp-job scheduled" title={`예약 분석 · ${next.title} · ${new Date(next.at).toLocaleString()}`}>
+                            ⏰ {scheduleTimeText(next.at)}
+                          </span>
+                        )
+                      })()}
+                      {(() => {
+                        const job = jobOf(a.id)
+                        if (!job) return null
+                        const running = job.state === 'running'
+                        return (
+                          <button
+                            type="button"
+                            className={`rp-job${running ? '' : ' done'}`}
+                            title={`${JOB_KIND_LABEL[job.kind]} · ${job.title} — 누르면 결과를 엽니다`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openJob(job)
+                            }}
+                          >
+                            {running ? `분석 ${Math.round(job.progress * 100)}%` : '분석 완료'}
+                          </button>
+                        )
+                      })()}
                       {p ? <span className="rp-chip">{RESULT_MODE_LABEL[p.mode]}</span> : <span className="small muted">미설정</span>}
                       <button
                         type="button"

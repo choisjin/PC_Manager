@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type VideoAnalysisChunk, type VideoAnalysisProgress } from '../../api'
+import { api, type VideoAnalysisChunk, type VideoAnalysisProgress, type VideoAnalysisRequest } from '../../api'
 import type { Quad } from './frameUtil'
 import type { FrameShot, SearchVideo } from './imageSearchState'
-import { toMessage } from './resultSessions'
+import { baseName, toMessage } from './resultSessions'
 import { Detector, type DetectResult, type FrameArrays, type SegmentKind } from './videoDetect'
+import { findJob } from './resultJobs'
+import type { ResultTabRequest } from './resultTab'
 import { CYCLE_DIFF_DEFAULT } from './videoCycle'
 import type { Exclusion } from './videoExclude'
 
@@ -14,9 +16,31 @@ import type { Exclusion } from './videoExclude'
 //      꺼진 화면은 기준 밝기(그 영상에서 0.3초 넘게 이어진 가장 낮은 밝기)와의 차이로 본다:
 //      받는 중에 더 어두운 곳이 나오면 기준 밝기를 낮추고 그 영상을 처음부터 다시 판정한다
 //   3) 정지 기준을 바꾸면 다시 재지 않고 받은 프레임으로 바로 다시 판정한다. 제외 구간은 판정 결과에서 뺀다 (videoExclude)
+//   4) 결과 확인을 닫거나 탭을 새로 고쳐도 테스트 PC에서 계속 돈다 (멈춤은 사용자가). 시작하면 서버 작업 목록에 적어 두고
+//      (resultJobs, 설정도 함께), 다시 열면 이 결과의 마지막 작업을 찾아 설정을 되살리고 처음부터 다시 받아 판정한다
 
 /** 영상 아래 탐색 막대에 그리는 검출 구간 색 */
 export const MARK_COLOR: Record<SegmentKind, string> = { black_screen: '#c9392f', flicker: '#d4972a', static: '#8a93a3' }
+
+/** 결과 확인 작업을 서버 목록에 적고 다시 열 때 찾는 데 쓰는 이 결과의 정보 */
+export interface JobContext {
+  agentId: string
+  machineName: string | null
+  title: string
+  /** resultJobs.sourceKeyOf */
+  sourceKey: string
+  /** 이 결과를 새 탭에서 다시 여는 요청 */
+  open: ResultTabRequest
+}
+
+/** 다시 열 때 되살리는 영상 분석 설정 (서버 작업 목록에 함께 적는다) */
+interface AnalysisParams {
+  customRoi: Quad | null
+  staticS: number
+  excludes: Exclusion[]
+  cycleDiff: number
+  starts: number[]
+}
 
 /** 정지 기준의 가장 작은 값 (초): 실제로는 제외 구간 밖 스텝의 가장 짧은 DURATION (그보다 작으면 이 값) */
 export const STATIC_MIN = 1
@@ -161,7 +185,8 @@ function arraysOf(f: VideoFrames, n: number): FrameArrays {
  * 오버레이(영상 위 화면 영역 표시)·패널·영역 고르기 창이 함께 쓰는 상태와 분석 작업.
  * 패널을 닫아도(스텝 이미지를 보려고) 결과·진행 중인 분석은 그대로 두고, 다시 열면 이어서 본다
  */
-export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
+export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
+  const agentId = ctx.agentId
   const [open, setOpen] = useState(false)
   // 화면 영역 (늘 직접 지정, 지정해야 분석): 꼭짓점 넷 (비스듬히 찍힌 화면도 그대로, 에이전트가 반듯하게 펴서 잰다)
   const [customRoi, setCustomRoi] = useState<Quad | null>(null)
@@ -206,12 +231,57 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
   // 영상마다 테스트가 시작한 영상 안 초 (그 앞은 재지 않는다, 모르면 0): Viewer가 Result 시각으로 정해 넣는다
   const startsRef = useRef<number[]>([])
 
-  // 결과 화면을 벗어나면 진행 중인 분석을 멈춘다
+  // 보이는 결과의 작업 (끝난 뒤에도: 설정을 바꾸면 서버에 다시 적는다)
+  const shownJobRef = useRef<string | null>(null)
+
+  // 결과 화면을 벗어나면 받기만 그만둔다 (작업은 테스트 PC에서 계속 돈다 — 다시 열면 이어 받는다)
   useEffect(() => () => {
-    const id = jobRef.current
     jobRef.current = null
-    if (id) void api.cancelVideoAnalysis(agentId, id).catch(() => {})
   }, [agentId])
+
+  // 다시 열었을 때: 이 결과의 마지막 작업을 찾아 설정을 되살리고 처음부터 다시 받는다 (영상 목록이 정해진 뒤 한 번)
+  const attachedRef = useRef(false)
+  useEffect(() => {
+    if (attachedRef.current || !videos.length) return
+    attachedRef.current = true
+    void (async () => {
+      const job = await findJob(ctx.sourceKey, 'analysis')
+      if (!job || job.state === 'lost' || jobRef.current) return
+      const params = (await api.resultJobParams(job.id).catch(() => null)) as AnalysisParams | null
+      if (jobRef.current) return
+      if (params) {
+        setCustomRoi(params.customRoi)
+        setStaticS(params.staticS)
+        staticRef.current = params.staticS
+        setExcludes(params.excludes ?? [])
+        setCycleDiff(params.cycleDiff ?? CYCLE_DIFF_DEFAULT)
+      }
+      reset()
+      const finished = job.finished ? Date.parse(job.finished) : null
+      void follow(job.id, Date.parse(job.started), params?.starts ?? [], finished)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videos.length])
+
+  // 설정을 바꾸면 다시 열 때 그대로 되살리게 서버에 다시 적는다 (잠시 모아서)
+  useEffect(() => {
+    const id = shownJobRef.current
+    if (!id) return
+    const timer = window.setTimeout(() => {
+      const params: AnalysisParams = { customRoi, staticS, excludes, cycleDiff, starts: startsRef.current }
+      void api.saveResultJobParams(id, params).catch(() => {})
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [customRoi, staticS, excludes, cycleDiff])
+
+  // 끝난 결과를 패널에서 봤으면 PC 목록의 '분석 완료'를 지운다 (작업마다 한 번)
+  const seenRef = useRef<string | null>(null)
+  useEffect(() => {
+    const id = shownJobRef.current
+    if (!open || !id || seenRef.current === id || !status || status.state === 'running') return
+    seenRef.current = id
+    void api.markResultJobSeen(id).catch(() => {})
+  }, [open, status])
 
   const close = () => {
     setOpen(false)
@@ -260,8 +330,8 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
     setResults(detectorsRef.current.map((d) => d.result()))
   }
 
-  const run = async () => {
-    if (jobRef.current) void api.cancelVideoAnalysis(agentId, jobRef.current).catch(() => {})
+  /** 받은 것을 모두 비우고 받기 시작 상태로 */
+  const reset = () => {
     jobRef.current = null
     framesRef.current = []
     detectorsRef.current = []
@@ -279,12 +349,41 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
     setElapsed(null)
     setPicked(null)
     setRunning(true)
+  }
+
+  const run = async () => {
+    if (jobRef.current) void api.cancelVideoAnalysis(agentId, jobRef.current).catch(() => {})
+    reset()
     const started = Date.now()
     const roi = customRoi
     const starts = videos.map((_, i) => startsRef.current[i] ?? 0)
+    let id: string
     try {
-      const { id } = await api.startVideoAnalysis(agentId, { paths: videos.map((v) => v.readPath), roi, starts })
-      jobRef.current = id
+      id = (await api.startVideoAnalysis(agentId, { paths: videos.map((v) => v.readPath), roi, starts })).id
+    } catch (err) {
+      setError(toMessage(err))
+      setRunning(false)
+      return
+    }
+    // 서버 작업 목록에 적는다: 결과 확인을 닫아도 PiP·PC 목록에 진행·완료가 보이고, 다시 열면 이어 받는다
+    const params: AnalysisParams = { customRoi: roi, staticS, excludes, cycleDiff, starts }
+    void api.registerResultJob({
+      id, kind: 'analysis', agentId, machineName: ctx.machineName, title: ctx.title, sourceKey: ctx.sourceKey, open: ctx.open, params,
+    }).catch(() => {})
+    await follow(id, started, starts, null)
+  }
+
+  /**
+   * id 작업의 결과를 처음부터 받으며 판정한다 (진행 중이면 끝날 때까지).
+   * started·finished: 걸린 시간 표시용 (다시 열어 끝난 작업을 받으면 finished가 있다)
+   */
+  const follow = async (id: string, started: number, starts: number[], finished: number | null) => {
+    jobRef.current = id
+    shownJobRef.current = id
+    // 이 화면에 없어 건너뛴 영상: 받은 프레임 수 · 경로
+    const skipped: number[] = []
+    const missing = new Set<string>()
+    try {
       let video = 0
       let offset = 0
       let more = false
@@ -317,22 +416,32 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
         }
         const touched = new Set<number>()
         for (const chunk of next.chunks) {
-          const prev = framesRef.current[chunk.video] ?? newFrames(videos[chunk.video]?.path ?? chunk.path)
-          framesRef.current[chunk.video] = append(prev, chunk)
-          // 테스트 시작 전 프레임이 왔다 = 시작 초를 모르는 옛 에이전트 (검출에서만 뺀다)
-          const f = framesRef.current[chunk.video]
-          if (!prev.n && f.n && f.t[0] < starts[chunk.video] - 1.5) {
-            setWarning('이 PC의 에이전트는 테스트 시작 전 영상도 잽니다 (검출에서는 뺍니다). 에이전트를 업데이트하세요')
+          // 잰 영상 → 이 화면의 영상: 경로로 맞춘다 (예약 분석은 그 뒤 저장된 영상까지 재서 차례가 다를 수 있다). 이 화면에 없는 영상은 건너뛴다
+          const slot = videos.findIndex((v) => v.readPath === chunk.path || v.path === chunk.path)
+          if (slot < 0) {
+            skipped[chunk.video] = chunk.offset + Math.floor(fromBase64(chunk.frames).length / FRAME_BYTES)
+            if (!missing.has(chunk.path)) {
+              missing.add(chunk.path)
+              setWarning(`결과 확인에 없는 영상은 건너뜁니다: ${[...missing].map((p) => baseName(p)).join(', ')}`)
+            }
+          } else {
+            const prev = framesRef.current[slot] ?? newFrames(videos[slot].path)
+            framesRef.current[slot] = append(prev, chunk)
+            // 테스트 시작 전 프레임이 왔다 = 시작 초를 모르는 옛 에이전트 (검출에서만 뺀다)
+            const f = framesRef.current[slot]
+            if (!prev.n && f.n && f.t[0] < (starts[chunk.video] ?? 0) - 1.5) {
+              setWarning('이 PC의 에이전트는 테스트 시작 전 영상도 잽니다 (검출에서는 뺍니다). 에이전트를 업데이트하세요')
+            }
+            const marks = (marksRef.current[slot] ??= [])
+            for (const m of chunk.marks ?? []) if (m > (marks.at(-1) ?? 0)) marks.push(m)
+            touched.add(slot)
           }
-          const marks = (marksRef.current[chunk.video] ??= [])
-          for (const m of chunk.marks ?? []) if (m > (marks.at(-1) ?? 0)) marks.push(m)
-          touched.add(chunk.video)
           if (chunk.done) {
             video = chunk.video + 1
             offset = 0
           } else {
             video = chunk.video
-            offset = framesRef.current[chunk.video].n
+            offset = slot < 0 ? skipped[chunk.video] : framesRef.current[slot].n
           }
         }
         more = next.more
@@ -344,7 +453,7 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
           break
         }
       }
-      setElapsed((Date.now() - started) / 1000)
+      setElapsed(((finished ?? Date.now()) - started) / 1000)
       jobRef.current = null
       setRunning(false)
     } catch (err) {
@@ -371,7 +480,14 @@ export function useVideoAnalysis(agentId: string, videos: SearchVideo[]) {
     setResults(detectorsRef.current.map((d) => d.result()))
   }
 
+  /** 예약 분석에 넣을 요청·설정 (화면 영역을 아직 안 정했으면 null). 영상·테스트 시작 초는 서버가 시작할 때 채운다 */
+  const schedulePayload = (): { request: VideoAnalysisRequest; params: AnalysisParams } | null => customRoi && {
+    request: { paths: [], roi: customRoi, starts: [] },
+    params: { customRoi, staticS, excludes, cycleDiff, starts: [] },
+  }
+
   return {
+    schedulePayload,
     open, setOpen, close, customRoi, setCustomRoi, staticS, changeStatic, showRoi, setShowRoi,
     picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit, cycleDiff, setCycleDiff,
     frames, results, setup, status, error, warning, running, retrying, elapsed, run, stop, picked, setPicked, startsRef,
