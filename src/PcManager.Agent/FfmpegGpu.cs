@@ -40,12 +40,23 @@ internal static class FfmpegGpu
         public string Key => $"{Kind}:{Adapter}";
     }
 
+    /// <summary>
+    /// GPU 디코딩이 구간을 다 채우지 못함 (디코더가 중간에 멈춤 — 또는 파일이 거기서 끝남). 이 구간은 다른 방법으로 다시 하고 그 영상의
+    /// 다음 구간은 이 방식을 건너뛰되, GPU 고장으로는 세지 않는다 (파일이 끊긴 것일 수 있어 GPU를 끄는 근거로 삼지 않는다)
+    /// </summary>
+    public sealed class DecodeIncompleteException(string message) : InvalidOperationException(message);
+
     private static readonly string[] Encoders = ["h264_nvenc", "h264_qsv", "h264_amf"];
-    // GPU 하나가 이만큼 실패하면 그 GPU는 그만 쓴다 · 이만큼 많은 영상이 GPU로 안 되면 GPU 디코딩을 끈다
+    // GPU 방식 하나가 이만큼 많은 영상에서 실패하면 그 방식은 그만 쓴다 · 이만큼 많은 영상이 어느 GPU로도 안 되면 GPU 디코딩을 끈다.
+    // 영상 하나는 구간 여러 개가 동시에 돌므로(최대 8개) 실패는 (방식, 영상)마다 한 번만 센다 — 구간마다 세면 영상 하나로 바로 꺼진다
     private const int MaxAdapterFailures = 3;
     private const int MaxVideoFailures = 3;
     private static readonly Lock Gate = new();
+    // 방식(Key) → 실패한 영상 수
     private static readonly ConcurrentDictionary<string, int> AdapterFailures = new();
+    // "방식|영상 경로" → 오류: 그 영상의 다음 구간은 그 방식을 건너뛴다
+    private static readonly ConcurrentDictionary<string, string> FailedOptions = new(StringComparer.OrdinalIgnoreCase);
+    // 어느 GPU로도 안 된 영상 → 오류
     private static readonly ConcurrentDictionary<string, string> FailedVideos = new(StringComparer.OrdinalIgnoreCase);
     private static readonly Lazy<IReadOnlyList<Adapter>> AdapterList = new(() => FindAdapters?.Invoke() ?? []);
     private static volatile string? _lastFailure;
@@ -79,7 +90,7 @@ internal static class FfmpegGpu
                 list.Add(new DecodeOption(a.Index, a.Name, ["-hwaccel", "d3d11va", "-hwaccel_device", a.Index.ToString(CultureInfo.InvariantCulture)]));
             }
         }
-        return list.Where(o => AdapterFailures.GetValueOrDefault(o.Key) < MaxAdapterFailures).ToList();
+        return list.Where(o => AdapterFailures.GetValueOrDefault(o.Key) < MaxAdapterFailures && !FailedOptions.ContainsKey($"{o.Key}|{path}")).ToList();
     }
 
     /// <summary>NVIDIA cuvid 디코더 이름 (영상 코덱 → h264_cuvid 등, 지원하지 않는 코덱이면 null)</summary>
@@ -106,10 +117,11 @@ internal static class FfmpegGpu
     public static async Task<T> DecodeAsync<T>(ILogger logger, string path, Func<DecodeOption?, Task<T>> attempt, Func<T, string?> failure,
         bool cuvid = false)
     {
-        var tried = new List<(DecodeOption Option, string Error)>();
+        var tried = new List<(DecodeOption Option, string Error, bool Broken)>();
         foreach (var option in DecodeOptions(path, cuvid))
         {
             string error;
+            var broken = true;
             try
             {
                 var result = await attempt(option);
@@ -120,11 +132,16 @@ internal static class FfmpegGpu
                 }
                 error = reason;
             }
+            catch (DecodeIncompleteException ex)
+            {
+                error = ex.Message;
+                broken = false;
+            }
             catch (InvalidOperationException ex)
             {
                 error = ex.Message;
             }
-            tried.Add((option, error));
+            tried.Add((option, error, broken));
         }
         var cpu = await attempt(null);
         if (failure(cpu) is null)
@@ -132,19 +149,28 @@ internal static class FfmpegGpu
         return cpu;
     }
 
-    private static void Record(ILogger logger, string path, List<(DecodeOption Option, string Error)> tried, bool gpuWorked)
+    private static void Record(ILogger logger, string path, List<(DecodeOption Option, string Error, bool Broken)> tried, bool gpuWorked)
     {
-        foreach (var (option, error) in tried)
+        foreach (var (option, error, broken) in tried)
         {
+            // 같은 영상의 다른 구간이 이미 적었으면 (동시에 돌다 함께 실패) 세지 않는다
+            if (!FailedOptions.TryAdd($"{option.Key}|{path}", error))
+                continue;
+            if (!broken)
+            {
+                logger.LogInformation("GPU 디코딩이 구간을 다 채우지 못함 ({Gpu}, {File}) — 이 영상은 다른 방법으로: {Error}", option.Name, Path.GetFileName(path), error);
+                continue;
+            }
             var count = AdapterFailures.AddOrUpdate(option.Key, 1, (_, c) => c + 1);
-            logger.LogWarning("GPU 디코딩 실패 ({Gpu}, {File}): {Error}", option.Name, Path.GetFileName(path), error);
+            logger.LogWarning("GPU 디코딩 실패 ({Gpu}, {File}) — 이 영상은 다른 방법으로: {Error}", option.Name, Path.GetFileName(path), error);
             if (count == MaxAdapterFailures)
-                logger.LogWarning("GPU {Gpu}는 디코딩이 {Count}번 실패해 이제 쓰지 않습니다", option.Name, count);
+                logger.LogWarning("GPU {Gpu}는 영상 {Count}개에서 디코딩이 실패해 이제 쓰지 않습니다", option.Name, count);
         }
-        if (gpuWorked || tried.Count == 0)
+        // 어느 GPU로도 안 되고 CPU로는 된 영상: 다음부터 바로 CPU로 (구간을 못 채운 것뿐이면 GPU 고장으로 세지 않는다)
+        if (gpuWorked || tried.Count == 0 || tried.All(t => !t.Broken))
             return;
-        // 어느 GPU로도 안 되고 CPU로는 된 영상: 다음부터 바로 CPU로
-        FailedVideos[path] = tried[^1].Error;
+        if (!FailedVideos.TryAdd(path, tried[^1].Error))
+            return;
         _lastFailure = $"{Path.GetFileName(path)} — {Short(tried[^1].Error)}";
         if (FailedVideos.Count >= MaxVideoFailures && !_decodeOff)
         {

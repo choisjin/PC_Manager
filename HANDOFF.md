@@ -1,7 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.9.2** (NVIDIA면 영상 분석의 화면 영역 자르기·줄이기를 GPU 디코더(cuvid)에서 — CPU 일 절반 아래 — **에이전트 업데이트**,
-아래 1절의 0.9.2 항목. 그 앞 0.9.1: 동시 ffmpeg 수·필터 스레드, 0.9.0: GPU 고르기·실패 처리. 버전은 0.9.x)
+작성: 2026-10-26 · 최신 릴리스 **v0.9.3** (GPU 디코딩 실패를 영상 단위로 세고, 중간에 멈춘 GPU 디코딩은 그 구간을 다시 — **에이전트 업데이트**,
+아래 1절의 0.9.3 항목. 그 앞 0.9.2: NVIDIA cuvid로 영역 자르기·줄이기까지 GPU, 0.9.1: 동시 ffmpeg 수, 0.9.0: GPU 고르기. 버전은 0.9.x)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -501,6 +501,24 @@ CPU 일을 줄여야 함: 1080p 프레임을 통째로 내려받고 CPU에서 �
   · `Filter` = crop + shrink + WarpFilter. 이미지 찾기·사본 변환은 d3d11va만(cuvid 아님).
 - 확인: 에이전트(Windows·Linux) 빌드, 임시 콘솔로 실제 `MeasureOnceAsync`를 방식마다(cuvid·NVIDIA d3d11va·AMD d3d11va·CPU) — 프레임 900·시각 같음,
   값 차이 위와 같음. 사용자 PC(GTX 1660 SUPER)로는 못 봄 — NVDEC가 그 PC의 상한일 수 있음.
+
+### 0.9.3: GPU 디코딩 실패 세기(영상 단위) · 중간에 멈춘 GPU 디코딩은 다시
+사용자 요청: 속도 관련 코드 전체 리뷰 → 두 가지 결함을 찾아 고침 (확인 뒤 릴리즈).
+- 결함 1: 실패를 구간마다 셌다 — 영상 하나의 구간 8개가 동시에 실패하면 바로 8 ≥ 3이라 그 GPU 방식이 에이전트 끝까지 꺼짐 (NVDEC가 못 푸는
+  10비트 H.264 하나로 cuvid 영구 중단), cuvid 실패·d3d11va 성공인 영상은 구간마다 cuvid를 다시 시도. 고침 `FfmpegGpu`: `FailedOptions`("방식|영상" → 오류)에
+  `TryAdd`로 처음 한 번만 `AdapterFailures`에 세고(이후 동시 구간은 무시), `DecodeOptions(path)`는 그 영상에서 실패한 방식을 뺌. `FailedVideos`도 TryAdd.
+  이제 MaxAdapterFailures·MaxVideoFailures = 영상 개수.
+- 결함 2: ffmpeg가 오류로 끝나도 프레임이 있으면 성공 — GPU 디코더는 깨진 패킷에서 멈추기도 해 프레임이 빠진 구간이 들어갔음. 고침
+  `VideoAnalyzer.MeasureOnceAsync`: GPU 시도(strict)는 종료 코드 ≠ 0이면 실패(다음 GPU → CPU가 구간을 다시), 또 길이를 아는 구간에서 마지막 프레임이
+  구간 앞 절반(start + length/2 − 1)에도 못 미치면 `FfmpegGpu.DecodeIncompleteException` — 이건 파일이 끊긴 것일 수도 있어 그 영상의 다음 구간만
+  그 방식을 건너뛰고(FailedOptions) GPU 고장(AdapterFailures·FailedVideos·_decodeOff)으로는 세지 않음(`Record`의 Broken=false). CPU(마지막)는 그대로 부분 결과.
+  절반까지만 보는 이유: 가변 프레임 녹화의 긴 빈틈을 실패로 오인하지 않게. 뒷 절반에서 멈춘 경우는 못 잡음(한계).
+- 확인: 임시 콘솔(scratchpad gtest, 리플렉션) — 실제 ffmpeg: 정상 영상 10~40초 cuvid·d3d11va×2·CPU 모두 900프레임, 24초에서 끊긴 MKV 10~60초는
+  GPU 셋 다 DecodeIncomplete·CPU 421프레임, 끊긴 영상 10~20초·정상 영상 끝 구간 100~120초는 GPU 성공(오탐 없음) / 가짜 시도 8개 동시: cuvid만 실패
+  영상 3개째에 cuvid 꺼짐(그 전엔 그 영상만 건너뜀), 못 채운 영상은 그 영상만 CPU·상태 변화 없음, 모든 GPU 실패 영상 3개째에 GPU 디코딩 꺼짐.
+- 리뷰에서 남긴 것(안 고침): NVDEC가 상한이면(Video Decode 100%) CPU 디코딩 작업자를 섞어야 더 빨라짐(CPU가 병목일 땐 역효과라 자동 판단 필요) ·
+  꺼진 GPU는 재시작까지 영구 · 같은 모델 GPU 2장은 하나로 합쳐짐 · cuvid -gpu 번호는 DXGI 차례(NVIDIA 1장이면 무관) · 4K 8개 동시 cuvid 메모리 ~2.4GB ·
+  디코더 `-threads 2`면 CPU 디코딩 5% 더 빠름(측정, 사소).
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

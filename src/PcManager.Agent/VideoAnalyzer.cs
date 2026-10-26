@@ -416,7 +416,10 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 if (!process.HasExited)
                     process.Kill(entireProcessTree: true);
             }
-            if (process.ExitCode != 0 && luma.Count == 0)
+            // GPU 디코딩(strict)은 오류로 끝나면 프레임이 있어도 실패로 → 다음 GPU·CPU로 이 구간을 다시 (GPU 디코더는 깨진 패킷에서 멈추기도 한다).
+            // 마지막 시도인 CPU는 거기까지 잰 것이라도 쓴다
+            var strict = decode is not null;
+            if (process.ExitCode != 0 && (luma.Count == 0 || strict))
             {
                 var tail = string.Join(" ", (await errors).Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(3));
                 throw new InvalidOperationException($"ffmpeg 실패 (코드 {process.ExitCode}): {tail}");
@@ -452,6 +455,9 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 var (red, green, blue) = Rgb(v[0], v[2], v[3]);
                 rows.Add(new Row(key / 1e6, v[0], v[1], e, grid.TryGetValue(key, out var g) ? g : e, b, red, green, blue));
             }
+            // GPU 디코더가 중간에 멈춰도 ffmpeg가 0으로 끝나기도 한다: 구간 앞 절반도 못 채웠으면 실패로 (가변 프레임 영상의 긴 빈틈은 넘기게 절반까지만)
+            if (strict && length is { } chunk && rows.Count > 0 && rows[^1].T < start + chunk / 2 - 1)
+                throw new FfmpegGpu.DecodeIncompleteException($"GPU 디코딩이 구간 중간({rows[^1].T:0.0}초, 구간 {start:0.0}~{end:0.0}초)에서 멈췄습니다");
             return rows;
         }
         finally
