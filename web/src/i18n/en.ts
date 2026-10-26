@@ -1875,6 +1875,9 @@ const TEMPLATES: [string, string][] = [
   ["영상: 지금 {0}개 + 그 시각에 같은 폴더에 이후 저장된 영상 (사이클마다 나눠 저장해도 함께, 수정 시각순)", "Videos: {0} now + videos saved later in the same folders at that time (including per-cycle files, by modified time)"],
   ["결과 확인에 없는 영상은 건너뜁니다: {0}", "Skipping videos not in this result view: {0}"],
   ["시작함 (영상 {0}개)", "Started ({0} videos)"],
+  ["· 경과 {0}", "· elapsed {0}"],
+  ["· 걸린 시간 {0}", "· took {0}"],
+  ["멈춤 — 거기까지 잰 결과입니다 ({0})", "Stopped — results measured so far ({0})"],
 ]
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

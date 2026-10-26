@@ -4,6 +4,7 @@ import { newId } from '../explorer/pcGroups'
 import { clamp, cornersOf, formatFrameTime, type Point, type Quad, useVideoView } from './frameUtil'
 import type { FrameShot, SearchVideo, StepSource } from './imageSearchState'
 import { QuadPickerDialog } from './QuadPicker'
+import { useNow } from './resultJobs'
 import { formatWall, type ResultRow, statusTone } from './resultCsv'
 import { rowAtTime } from './sync'
 import type { VideoAnalysisState, VideoFrames } from './videoAnalysisState'
@@ -586,6 +587,8 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
 
   const status = state.status
   const pct = Math.round((status?.progress ?? 0) * 100)
+  // 분석 중 경과 시간 (1초마다)
+  const now = useNow(state.running)
   const ref = curResult?.ref
 
   return (
@@ -641,7 +644,9 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
       {state.running && (
         <div className="small muted">
           <progress max={1} value={status?.progress ?? 0} />{' '}
-          {`분석 중 ${pct}%`}{status?.current ? ` · ${status.current}` : ''}{' · 앞부분부터 끝난 만큼 먼저 보여 줍니다'}
+          {`분석 중 ${pct}%`}
+          {state.startedAt !== null && ` · 경과 ${formatDuration(now - state.startedAt)}`}
+          {status?.current ? ` · ${status.current}` : ''}{' · 앞부분부터 끝난 만큼 먼저 보여 줍니다'}
         </div>
       )}
       {state.running && state.retrying && <p className="small muted">테스트 PC 연결이 잠깐 끊겨 다시 묻는 중… (분석은 테스트 PC에서 계속됩니다)</p>}
@@ -698,7 +703,7 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
           {!state.running && status?.state === 'done' && (
             <span>{state.elapsed !== null ? `분석 완료 (${formatDuration(state.elapsed * 1000)})` : '분석 완료'}</span>
           )}
-          {!state.running && status?.state === 'canceled' && <span className="rv-search-warn">멈춤 — 거기까지 잰 결과입니다</span>}
+          {!state.running && status?.state === 'canceled' && <span className="rv-search-warn">{`멈춤 — 거기까지 잰 결과입니다${state.elapsed !== null ? ` (${formatDuration(state.elapsed * 1000)})` : ''}`}</span>}
         </div>
       )}
       {frame && (

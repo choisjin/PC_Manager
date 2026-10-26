@@ -213,6 +213,8 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
   const [retrying, setRetrying] = useState(false)
   // 분석에 걸린 시간 (시작~끝, 초)
   const [elapsed, setElapsed] = useState<number | null>(null)
+  // 분석을 시작한 시각 (ms, 경과 시간 표시)
+  const [startedAt, setStartedAt] = useState<number | null>(null)
   // 마지막으로 누른 검출 항목 (`종류:경로:시작`) — 스크롤해도 어디를 봤는지 보이게
   const [picked, setPicked] = useState<string | null>(null)
   const jobRef = useRef<string | null>(null)
@@ -347,6 +349,7 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
     setStatus(null)
     setRetrying(false)
     setElapsed(null)
+    setStartedAt(null)
     setPicked(null)
     setRunning(true)
   }
@@ -378,6 +381,7 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
    * started·finished: 걸린 시간 표시용 (다시 열어 끝난 작업을 받으면 finished가 있다)
    */
   const follow = async (id: string, started: number, starts: number[], finished: number | null) => {
+    setStartedAt(started)
     jobRef.current = id
     shownJobRef.current = id
     // 이 화면에 없어 건너뛴 영상: 받은 프레임 수 · 경로
@@ -490,7 +494,7 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
     schedulePayload,
     open, setOpen, close, customRoi, setCustomRoi, staticS, changeStatic, showRoi, setShowRoi,
     picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit, cycleDiff, setCycleDiff,
-    frames, results, setup, status, error, warning, running, retrying, elapsed, run, stop, picked, setPicked, startsRef,
+    frames, results, setup, status, error, warning, running, retrying, elapsed, startedAt, run, stop, picked, setPicked, startsRef,
   }
 }
 

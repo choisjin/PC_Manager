@@ -176,6 +176,9 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
   const [status, setStatus] = useState<ImageSearchProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+  // 찾기를 시작한 시각 (ms) · 걸린 시간 (초, 끝났을 때)
+  const [startedAt, setStartedAt] = useState<number | null>(null)
+  const [elapsed, setElapsed] = useState<number | null>(null)
   // 묻기가 실패해 다시 묻는 중 (에이전트 연결이 잠깐 끊김)
   const [retrying, setRetrying] = useState(false)
   const jobRef = useRef<string | null>(null)
@@ -214,7 +217,7 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
       setBefore(p.before)
       setAfter(p.after)
       reset(p.searched)
-      void follow(job.id)
+      void follow(job.id, Date.parse(job.started), job.finished ? Date.parse(job.finished) : null)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videos.length])
@@ -284,6 +287,8 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
     setRetrying(false)
     setSearched(windows)
     setPicked(null)
+    setStartedAt(null)
+    setElapsed(null)
     setRunning(true)
   }
 
@@ -291,6 +296,7 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
     if (!template) return
     if (jobRef.current) void api.cancelImageSearch(agentId, jobRef.current).catch(() => {})
     reset(windows ?? null)
+    const started = Date.now()
     const ranges = windows?.flatMap((w) => {
       const video = videos.findIndex((v) => v.path === w.path)
       return video < 0 ? [] : [{ video, start: w.start, end: w.end }]
@@ -309,11 +315,12 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
       id, kind: 'search', agentId, machineName: ctx.machineName, title: ctx.title, sourceKey: ctx.sourceKey, open: ctx.open,
       params: p && { ...p, searched: windows ?? null },
     }).catch(() => {})
-    await follow(id)
+    await follow(id, started, null)
   }
 
-  /** id 찾기의 결과를 처음부터 받는다 (진행 중이면 끝날 때까지) */
-  const follow = async (id: string) => {
+  /** id 찾기의 결과를 처음부터 받는다 (진행 중이면 끝날 때까지). started·finished: 걸린 시간 표시용 (다시 열어 끝난 찾기를 받으면 finished가 있다) */
+  const follow = async (id: string, started: number, finished: number | null) => {
+    setStartedAt(started)
     jobRef.current = id
     shownJobRef.current = id
     try {
@@ -363,6 +370,7 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
           break
         }
       }
+      setElapsed(((finished ?? Date.now()) - started) / 1000)
       jobRef.current = null
       setRunning(false)
     } catch (err) {
@@ -387,7 +395,7 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
   return {
     schedulePayload,
     open, setOpen, start, close, template, setTemplate, crop, setCrop, areaMode, setAreaMode, customArea, setCustomArea,
-    threshold, setThreshold, gap, setGap, found, status, error, running, retrying, run, stop, segments,
+    threshold, setThreshold, gap, setGap, found, status, error, running, startedAt, elapsed, retrying, run, stop, segments,
     scope, setScope, stepColumn, setStepColumn, stepValues, setStepValues, before, setBefore, after, setAfter, searched,
     picked, setPicked, exportColumns, setExportColumns, slideSeconds, setSlideSeconds,
   }

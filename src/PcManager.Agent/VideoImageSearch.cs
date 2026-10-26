@@ -271,8 +271,18 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         {
             while (scores.Count < first)
                 scores.Add(0);
-            var (frames, failure) = await ScanRangeAsync(ffmpeg, path, filter, matcher, job, result, fps, first, count, scores,
+            // GPU 디코딩으로 먼저, 한 프레임도 못 읽으면 CPU로 (CPU로는 되면 앞으로 CPU로만)
+            var gpu = FfmpegGpu.Decode;
+            var (frames, failure) = await ScanRangeAsync(ffmpeg, path, filter, matcher, job, result, fps, first, count, scores, gpu,
                 n => progress(scanned + n));
+            if (gpu && frames == 0 && failure is not null && !job.Cancel.IsCancellationRequested)
+            {
+                var gpuError = failure;
+                (frames, failure) = await ScanRangeAsync(ffmpeg, path, filter, matcher, job, result, fps, first, count, scores, false,
+                    n => progress(scanned + n));
+                if (frames > 0)
+                    FfmpegGpu.DecodeFailed(logger, gpuError);
+            }
             scanned += frames;
             error ??= failure;
             // 끝난 구간은 다시 재지 않는다 → 모두 확정
@@ -290,7 +300,7 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
     /// 구간이면 ffmpeg가 그 자리로 건너뛰어(앞 키프레임부터 디코딩) 필요한 만큼만 읽는다
     /// </summary>
     private async Task<(int Frames, string? Error)> ScanRangeAsync(string ffmpeg, string path, string filter, Matcher matcher, Job job,
-        VideoResult result, double fps, int first, int count, List<byte> scores, Action<int> progress)
+        VideoResult result, double fps, int first, int count, List<byte> scores, bool gpu, Action<int> progress)
     {
         var info = new ProcessStartInfo(ffmpeg)
         {
@@ -304,7 +314,7 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
             args.AddRange(["-ss", Seconds(first / fps)]);
         if (count >= 0)
             args.AddRange(["-t", Seconds(count / fps + 1)]);
-        args.AddRange(["-i", path, "-an", "-sn", "-dn", "-vf", filter]);
+        args.AddRange([.. FfmpegGpu.DecodeArgs(gpu), "-i", path, "-an", "-sn", "-dn", "-vf", filter]);
         if (count >= 0)
             args.AddRange(["-frames:v", count.ToString(CultureInfo.InvariantCulture)]);
         args.AddRange(["-f", "rawvideo", "-pix_fmt", "gray", "-"]);

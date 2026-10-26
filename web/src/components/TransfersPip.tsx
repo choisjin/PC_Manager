@@ -6,10 +6,10 @@ import { roomTitle } from '../chatRoom'
 import { type ChatActions, ChatPanel } from './ChatPanel'
 import { NotesPanel } from './NotesPanel'
 import type { NoteEvent } from '../useDashboard'
-import { formatBytes } from '../format'
+import { formatBytes, formatDuration } from '../format'
 import { kindLabel } from './explorer/useTransfers'
 import { RESULT_MODE_LABEL } from './results/resultCsv'
-import { JOB_KIND_LABEL, JOB_STATE_LABEL, openJob, resultJobsLoaded, scheduleTimeText, useResultJobs, useResultSchedules } from './results/resultJobs'
+import { JOB_KIND_LABEL, JOB_STATE_LABEL, openJob, resultJobsLoaded, scheduleTimeText, useNow, useResultJobs, useResultSchedules } from './results/resultJobs'
 import { openViewer, removeSession, type ResultSession, sessionTitle, startSession, useResults } from './results/resultSessions'
 
 interface Props {
@@ -571,6 +571,10 @@ function ResultItem({ session: s }: { session: ResultSession }) {
 function JobItem({ job: j }: { job: ResultJob }) {
   const running = j.state === 'running'
   const pct = Math.round(j.progress * 100)
+  // 진행 중이면 경과 시간 (1초마다), 끝났으면 걸린 시간
+  const now = useNow(running)
+  const started = Date.parse(j.started)
+  const took = running ? now - started : j.finished ? Date.parse(j.finished) - started : null
   const tone = running ? 'loading' : j.state === 'done' ? 'ready' : 'failed'
   const stop = () => {
     const call = j.kind === 'analysis' ? api.cancelVideoAnalysis(j.agentId, j.id) : api.cancelImageSearch(j.agentId, j.id)
@@ -601,7 +605,7 @@ function JobItem({ job: j }: { job: ResultJob }) {
       )}
       <div className={`pip-sub small ellipsis${j.state === 'failed' || j.state === 'lost' ? ' error' : ' muted'}`} title={j.error ?? j.current ?? undefined}>
         {j.machineName ?? ''}
-        {running ? ` · ${j.current ?? '진행 중'}` : ` · ${JOB_STATE_LABEL[j.state]}${j.error ? ` (${j.error})` : ''}`}
+        {running ? ` · 경과 ${formatDuration(took ?? 0)} · ${j.current ?? '진행 중'}` : ` · ${JOB_STATE_LABEL[j.state]}${took !== null ? ` · 걸린 시간 ${formatDuration(took)}` : ''}${j.error ? ` (${j.error})` : ''}`}
       </div>
     </div>
   )

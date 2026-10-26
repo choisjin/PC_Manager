@@ -44,42 +44,18 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
 
         var folder = Path.GetDirectoryName(path)!;
         var output = Path.Combine(folder, $"trim_{Fmt(startSec)}_{Fmt(endSec)}_{Path.GetFileNameWithoutExtension(path)}.mp4");
-        var info = new ProcessStartInfo(ffmpeg)
-        {
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardError = true,
-            RedirectStandardOutput = true,
-        };
-        foreach (var arg in new[]
-        {
-            "-hide_banner", "-loglevel", "error", "-nostdin",
-            "-ss", Fmt(startSec), "-to", Fmt(endSec), "-i", path,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-movflags", "+faststart", "-y", output,
-        })
-            info.ArgumentList.Add(arg);
-
         logger.LogInformation("영상 자르기: {Path} {Start}~{End}초 → {Output}", path, startSec, endSec, output);
-        using var process = Process.Start(info) ?? throw new InvalidOperationException("ffmpeg를 시작하지 못했습니다.");
-        var errors = process.StandardError.ReadToEndAsync();
-        _ = process.StandardOutput.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(MaxDuration);
-        try
-        {
-            await process.WaitForExitAsync(timeout.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            process.Kill(entireProcessTree: true);
+        var (exitCode, errors) = await RunGpuAsync(ffmpeg, (decode, encoder) =>
+        [
+            "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-ss", Fmt(startSec), "-to", Fmt(endSec), .. FfmpegGpu.DecodeArgs(decode), "-i", path,
+            .. FfmpegGpu.EncodeArgs(encoder),
+            "-c:a", "aac", "-movflags", "+faststart", "-y", output,
+        ], MaxDuration);
+        if (exitCode == -1)
             return new VideoTrimResult(null, "영상 자르기가 너무 오래 걸려 멈췄습니다.");
-        }
-
-        if (process.ExitCode != 0 || !File.Exists(output) || new FileInfo(output).Length == 0)
-        {
-            var tail = string.Join(" ", (await errors).Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(4));
-            return new VideoTrimResult(null, $"ffmpeg 실패 (코드 {process.ExitCode}): {tail}");
-        }
+        if (exitCode != 0 || !File.Exists(output) || new FileInfo(output).Length == 0)
+            return new VideoTrimResult(null, $"ffmpeg 실패 (코드 {exitCode}): {Tail(errors)}");
         return new VideoTrimResult(output, null);
     }
 
@@ -183,22 +159,25 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         CleanParts();
         UpdateIndex(index => index[Path.GetFileName(output)] = path);
         var temp = output + ".part" + Path.GetExtension(output);
-        var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-fflags", "+genpts", "-i", path, "-map", "0:v:0", "-map", "0:a:0?" };
-        if (transcode)
-            args.AddRange(["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"]);
-        else
-            args.AddRange(["-c:v", "copy"]);
-        // webm에는 Opus·Vorbis만 들어간다
-        if (webmOut)
-            args.AddRange(probe.AudioCodec is "opus" or "vorbis" ? ["-c:a", "copy"] : ["-c:a", "libopus", "-b:a", "128k"]);
-        else
-            args.AddRange(probe.AudioCodec == "aac" ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "128k"]);
-        if (!webmOut)
-            args.AddRange(["-movflags", "+faststart"]);
-        args.AddRange(["-y", temp]);
-
-        // -progress: 처리한 영상 시각(out_time)·쓴 크기를 줄마다 내보낸다 → 진행률·속도
-        args.InsertRange(args.Count - 2, ["-progress", "pipe:1", "-nostats"]);
+        // 다시 인코딩하면 GPU 디코딩·인코딩 (decode·encoder), 아니면 그대로 옮겨 담는다
+        List<string> Args(bool decode, string? encoder)
+        {
+            var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-fflags", "+genpts" };
+            if (transcode)
+                args.AddRange(FfmpegGpu.DecodeArgs(decode));
+            args.AddRange(["-i", path, "-map", "0:v:0", "-map", "0:a:0?"]);
+            args.AddRange(transcode ? FfmpegGpu.EncodeArgs(encoder) : ["-c:v", "copy"]);
+            // webm에는 Opus·Vorbis만 들어간다
+            if (webmOut)
+                args.AddRange(probe.AudioCodec is "opus" or "vorbis" ? ["-c:a", "copy"] : ["-c:a", "libopus", "-b:a", "128k"]);
+            else
+                args.AddRange(probe.AudioCodec == "aac" ? ["-c:a", "copy"] : ["-c:a", "aac", "-b:a", "128k"]);
+            if (!webmOut)
+                args.AddRange(["-movflags", "+faststart"]);
+            // -progress: 처리한 영상 시각(out_time)·쓴 크기를 줄마다 내보낸다 → 진행률·속도
+            args.AddRange(["-progress", "pipe:1", "-nostats", "-y", temp]);
+            return args;
+        }
 
         logger.LogInformation("재생용 영상 만들기 ({Note}): {Path} → {Output}", note, path, output);
         var progress = new ConvertProgress(new FileInfo(path).Length, probe.Duration);
@@ -207,7 +186,9 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         string errors;
         try
         {
-            (exitCode, errors) = await RunAsync(ffmpeg, args, MaxDuration * 2, progress.Read);
+            (exitCode, errors) = transcode
+                ? await RunGpuAsync(ffmpeg, Args, MaxDuration * 2, progress.Read)
+                : await RunAsync(ffmpeg, Args(false, null), MaxDuration * 2, progress.Read);
         }
         finally
         {
@@ -490,6 +471,48 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         return new Probe(format, video.Success ? video.Groups[1].Value : null, duration is > 0 ? duration : null, fps,
             audio.Success, audio.Success ? audio.Groups[1].Value : null, width, height);
     }
+
+    /// <summary>
+    /// 다시 인코딩하는 ffmpeg 실행: GPU 디코딩·인코딩으로 먼저, 실패하면 디코딩 → 인코딩 차례로 CPU로 바꿔 다시 한다
+    /// (CPU로 바꿔서 되면 그쪽은 앞으로 CPU로만). build(GPU 디코딩, 하드웨어 인코더 또는 null) → 인자
+    /// </summary>
+    private async Task<(int ExitCode, string Errors)> RunGpuAsync(string ffmpeg, Func<bool, string?, List<string>> build, TimeSpan limit,
+        Action<string>? onOutput = null)
+    {
+        var decode = FfmpegGpu.Decode && !_transcodeDecodeOff;
+        var encoder = await FfmpegGpu.EncoderAsync(ffmpeg);
+        logger.LogInformation("ffmpeg 인코딩: {Encoder}, 디코딩 {Decode}", encoder ?? "libx264(CPU)", decode ? "GPU" : "CPU");
+        var result = await RunAsync(ffmpeg, build(decode, encoder), limit, onOutput);
+        // 0: 됨, -1: 시간 초과 (다시 해도 오래 걸린다)
+        if (result.ExitCode is 0 or -1)
+            return result;
+        if (decode)
+        {
+            var retry = await RunAsync(ffmpeg, build(false, encoder), limit, onOutput);
+            if (retry.ExitCode == 0)
+            {
+                // 다시 인코딩할 때만 CPU로 푼다 (하드웨어 인코더가 디코딩 장치와 함께 못 쓰는 경우 — 예: AMF와 DXVA2. 영상 분석의 GPU 디코딩은 그대로)
+                _transcodeDecodeOff = true;
+                logger.LogWarning("GPU 디코딩 + {Encoder} 인코딩 실패, 다시 인코딩할 때는 CPU로 풉니다: {Error}", encoder ?? "libx264", Tail(result.Errors));
+                return retry;
+            }
+            result = retry;
+        }
+        if (encoder is not null)
+        {
+            var retry = await RunAsync(ffmpeg, build(false, null), limit, onOutput);
+            if (retry.ExitCode == 0)
+                FfmpegGpu.EncodeFailed(logger, encoder, Tail(result.Errors));
+            return retry;
+        }
+        return result;
+    }
+
+    // 다시 인코딩할 때 GPU 디코딩을 끔 (GPU 디코딩과 하드웨어 인코더를 함께 못 쓰는 PC)
+    private static volatile bool _transcodeDecodeOff;
+
+    /// <summary>ffmpeg stderr 끝 몇 줄</summary>
+    private static string Tail(string errors) => string.Join(" ", errors.Split('\n', StringSplitOptions.RemoveEmptyEntries).TakeLast(4));
 
     /// <summary>ffmpeg 실행 → (종료 코드, stderr). 시간 초과면 코드 -1. onOutput: stdout 줄마다 (-progress)</summary>
     private static async Task<(int ExitCode, string Errors)> RunAsync(string ffmpeg, IEnumerable<string> args, TimeSpan limit, Action<string>? onOutput = null)

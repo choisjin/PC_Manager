@@ -4,6 +4,7 @@ import { tr } from '../../i18n/engine'
 import { ColumnFilterMenu } from './ColumnFilter'
 import { clamp, formatFrameTime, scaleRect, useVideoView } from './frameUtil'
 import { RectPickerDialog } from './RectPicker'
+import { useNow } from './resultJobs'
 import { formatWall, type ResultRow } from './resultCsv'
 import { toMessage } from './resultSessions'
 import { rowAtTime } from './sync'
@@ -172,6 +173,8 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, videoRef, 
   onSeek: (path: string, seconds: number) => void
 }) {
   const { template, threshold, setThreshold, gap, setGap, found, status, error, running, segments } = state
+  // 찾는 중 경과 시간 (1초마다)
+  const now = useNow(running)
   // 스텝 값 고르기 창 (머리글 거르기와 같은 창)
   const [picker, setPicker] = useState<{ x: number; y: number } | null>(null)
   // 슬라이드 쇼 중 (패널을 닫으면 끝)
@@ -496,7 +499,9 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, videoRef, 
       {running && (
         <div className="small muted">
           <progress max={1} value={status?.progress ?? 0} />{' '}
-          {`찾는 중 ${Math.round((status?.progress ?? 0) * 100)}%`}{status?.current ? ` · ${status.current}` : ''}
+          {`찾는 중 ${Math.round((status?.progress ?? 0) * 100)}%`}
+          {state.startedAt !== null && ` · 경과 ${formatDuration(now - state.startedAt)}`}
+          {status?.current ? ` · ${status.current}` : ''}
           {status && status.scale > 1 && ` · 영역이 넓어 1/${status.scale}로 훑은 뒤 원래 크기로 확인`}
         </div>
       )}
@@ -532,7 +537,11 @@ export function ImageSearchPanel({ state, videos, steps, currentPath, videoRef, 
             {currentPath && <div className="rv-search-now" style={{ left: `${posOf(currentPath, nowSeconds)}%` }} />}
           </div>
           <div className="rv-search-summary small">
-            <span className="muted">{`찾은 구간 ${ordered.length}개`}{running ? ' (찾는 중)' : ''}{' · 누르면 그 구간의 첫 프레임으로 이동'}</span>
+            <span className="muted">
+              {`찾은 구간 ${ordered.length}개`}{running ? ' (찾는 중)' : ''}
+              {!running && state.elapsed !== null && ` · 걸린 시간 ${formatDuration(state.elapsed * 1000)}`}
+              {' · 누르면 그 구간의 첫 프레임으로 이동'}
+            </span>
             <span className="rv-spacer" />
             <span className="rv-search-slide">
               <button

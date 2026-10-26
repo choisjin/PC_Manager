@@ -1,6 +1,6 @@
 // 결과 확인 작업(영상 분석·이미지 찾기) 목록: 서버가 진행을 물어 대시보드 Hub로 알린다 (ResultJobsChanged).
 // 결과 확인 탭을 닫거나 새로 고쳐도 테스트 PC에서 계속 돌고, 다시 열면 sourceKey로 찾아 이어 받는다
-import { useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { api, type ResultJob, type ResultSchedule } from '../../api'
 import { currentSessions, openViewer, type Source } from './resultSessions'
 import { openResultTab, type ResultTabRequest } from './resultTab'
@@ -34,6 +34,17 @@ export function useResultJobs(): ResultJob[] {
     },
     () => jobs ?? NONE,
   )
+}
+
+/** 지금 시각 (ms): active인 동안 1초마다 바뀐다 (경과 시간 표시) */
+export function useNow(active: boolean): number {
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    if (!active) return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [active])
+  return now
 }
 
 /** 어느 결과의 작업인지: PC · Result 파일 (영상은 예약 분석이 그 뒤 저장된 것까지 모아 달라질 수 있어 넣지 않는다) */

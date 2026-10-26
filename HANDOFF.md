@@ -1,7 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.8.105** (Result 예약 분석 · 영상 분석·이미지 찾기가 탭을 닫아도 계속 돌고 PiP·완료 알림·PC 목록 표시 ·
-PC 목록 폭 260px 통일 — **서버·에이전트 업데이트 필요**(옛 에이전트는 끝난 결과를 15분 뒤 지움), 아래 1절의 0.8.105 항목)
+작성: 2026-10-26 · 최신 릴리스 **v0.8.106** (영상 분석·이미지 찾기·재생용 사본·자르기에 GPU 디코딩/인코딩 · 분석 경과·걸린 시간 표시 —
+**에이전트·서버 업데이트**, 아래 1절의 0.8.106 항목. 그 앞 0.8.105: 예약 분석·작업 유지, 서버·에이전트 업데이트 필요)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -414,6 +414,19 @@ NuGet 경고 NU1903 (GHSA-334f-vvp4-7g6p, CVE-2026-70159, SignalR stateful recon
 - PC 목록 폭: `--pc-list-w: 260px` (PC Manager 트리 · Result PC 목록(300→260) · 원격조작 창 모드(170)·전체 화면(190)).
 - 확인: `tsc -b`, oxlint(새 경고 없음), 서버·에이전트(Windows·Linux) 빌드, 임시 서버로 result-jobs·result-schedules API(등록·params·seen·삭제·
   검증 400·재시작 후 다시 읽기). 에이전트와 실제 영상으로 끝까지는 확인 못 함 (예약 시작·이어 받기·알림 — 첫 사용 때 확인 필요).
+
+### 0.8.106: GPU 디코딩·인코딩 · 분석 경과·걸린 시간
+사용자 요청: GPU를 쓸 수 있는 곳 중 1) 영상 분석·이미지 찾기 디코딩 2) 재생용 사본 변환 인코딩 / 분석 경과 시간·완료 시 걸린 시간 표시.
+- 에이전트 `FfmpegGpu.cs`(Linux에도 링크): 디코딩 `-hwaccel auto`(필터는 CPU라 자동으로 메모리로 내려옴) · 인코더는 시험 인코딩(testsrc2 10프레임)으로
+  nvenc → qsv → amf 중 되는 것 (없으면 libx264). `VideoAnalyzer.MeasureAsync`: GPU로 실패하면 CPU로 다시, CPU로는 되면 `DecodeFailed`(이후 CPU만).
+  `VideoImageSearch.ScanAsync`: 구간에서 한 프레임도 못 읽으면 CPU로 다시. `VideoTrimmer.RunGpuAsync`(사본 변환 transcode·자르기):
+  GPU 디코딩+하드웨어 인코더 → 실패하면 CPU 디코딩+인코더(되면 `_transcodeDecodeOff` — 다시 인코딩할 때만, 예: AMF가 DXVA2 장치와 같이 안 됨,
+  개발 PC에서 재현) → CPU 디코딩+libx264(되면 `EncodeFailed`). 시간 초과(-1)는 다시 하지 않음.
+- 실측(개발 PC 24스레드 + NVIDIA, 1080p 120초): CPU 시간 분석 26.8→15.2초, 찾기 18.3→3.8초, 변환 81.2→11.2초 / 걸린 시간은 이 PC에선
+  조금 늘어남(3.9→4.6, 1.3→3.0, 5.8→6.8초 — CPU가 강하면 GPU 왕복이 더 듦). 코어가 적은 테스트 PC는 빨라지고 테스트 중 CPU 부담이 준다.
+- 경과·걸린 시간: `useNow(active)`(resultJobs, 1초마다) · 분석 패널 "분석 중 n% · 경과 …"·"멈춤 — …(걸린 시간)" · 이미지 찾기 "찾는 중 n% · 경과 …"·
+  "찾은 구간 n개 · 걸린 시간 …"(`startedAt`·`elapsed` 상태, 다시 열면 서버 작업의 started·finished로) · PiP 작업 "경과 …"/"걸린 시간 …".
+- 확인: 에이전트(Windows·Linux)·`tsc -b`·oxlint, ffmpeg로 인코더 감지(이 PC nvenc·amf 됨, qsv 안 됨)·위 측정. 실제 에이전트로 끝까지는 못 봄.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)
