@@ -64,7 +64,7 @@ export interface ParsedResult {
   rows: ResultRow[]
   /** 형식이 정해진 결과(ATS·RFW): 열을 그대로 보여 주는 표 설정. 없으면 자동 판별 표 */
   table?: TableSpec
-  /** 계획한 Cycle 수 (RFW 'Cycle Total' · ATS 'TOTAL TC REPEAT'). 모르면 없음 */
+  /** 계획한 Cycle 수 (RFW 'Cycle Total' · ATS 'TOTAL TC REPEAT', Cycle이 TC REPEAT일 때만). 모르면 없음 */
   cycleTotal?: number | null
 }
 
@@ -495,12 +495,47 @@ export function statusTone(status: string): 'ok' | 'bad' | 'warn' | 'idle' | '' 
 export type ResultMode = 'ats' | 'rfw'
 export const RESULT_MODE_LABEL: Record<ResultMode, string> = { ats: 'ATS', rfw: 'RFW' }
 
-/** ATS: 원본 열 A·I·N·O·P·U·V·X·Y만 보여 준다 (I = CURRENT TC REPEAT → CYCLE) */
+/** ATS: 원본 열 A·(B 또는 I)·N·O·P·U·V·X·Y만 보여 준다 (B ITERATION IN JOB 또는 I CURRENT TC REPEAT 중 Cycle인 쪽 → CYCLE) */
 const ATS_COLUMNS = [0, 8, 13, 14, 15, 20, 21, 23, 24]
 const ATS_FALLBACK = ['Time Stamp', 'CURRENT TC REPEAT', 'DEVICE', 'Control', 'STATUS', 'ACTION CHECK', 'STEP REMARK', 'STEP RESULT', 'STEP RESULT(DETAIL)']
-/** ATS Cycle = I열 CURRENT TC REPEAT (TC를 되풀이한 횟수. B열 ITERATION IN JOB이 아님) · 계획한 Cycle 수 = H열 TOTAL TC REPEAT */
-const ATS_CYCLE_COL = 8
+/**
+ * ATS Cycle은 B열 ITERATION IN JOB(잡을 되풀이한 횟수) 또는 I열 CURRENT TC REPEAT(TC를 되풀이한 횟수) 중 하나.
+ * 어느 쪽이 되풀이되는지는 파일마다 달라서(한쪽은 1 고정) 값이 1씩 올라가는 열을 Cycle로 쓴다.
+ * 계획한 Cycle 수: TC REPEAT이 Cycle이면 H열 TOTAL TC REPEAT, ITERATION이면 알 수 없음(총 횟수 열이 없음)
+ */
+const ATS_ITERATION_COL = 1
+const ATS_TC_REPEAT_COL = 8
 const ATS_CYCLE_TOTAL_COL = 7
+
+/**
+ * Cycle 후보 열 중 값이 바뀌며 올라가는 열을 고른다.
+ * 둘 다 안 바뀌면(한 Cycle만 돌았거나 끊김) 첫 후보. 둘 다 바뀌면 바뀔 때마다 1씩만 올라가는 쪽(되돌아가지 않는 바깥 반복),
+ * 그래도 같으면 더 많이 바뀐 쪽. Cycle 값이 되돌아가는 열(1,2,3,1,2,3)을 쓰면 같은 Cycle 이름이 떨어져 두 번 나와 Cycle 단위 처리가 어긋난다
+ */
+function pickCycleColumn(data: string[][], candidates: number[]): number {
+  const scored = candidates.map((col) => {
+    let changes = 0
+    let plusOne = true
+    let prev: number | null = null
+    for (const r of data) {
+      const s = unq(r[col] ?? '')
+      if (!NUMBER.test(s)) continue
+      const v = Number(s)
+      if (prev !== null && v !== prev) {
+        changes++
+        if (v !== prev + 1) plusOne = false
+      }
+      prev = v
+    }
+    return { col, changes, plusOne }
+  })
+  const rank = (s: { changes: number; plusOne: boolean }) => (s.changes === 0 ? 0 : s.plusOne ? 2 : 1)
+  let best = scored[0]
+  for (const s of scored.slice(1)) {
+    if (rank(s) > rank(best) || (rank(s) === rank(best) && s.changes > best.changes)) best = s
+  }
+  return best.col
+}
 /** ATS 화면 열: ACTION CHECK(OK/ERROR) · STEP RESULT(PASS/FAIL, 판정 스텝만) */
 export const ATS_ACTION_CELL = 5
 export const ATS_RESULT_CELL = 7
@@ -526,18 +561,25 @@ export function parseAts(text: string): ParsedResult {
     const i = named.findIndex((h) => pattern.test(h))
     return i >= 0 ? i : fallback
   }
-  // Cycle은 'CURRENT TC REPEAT'(TC를 되풀이한 횟수) → 'CYCLE'. 'ITERATION IN JOB'은 Cycle이 아니다
-  const cycleAt = columnNamed(/^\s*current tc repeat\s*$/i, ATS_CYCLE_COL)
-  const columns = ATS_COLUMNS.map((c, i) => (i === ATS_MAPPING.cycle ? cycleAt : c))
-  const headers = columns.map((c, i) => named[c] || ATS_FALLBACK[i]).map((h) => h.trim().replace(/^CURRENT TC REPEAT$/i, 'CYCLE'))
-  // R열 DURATION(ms): 스텝이 걸린 시간. Time Stamp는 스텝이 끝난 시각이라(앞 행과의 간격 = 이 행의 DURATION) 시작 = Time Stamp − DURATION
-  const durationAt = columnNamed(/^\s*duration\s*$/i, ATS_DURATION_COL)
-  // H열 TOTAL TC REPEAT: 계획한 Cycle 수
-  const totalAt = columnNamed(/^\s*total tc repeat\s*$/i, ATS_CYCLE_TOTAL_COL)
-  let cycleTotal = 0
-  const rows: ResultRow[] = []
+  // 데이터 줄: 첫 열이 [시각]인 줄까지
+  const data: string[][] = []
   for (const r of all.slice(6)) {
     if (r.length === 0 || !r[0].includes('[') || !r[0].includes(']')) break
+    data.push(r)
+  }
+  // Cycle 열: 'CURRENT TC REPEAT'와 'ITERATION IN JOB' 중 값이 1씩 올라가는 쪽 → 'CYCLE'
+  const tcRepeatAt = columnNamed(/^\s*current tc repeat\s*$/i, ATS_TC_REPEAT_COL)
+  const iterationAt = columnNamed(/^\s*iteration in job\s*$/i, ATS_ITERATION_COL)
+  const cycleAt = pickCycleColumn(data, [tcRepeatAt, iterationAt])
+  const columns = ATS_COLUMNS.map((c, i) => (i === ATS_MAPPING.cycle ? cycleAt : c))
+  const headers = columns.map((c, i) => (i === ATS_MAPPING.cycle ? 'CYCLE' : (named[c] || ATS_FALLBACK[i]).trim()))
+  // R열 DURATION(ms): 스텝이 걸린 시간. Time Stamp는 스텝이 끝난 시각이라(앞 행과의 간격 = 이 행의 DURATION) 시작 = Time Stamp − DURATION
+  const durationAt = columnNamed(/^\s*duration\s*$/i, ATS_DURATION_COL)
+  // H열 TOTAL TC REPEAT: 계획한 Cycle 수 (Cycle이 TC REPEAT일 때만. ITERATION IN JOB의 총 횟수 열은 없다)
+  const totalAt = cycleAt === tcRepeatAt ? columnNamed(/^\s*total tc repeat\s*$/i, ATS_CYCLE_TOTAL_COL) : -1
+  let cycleTotal = 0
+  const rows: ResultRow[] = []
+  for (const r of data) {
     const cells = columns.map((c) => unq(r[c] ?? ''))
     const v = parseTime(cells[0])
     const dur = unq(r[durationAt] ?? '')
@@ -545,7 +587,7 @@ export function parseAts(text: string): ParsedResult {
     const time = v?.kind === 'absolute' ? v.ms - (durationMs ?? 0) : null
     // 표의 시각 칸도 시작 시각으로 (영상 위치와 같게)
     if (time !== null && durationMs) cells[0] = `[${atsStamp(time)}]`
-    cycleTotal = Math.max(cycleTotal, Number(unq(r[totalAt] ?? '')) || 0)
+    if (totalAt >= 0) cycleTotal = Math.max(cycleTotal, Number(unq(r[totalAt] ?? '')) || 0)
     rows.push({
       index: rows.length,
       cells,

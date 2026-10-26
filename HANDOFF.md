@@ -1,6 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.9.5** (영상 분석 그래프 [▶ 따라가기] 토글 — **서버(웹) 업데이트**, 에이전트는 그대로, 아래 1절의 0.9.5 항목.
+작성: 2026-10-27 · 최신 릴리스 **v0.9.5** (영상 분석 그래프 [▶ 따라가기] 토글 · ATS Cycle 열 = ITERATION IN JOB·CURRENT TC REPEAT 중 값이 올라가는 쪽 —
+**서버(웹) 업데이트**, 에이전트는 그대로, 아래 1절의 0.9.5 항목.
 그 앞 0.9.4: 끊긴 Cycle에도 제외 구간·ATS Cycle 열 = CURRENT TC REPEAT(웹), 0.9.3: GPU 디코딩 실패를 영상 단위로(에이전트), 0.9.2: NVIDIA cuvid, 0.9.1: 동시 ffmpeg 수,
 0.9.0: GPU 고르기. 버전은 0.9.x)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
@@ -528,19 +529,27 @@ CPU 일을 줄여야 함: 1080p 프레임을 통째로 내려받고 CPU에서 �
   `ResultViewer` `excludeSpans`는 영상 길이로 자르고, `AnalysisChart` 빗금은 보이는 끝까지(canvas fillRect는 무한 값이면 안 그림). 제외는 브라우저에서만 적용.
 - `resultCsv.ts` `parseAts`: Cycle 열 = I열 `CURRENT TC REPEAT`(이름으로 찾고 없으면 8번째 열), 표 머리글 CYCLE, 계획 Cycle 수 = H열 `TOTAL TC REPEAT`
   최댓값(`cycleTotal`, 표 위 "Cycle n / 계획"). B열 ITERATION IN JOB은 이제 표에 없음. `Reference/0.0.0meminfo…csv` 샘플은 ITERATION 1~6·TC REPEAT 1 고정이라
-  Cycle 1개로 읽힘(사용자 정의대로). 자동 판별 정규식에 `current tc repeat` 추가.
+  Cycle 1개로 읽힘(사용자 정의대로). 자동 판별 정규식에 `current tc repeat` 추가. → **0.9.5에서 두 열 중 값이 올라가는 쪽을 쓰도록 바뀜** (아래).
 - 확인: `tsc -b`·oxlint 32(기존), tsx 테스트(scratchpad exclude-test): 끊긴 마지막 Cycle·끝 스텝 건너뛴 중간 Cycle·정상 / 샘플·합성(TC REPEAT 1~3)·열 순서 바뀐 파일.
 - 미해결(사용자 보고 "현재 테스트 중인 CSV가 로드 안 돼 예약을 못 함", 어느 화면인지 미확인): 녹화 중인 MKV(OBS, 길이·Cues 없음)는 결과 확인 영상 자리에
   "바로 재생할 수 없는 영상 — 영상 길이 정보가 없습니다(녹화가 비정상 종료…)" 안내가 뜸. 로컬 재현(ffmpeg -re로 쓰는 중인 mkv): 에이전트 probe `Duration: N/A`,
   [변환 시작]은 지금까지 녹화된 부분 사본(remux 성공), [원본 재생]도 Chrome이 재생·길이 파악. 화면 영역을 지정해야 예약되므로 둘 중 하나를 골라야 함.
   후보 개선: 수정 시각이 최근이면 '녹화 중' 문구로 나누고 사본 자동 생성 · 에이전트 분석은 길이를 모르면 구간 하나(병렬 없음)라 마지막 Cluster 시각으로 길이 추정.
 
-### 0.9.5: 영상 분석 그래프 [▶ 따라가기] 토글 (웹만)
+### 0.9.5: 영상 분석 그래프 [▶ 따라가기] 토글 · ATS Cycle 열 자동 선택 (웹만)
 사용자 요청: 그래프가 재생 중에 재생 위치로 따라가지 않게 할 수 있어야 함 — 따라가기 버튼을 두고, 켜면 재생을 따라가고 끄면 재생 중에도 스와이프(드래그) 가능.
 - `VideoAnalysis.tsx` `AnalysisChart`: 범례 줄 끝에 `[▶ 따라가기]`(`.rv-va-key.rv-va-follow`, aria-pressed) 추가. 상태는 localStorage `results.va.follow`(기본 켬).
   따라가기 effect는 켜져 있을 때만, 그리고 끌고 있는 동안(`dragRef.current.moved`)은 건너뜀. 켤 때 재생 위치가 범위 밖이면 바로 데려옴.
   끄면 재생 중에도 드래그·휠(Shift+휠·가로 휠)로 자유롭게 이동. 전체 보기(view null)면 원래 따라갈 것이 없음.
 - `styles.css`: 토글은 테두리로 범례 키와 구분, 꺼져도 취소선 없음. `en.ts`: "▶ 따라가기"·안내 문구.
+
+사용자 정정(ATS Cycle): Cycle은 `ITERATION IN JOB`(B열)과 `CURRENT TC REPEAT`(I열) 둘 중 하나 — 파일마다 되풀이되는 쪽이 다르고 다른 쪽은 1 고정. 값이 1씩 올라가는 열을 쓴다.
+- `resultCsv.ts` `parseAts` → `pickCycleColumn(data, [tcRepeatAt, iterationAt])`: 데이터 줄을 먼저 모은 뒤 두 열의 값 변화를 센다. 바뀌는 열을 고르고,
+  둘 다 안 바뀌면(한 Cycle만 돌고 끊김) TC REPEAT, 둘 다 바뀌면 바뀔 때마다 1씩만 올라가는 쪽(되돌아가는 1,2,3,1,2,3은 같은 Cycle 이름이 떨어져 두 번 나와
+  Cycle 단위 처리가 어긋남), 그래도 같으면 더 많이 바뀐 쪽. 고른 열의 머리글이 CYCLE. 계획 Cycle 수(`cycleTotal`)는 TC REPEAT이 Cycle일 때만
+  `TOTAL TC REPEAT`, ITERATION이면 총 횟수 열이 없어 없음(표 위 "Cycle n"만). 샘플 `0.0.0meminfo…csv`는 이제 ITERATION으로 Cycle 6개.
+- 확인: `tsc -b`·oxlint 32(기존), tsx 테스트(scratchpad exclude-test/ats.test.ts, 21개): 샘플 / TC REPEAT 반복 / ITERATION 반복 / 둘 다 고정 / 둘 다 바뀜 /
+  열 순서 바뀜 / 이름 없는 머리글(정해진 자리 B·I).
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)
