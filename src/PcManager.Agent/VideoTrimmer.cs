@@ -45,10 +45,10 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         var folder = Path.GetDirectoryName(path)!;
         var output = Path.Combine(folder, $"trim_{Fmt(startSec)}_{Fmt(endSec)}_{Path.GetFileNameWithoutExtension(path)}.mp4");
         logger.LogInformation("영상 자르기: {Path} {Start}~{End}초 → {Output}", path, startSec, endSec, output);
-        var (exitCode, errors) = await RunGpuAsync(ffmpeg, (decode, encoder) =>
+        var (exitCode, errors) = await RunGpuAsync(ffmpeg, path, (decode, encoder) =>
         [
             "-hide_banner", "-loglevel", "error", "-nostdin",
-            "-ss", Fmt(startSec), "-to", Fmt(endSec), .. FfmpegGpu.DecodeArgs(decode), "-i", path,
+            "-ss", Fmt(startSec), "-to", Fmt(endSec), .. (decode ? FfmpegGpu.TranscodeDecodeArgs(path) : []), "-i", path,
             .. FfmpegGpu.EncodeArgs(encoder),
             "-c:a", "aac", "-movflags", "+faststart", "-y", output,
         ], MaxDuration);
@@ -164,7 +164,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         {
             var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-fflags", "+genpts" };
             if (transcode)
-                args.AddRange(FfmpegGpu.DecodeArgs(decode));
+                args.AddRange(decode ? FfmpegGpu.TranscodeDecodeArgs(path) : []);
             args.AddRange(["-i", path, "-map", "0:v:0", "-map", "0:a:0?"]);
             args.AddRange(transcode ? FfmpegGpu.EncodeArgs(encoder) : ["-c:v", "copy"]);
             // webm에는 Opus·Vorbis만 들어간다
@@ -187,7 +187,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         try
         {
             (exitCode, errors) = transcode
-                ? await RunGpuAsync(ffmpeg, Args, MaxDuration * 2, progress.Read)
+                ? await RunGpuAsync(ffmpeg, path, Args, MaxDuration * 2, progress.Read)
                 : await RunAsync(ffmpeg, Args(false, null), MaxDuration * 2, progress.Read);
         }
         finally
@@ -476,10 +476,11 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
     /// 다시 인코딩하는 ffmpeg 실행: GPU 디코딩·인코딩으로 먼저, 실패하면 디코딩 → 인코딩 차례로 CPU로 바꿔 다시 한다
     /// (CPU로 바꿔서 되면 그쪽은 앞으로 CPU로만). build(GPU 디코딩, 하드웨어 인코더 또는 null) → 인자
     /// </summary>
-    private async Task<(int ExitCode, string Errors)> RunGpuAsync(string ffmpeg, Func<bool, string?, List<string>> build, TimeSpan limit,
+    private async Task<(int ExitCode, string Errors)> RunGpuAsync(string ffmpeg, string path, Func<bool, string?, List<string>> build, TimeSpan limit,
         Action<string>? onOutput = null)
     {
-        var decode = FfmpegGpu.Decode && !_transcodeDecodeOff;
+        // GPU 디코딩: 외장 → 내장 중 첫 GPU (가상 디스플레이 뺌)
+        var decode = !_transcodeDecodeOff && FfmpegGpu.TranscodeDecodeArgs(path).Length > 0;
         var encoder = await FfmpegGpu.EncoderAsync(ffmpeg);
         logger.LogInformation("ffmpeg 인코딩: {Encoder}, 디코딩 {Decode}", encoder ?? "libx264(CPU)", decode ? "GPU" : "CPU");
         var result = await RunAsync(ffmpeg, build(decode, encoder), limit, onOutput);

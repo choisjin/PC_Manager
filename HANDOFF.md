@@ -1,7 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.8.108** (원격조작 BGRA→NV12 변환 SIMD · GPU 사용 표시(원격 창 상태 줄·PC 정보 '영상 가속') —
-**에이전트·서버 업데이트**(PcSystemInfo에 VideoAcceleration), 아래 1절의 0.8.108 항목. 그 앞 0.8.107: 원격조작 하드웨어 인코더)
+작성: 2026-10-26 · 최신 릴리스 **v0.9.0** (0.9로 올림 — 이후 0.9.x · GPU 고르기: 가상 디스플레이 빼고 외장 → 내장, GPU 디코딩 실패는 그 영상만 CPU로 —
+**에이전트 업데이트**, 아래 1절의 0.9.0 항목. 그 앞 0.8.108: 원격 변환 SIMD·GPU 사용 표시, 에이전트·서버 업데이트 필요)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -451,6 +451,26 @@ SIMD 최적화 + 테스트 PC에서 GPU를 실제로 쓰는지 화면에 표시.
   GPU/CPU, 사본 인코더 확인 전/GPU(이름)/CPU). Linux는 원격 CPU(libx264) + ffmpeg 상태. 웹 PC 정보 시스템 탭 '영상 가속' 줄들.
   원격조작: format에 `hardware`, 도중에 소프트웨어로 바뀌면 `{type:'encoder'}` → 상태 줄 끝 'GPU 인코딩'/'CPU 인코딩'(마우스: 인코더 이름).
 - 확인: 에이전트(Windows·Linux)·서버 빌드, `tsc -b`·oxlint, 임시 콘솔로 정확성·속도·HardwareEncoders(이 PC: AMD·NVIDIA)·Status.
+
+### 0.9.0: GPU 고르기(가상 디스플레이 제외, 외장 → 내장) · GPU 디코딩 실패는 그 영상만 CPU로
+사용자 보고: i7-10700K + GTX 1660 SUPER + StarDesk 가상 디스플레이 PC에서 분석 중 CPU 100%·GPU 2%, PC 정보 '영상 분석·이미지 찾기 디코딩:
+CPU (GPU 디코딩이 실패해 바꿈)'. 요청: 가상 디스플레이는 자동 제외하고 외장 → 내장 순으로 자동 사용 / 실패 처리 개선 / (분석 ffmpeg 우선순위
+낮추기는 하지 않음). 버전은 이번부터 0.9.x (사용자 요청).
+- 원인 추정: `-hwaccel auto`가 기본(첫) 장치를 골라 가상 디스플레이에서 실패 → 0.8.106 코드는 한 번 실패로 에이전트가 끝날 때까지 GPU 디코딩 끔.
+  (CPU 100%는 필터·ffmpeg 4개 동시라 GPU 디코딩이어도 상당 부분 남음, 작업 관리자 GPU %는 3D — 디코딩은 'Video Decode' 그래프라고 답함)
+- `GpuAdapters.cs`(Windows만, `[ModuleInitializer]`로 `FfmpegGpu.FindAdapters`에 넣음 — 서비스·원격 세션 어느 프로세스든): DXGI EnumAdapters1에서
+  Software 플래그·NVIDIA/AMD/Intel(10DE·1002·1022·8086) 아닌 것 빼고, (제조사·장치 id·이름)이 같은 것은 첫 번째만(개발 PC에서 같은 NVIDIA가
+  LUID 다르게 3번 나옴 — 가상 디스플레이), 전용 메모리 큰 순(외장 → 내장). DedicatedVideoMemory는 `(ulong)(nuint)`로 (PointerUSize→uint
+  암시 변환이 16GB에서 OverflowException — 시험 중 발견).
+- `FfmpegGpu`: `DecodeOptions(path)` = GPU마다 `-hwaccel d3d11va -hwaccel_device <DXGI 번호>` (ffmpeg 번호와 같은 차례 — 개발 PC에서 0·2 확인,
+  없는 번호는 기본 장치로 그냥 됨), Linux는 `-hwaccel auto`. `DecodeAsync(logger, path, attempt, failure)`: 차례로 해 보고 모두 안 되면 CPU,
+  안 된 GPU는 다른 GPU나 CPU로 됐을 때만 실패로 셈(깨진 영상은 안 셈) — GPU별 3번이면 그 GPU 그만, 어느 GPU로도 안 된 영상은 `FailedVideos`
+  (다음부터 바로 CPU), 그런 영상 3개면 GPU 디코딩 끔. `Status()`에 쓰는 GPU 차례·마지막 실패(파일 — 오류). `TranscodeDecodeArgs(path)`(사본 변환·
+  자르기는 첫 GPU). 인코더 시험 차례 = GPU 제조사 순(nvenc·qsv·amf) 뒤 나머지. `VendorRank` → `H264Encoder`가 하드웨어 MFT를 외장 → 내장
+  차례로(VEN_xxxx 파싱), `HardwareEncoders`도 그 차례.
+- 호출: `VideoAnalyzer.MeasureAsync`·`VideoImageSearch.ScanAsync`(한 프레임도 못 읽으면 실패)가 `DecodeAsync`, `VideoTrimmer.RunGpuAsync(ffmpeg, path, …)`.
+- 확인: 에이전트(Windows·Linux) 빌드, 임시 콘솔로 개발 PC Adapters(NVIDIA 0 → AMD 2)·DecodeOptions·Status·MFT 차례(NVIDIA, AMD)·하드웨어 인코딩
+  60장, ffmpeg d3d11va 장치 번호 지정(0·1·2 — 1은 같은 NVIDIA). 사용자 PC(가상 디스플레이)로는 못 봄.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

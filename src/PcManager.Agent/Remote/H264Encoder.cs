@@ -76,21 +76,12 @@ internal sealed class H264Encoder : IDisposable
             using var activates = MediaFactory.MFTEnumEx(TransformCategoryGuids.VideoEncoder, EnumHardware | EnumSortAndFilter,
                 new RegisterTypeInfo { GuidMajorType = MediaTypeGuids.Video, GuidSubtype = VideoFormatGuids.NV12 },
                 new RegisterTypeInfo { GuidMajorType = MediaTypeGuids.Video, GuidSubtype = VideoFormatGuids.H264 });
-            var list = new List<string>();
-            foreach (var activate in activates)
-            {
-                string? vendor = null;
-                try
-                {
-                    vendor = activate.GetString(TransformAttributeKeys.MftEnumHardwareVendorIdAttribute);
-                }
-                catch (SharpGenException)
-                {
-                    // 제조사를 모름
-                }
-                list.Add(VendorName(vendor) ?? (string.IsNullOrEmpty(activate.FriendlyName) ? "하드웨어 인코더" : activate.FriendlyName));
-            }
-            return list.Distinct().ToList();
+            // 쓰는 차례대로 (외장 → 내장)
+            return activates
+                .Select(activate => (Id: VendorId(activate), Activate: activate))
+                .OrderBy(x => FfmpegGpu.VendorRank(x.Id))
+                .Select(x => VendorName(x.Id) ?? (string.IsNullOrEmpty(x.Activate.FriendlyName) ? "하드웨어 인코더" : x.Activate.FriendlyName))
+                .Distinct().ToList();
         }
         catch (SharpGenException)
         {
@@ -102,12 +93,27 @@ internal sealed class H264Encoder : IDisposable
         }
     }
 
-    /// <summary>VEN_10DE 같은 PCI 제조사 id → 이름</summary>
-    private static string? VendorName(string? id) => id?.ToUpperInvariant() switch
+    /// <summary>하드웨어 MFT의 PCI 제조사 id (VEN_10DE → 0x10DE, 모르면 0)</summary>
+    private static uint VendorId(IMFActivate activate)
     {
-        { } v when v.Contains("10DE") => "NVIDIA",
-        { } v when v.Contains("8086") => "Intel",
-        { } v when v.Contains("1002") || v.Contains("1022") => "AMD",
+        try
+        {
+            var text = activate.GetString(TransformAttributeKeys.MftEnumHardwareVendorIdAttribute);
+            var at = text.IndexOf("VEN_", StringComparison.OrdinalIgnoreCase);
+            return at >= 0 && uint.TryParse(text.AsSpan(at + 4, Math.Min(4, text.Length - at - 4)), System.Globalization.NumberStyles.HexNumber, null, out var id) ? id : 0;
+        }
+        catch (SharpGenException)
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>PCI 제조사 id → 이름</summary>
+    private static string? VendorName(uint id) => id switch
+    {
+        0x10DE => "NVIDIA",
+        0x8086 => "Intel",
+        0x1002 or 0x1022 => "AMD",
         _ => null,
     };
 
@@ -144,7 +150,11 @@ internal sealed class H264Encoder : IDisposable
         using var activates = MediaFactory.MFTEnumEx(TransformCategoryGuids.VideoEncoder, (hardware ? EnumHardware : EnumSyncMft) | EnumSortAndFilter,
             new RegisterTypeInfo { GuidMajorType = MediaTypeGuids.Video, GuidSubtype = VideoFormatGuids.NV12 },
             new RegisterTypeInfo { GuidMajorType = MediaTypeGuids.Video, GuidSubtype = VideoFormatGuids.H264 });
-        foreach (var activate in activates)
+        // 하드웨어는 외장 → 내장 GPU 차례로 (같으면 Media Foundation 차례)
+        var ordered = hardware
+            ? activates.Select((a, i) => (Activate: a, Rank: FfmpegGpu.VendorRank(VendorId(a)), i)).OrderBy(x => x.Rank).ThenBy(x => x.i).Select(x => x.Activate).ToList()
+            : activates.ToList();
+        foreach (var activate in ordered)
         {
             try
             {

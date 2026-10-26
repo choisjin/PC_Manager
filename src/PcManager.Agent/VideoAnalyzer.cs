@@ -327,26 +327,14 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
     private async Task<List<Row>> MeasureAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, double start, double? length,
         CancellationToken token)
     {
-        // GPU 디코딩으로 먼저, 실패하면 CPU로 (CPU로는 되면 앞으로 CPU로만)
-        if (FfmpegGpu.Decode)
-        {
-            try
-            {
-                return await MeasureOnceAsync(ffmpeg, path, roi, bezel, width, start, length, true, token);
-            }
-            catch (InvalidOperationException ex) when (!token.IsCancellationRequested)
-            {
-                var rows = await MeasureOnceAsync(ffmpeg, path, roi, bezel, width, start, length, false, token);
-                FfmpegGpu.DecodeFailed(logger, ex.Message);
-                return rows;
-            }
-        }
-        return await MeasureOnceAsync(ffmpeg, path, roi, bezel, width, start, length, false, token);
+        // GPU 디코딩으로 먼저 (외장 → 내장), 안 되면 이 영상만 CPU로
+        return await FfmpegGpu.DecodeAsync(logger, path,
+            decode => MeasureOnceAsync(ffmpeg, path, roi, bezel, width, start, length, decode, token), _ => null);
     }
 
-    /// <summary>MeasureAsync 한 번 (gpu: GPU 디코딩)</summary>
+    /// <summary>MeasureAsync 한 번 (decode: -i 앞에 넣을 GPU 디코딩 옵션, 비면 CPU)</summary>
     private static async Task<List<Row>> MeasureOnceAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, double start, double? length,
-        bool gpu, CancellationToken token)
+        string[] decode, CancellationToken token)
     {
         var folder = Directory.CreateTempSubdirectory("pcm_va_");
         try
@@ -361,7 +349,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             var main = $"{roi.Filter(width, inset: true)},scale=320:-2,signalstats,metadata=print:file=-,"
                 + "edgedetect=low=0.08:high=0.2,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=edge.txt,"
                 + "scale=8:4:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YMAX:file=grid.txt";
-            args.AddRange([.. FfmpegGpu.DecodeArgs(gpu), "-copyts", "-i", path]);
+            args.AddRange([.. decode, "-copyts", "-i", path]);
             // 베젤 테두리 띠: 직사각형끼리면 외곽 전체를 재서 화면을 빼고 (ReplayKit_FailAnalyzer와 같게),
             // 꼭짓점이면 변마다 사다리꼴 띠 넷을 각각 펴서 재고 넓이로 평균한다 (얇은 띠에서 빼기의 오차가 커지지 않게)
             var boxRing = bezel is not null && roi.IsBox && bezel.IsBox;
