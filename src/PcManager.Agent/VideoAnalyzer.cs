@@ -221,7 +221,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             var from = froms[index];
             try
             {
-                await MeasureVideoAsync(ffmpeg, path, probe.Duration, from, probe.Width, roi, bezel, workers, job, result, seconds =>
+                await MeasureVideoAsync(ffmpeg, path, probe.Duration, from, probe.Width, probe.Height, probe.Codec, roi, bezel, workers, job, result, seconds =>
                 {
                     lock (job)
                         job.Progress = Math.Min(1, (start + seconds - from) / total);
@@ -242,8 +242,8 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
     }
 
     /// <summary>영상 하나 (from초부터): 구간마다 ffmpeg를 돌리되 모든 작업자가 앞 구간부터 가져가고, 결과는 앞에서부터 차례로 붙인다</summary>
-    private async Task MeasureVideoAsync(string ffmpeg, string path, double? duration, double from, int width, Region roi, Region? bezel, int workers,
-        Job job, VideoResult result, Action<double> progress)
+    private async Task MeasureVideoAsync(string ffmpeg, string path, double? duration, double from, int width, int height, string? codec,
+        Region roi, Region? bezel, int workers, Job job, VideoResult result, Action<double> progress)
     {
         var bounds = Chunks(duration ?? 0, from);
         var outputs = bounds.Select(_ => new TaskCompletionSource<List<Row>>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
@@ -255,7 +255,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             {
                 try
                 {
-                    outputs[i].TrySetResult(await MeasureAsync(ffmpeg, path, roi, bezel, width, bounds[i].Start, bounds[i].Length, stop.Token));
+                    outputs[i].TrySetResult(await MeasureAsync(ffmpeg, path, roi, bezel, width, height, codec, bounds[i].Start, bounds[i].Length, stop.Token));
                 }
                 catch (Exception ex)
                 {
@@ -327,19 +327,22 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
 
     /// <summary>
     /// [start, start+length) 구간 프레임들의 측정값. 밝기·차이·평균 색은 stdout, 윤곽·칸 윤곽·베젤 외곽은 작업 폴더의 파일로 받는다
-    /// (윈도우 경로의 ':'를 필터 문법에서 피하려고 작업 폴더 안의 상대 경로). width: 영상 폭 (사다리꼴을 펴기 전에 줄일지)
+    /// (윈도우 경로의 ':'를 필터 문법에서 피하려고 작업 폴더 안의 상대 경로). width·height: 영상 크기 (사다리꼴을 펴기 전에 줄일지 · GPU에서 자를 픽셀),
+    /// codec: 영상 코덱 (NVIDIA cuvid 디코더를 고를 때)
     /// </summary>
-    private async Task<List<Row>> MeasureAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, double start, double? length,
-        CancellationToken token)
+    private async Task<List<Row>> MeasureAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, int height, string? codec,
+        double start, double? length, CancellationToken token)
     {
-        // GPU 디코딩으로 먼저 (외장 → 내장), 안 되면 이 영상만 CPU로
+        // GPU 디코딩으로 먼저 (NVIDIA는 GPU에서 영역을 잘라 줄이기까지, 외장 → 내장), 안 되면 이 영상만 CPU로.
+        // GPU에서 자르면 화면 전체가 없으므로 베젤(화면 밖 띠)을 잴 때는 쓰지 않는다
+        var cuvid = bezel is null && FfmpegGpu.CuvidDecoder(codec) is not null && width > 0 && height > 0;
         return await FfmpegGpu.DecodeAsync(logger, path,
-            decode => MeasureOnceAsync(ffmpeg, path, roi, bezel, width, start, length, decode, token), _ => null);
+            decode => MeasureOnceAsync(ffmpeg, path, roi, bezel, width, height, codec, start, length, decode, token), _ => null, cuvid);
     }
 
-    /// <summary>MeasureAsync 한 번 (decode: -i 앞에 넣을 GPU 디코딩 옵션, 비면 CPU)</summary>
-    private static async Task<List<Row>> MeasureOnceAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, double start, double? length,
-        string[] decode, CancellationToken token)
+    /// <summary>MeasureAsync 한 번 (decode: GPU 디코딩 방법, null이면 CPU)</summary>
+    private static async Task<List<Row>> MeasureOnceAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, int height, string? codec,
+        double start, double? length, FfmpegGpu.DecodeOption? decode, CancellationToken token)
     {
         var folder = Directory.CreateTempSubdirectory("pcm_va_");
         try
@@ -352,10 +355,25 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 args.AddRange(["-ss", Seconds(seek)]);
             if (length is { } span)
                 args.AddRange(["-t", Seconds(span + (start - seek))]);
-            var main = $"{roi.Filter(width, inset: true)},scale=320:-2,signalstats,metadata=print:file=-,"
+            // 화면 영역: NVIDIA cuvid면 디코더가 외접 사각형을 잘라 펴기 전 크기로 줄여 내보내고(-crop·-resize) CPU는 펴기만,
+            // 아니면 CPU가 자르고 줄이고 편다
+            string[] input;
+            string region;
+            if (decode is { Kind: FfmpegGpu.DecodeKind.Cuvid } && FfmpegGpu.CuvidDecoder(codec) is { } decoder)
+            {
+                var (crop, resize) = roi.GpuCrop(width, height);
+                input = ["-c:v", decoder, "-gpu", decode.CudaIndex.ToString(CultureInfo.InvariantCulture), "-crop", crop, "-resize", resize];
+                region = roi.WarpFilter(inset: true);
+            }
+            else
+            {
+                input = decode?.Args ?? [];
+                region = roi.Filter(width, inset: true);
+            }
+            var main = $"{region},scale=320:-2,signalstats,metadata=print:file=-,"
                 + "edgedetect=low=0.08:high=0.2,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=edge.txt,"
                 + "scale=8:4:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YMAX:file=grid.txt";
-            args.AddRange([.. decode, "-copyts", "-i", path]);
+            args.AddRange([.. input, "-copyts", "-i", path]);
             // 베젤 테두리 띠: 직사각형끼리면 외곽 전체를 재서 화면을 빼고 (ReplayKit_FailAnalyzer와 같게),
             // 꼭짓점이면 변마다 사다리꼴 띠 넷을 각각 펴서 재고 넓이로 평균한다 (얇은 띠에서 빼기의 오차가 커지지 않게)
             var boxRing = bezel is not null && roi.IsBox && bezel.IsBox;
@@ -696,11 +714,42 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             if (IsBox)
                 return crop;
             var shrink = (x1 - x0) * videoWidth > WarpWidth ? $",scale={WarpWidth}:-2" : "";
+            return $"{crop}{shrink},{WarpFilter(inset)}";
+        }
+
+        /// <summary>
+        /// 외접 사각형으로 잘라 놓은 프레임을 반듯하게 펴는 필터 (Filter의 뒷부분, 직사각형이면 할 일이 없어 null).
+        /// perspective 꼭짓점 차례는 왼쪽 위 · 오른쪽 위 · 왼쪽 아래 · 오른쪽 아래, sense=source: 이 점들을 출력의 네 모서리로
+        /// </summary>
+        public string WarpFilter(bool inset = false)
+        {
+            if (IsBox)
+                return "null";
+            var (x0, y0, x1, y1) = Bounds;
             string U(int i) => ((X[i] - x0) / (x1 - x0)).ToString("0.0000", CultureInfo.InvariantCulture);
             string V(int i) => ((Y[i] - y0) / (y1 - y0)).ToString("0.0000", CultureInfo.InvariantCulture);
-            // perspective 꼭짓점 차례는 왼쪽 위 · 오른쪽 위 · 왼쪽 아래 · 오른쪽 아래, sense=source: 이 점들을 출력의 네 모서리로
             var trim = inset ? string.Create(CultureInfo.InvariantCulture, $",crop=iw*{1 - 2 * WarpInset:0.00}:ih*{1 - 2 * WarpInset:0.00}:iw*{WarpInset:0.00}:ih*{WarpInset:0.00}") : "";
-            return $"{crop}{shrink},perspective=x0={U(0)}*W:y0={V(0)}*H:x1={U(1)}*W:y1={V(1)}*H:x2={U(3)}*W:y2={V(3)}*H:x3={U(2)}*W:y3={V(2)}*H:sense=source{trim}";
+            return $"perspective=x0={U(0)}*W:y0={V(0)}*H:x1={U(1)}*W:y1={V(1)}*H:x2={U(3)}*W:y2={V(3)}*H:x3={U(2)}*W:y3={V(2)}*H:sense=source{trim}";
+        }
+
+        /// <summary>
+        /// NVIDIA cuvid 디코더가 GPU에서 할 자르기·줄이기 (Filter의 crop·scale과 같은 일): -crop 위x아래x왼쪽x오른쪽 (픽셀, 짝수) ·
+        /// -resize 폭x높이 — 꼭짓점이면 펴기 전 크기(WarpWidth보다 넓을 때만 줄임), 직사각형이면 바로 잴 크기(320폭)
+        /// </summary>
+        public (string Crop, string Resize) GpuCrop(int width, int height)
+        {
+            var (x0, y0, x1, y1) = Bounds;
+            static int Even(double v) => (int)Math.Round(v / 2) * 2;
+            var left = Math.Clamp(Even(x0 * width), 0, width - 2);
+            var top = Math.Clamp(Even(y0 * height), 0, height - 2);
+            var right = Math.Clamp(width - Even(x1 * width), 0, width - left - 2);
+            var bottom = Math.Clamp(height - Even(y1 * height), 0, height - top - 2);
+            var w = width - left - right;
+            var h = height - top - bottom;
+            var outW = IsBox ? 320 : Math.Min(w, WarpWidth) / 2 * 2;
+            var outH = Math.Max(2, Even((double)h * outW / w));
+            return (string.Create(CultureInfo.InvariantCulture, $"{top}x{bottom}x{left}x{right}"),
+                string.Create(CultureInfo.InvariantCulture, $"{outW}x{outH}"));
         }
 
         public override string ToString() => string.Join(",", ToArray().Select(v => v.ToString(CultureInfo.InvariantCulture)));

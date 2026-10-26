@@ -273,7 +273,7 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
                 scores.Add(0);
             // GPU 디코딩으로 먼저 (외장 → 내장), 한 프레임도 못 읽으면 이 영상만 CPU로
             var (frames, failure) = await FfmpegGpu.DecodeAsync(logger, path,
-                decode => ScanRangeAsync(ffmpeg, path, filter, matcher, job, result, fps, first, count, scores, decode, n => progress(scanned + n)),
+                decode => ScanRangeAsync(ffmpeg, path, filter, matcher, job, result, fps, first, count, scores, decode?.Args ?? [], n => progress(scanned + n)),
                 r => r.Frames == 0 && !job.Cancel.IsCancellationRequested ? r.Error : null);
             scanned += frames;
             error ??= failure;

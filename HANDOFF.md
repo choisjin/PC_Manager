@@ -1,7 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.9.1** (영상 분석 동시 ffmpeg 수·필터 스레드 조정으로 13~21% 빠르게 — **에이전트 업데이트**, 아래 1절의 0.9.1 항목.
-그 앞 0.9.0: GPU 고르기(가상 디스플레이 제외, 외장 → 내장)·GPU 디코딩 실패는 그 영상만 CPU로. 버전은 0.9.x)
+작성: 2026-10-26 · 최신 릴리스 **v0.9.2** (NVIDIA면 영상 분석의 화면 영역 자르기·줄이기를 GPU 디코더(cuvid)에서 — CPU 일 절반 아래 — **에이전트 업데이트**,
+아래 1절의 0.9.2 항목. 그 앞 0.9.1: 동시 ffmpeg 수·필터 스레드, 0.9.0: GPU 고르기·실패 처리. 버전은 0.9.x)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -484,6 +484,23 @@ CPU (GPU 디코딩이 실패해 바꿈)'. 요청: 가상 디스플레이는 자�
   1296(+7%) / 16스레드로 제한 1143 → 1379(+21%), GPU 1152 → 1299(+13%) / 8스레드 748 → 786, GPU 913 → 976. 결과 값은 같음.
 - 더 빠르게 하려면(사용자에게 제안, 보류): ffmpeg는 풀고 줄이기만, 밝기·차이·윤곽은 에이전트가 여러 프레임 동시에 SIMD로 (2~4배 예상, ffmpeg
   signalstats·edgedetect 계산을 그대로 옮겨 값 맞추기가 큰 일).
+
+### 0.9.2: NVIDIA cuvid로 화면 영역 자르기·줄이기까지 GPU에서 (영상 분석)
+사용자 보고: 0.9.1 뒤에도 전혀 빨라지지 않음, CPU 90~100% · GPU 60%+ — CPU와 GPU를 둘 다 쓰면 두 배는 빨라야 하지 않나.
+→ 답: 프레임마다 GPU 디코딩 → CPU로 내려받기 → CPU 측정 필터를 차례로 거치므로 CPU가 100%면 그게 속도를 정함 (GPU 여유는 못 씀).
+CPU 일을 줄여야 함: 1080p 프레임을 통째로 내려받고 CPU에서 자르고 640으로 줄이던 일을 NVDEC 디코더가 하게 함.
+- 측정(scratchpad ff/bench2.ps1, 서버 패키지 ffmpeg 9.0.2, 1080p30 2분 8Mbps, 꼭짓점 영역): `-c:v h264_cuvid -crop 위x아래x왼쪽x오른쪽 -resize 640xH`
+  → CPU 시간 34초(d3d11va)·40초(CPU) → 17.5초 (16스레드 제한, 8개 동시), 초당 1266(d3d11va)·1356(CPU) → 1730 프레임 (+37%) /
+  8스레드 4개: 988·794 → 1282 (+30%). 값 차이(30초 비교): 밝기 평균 0.04·프레임 차이 0.02·윤곽 0.1 (0~255), 칸 윤곽 최대(정수) 최대 3 — 검출엔 무관.
+  scale_d3d11은 이 ffmpeg에서 텍스처 생성 오류(옵션은 width/height/format), scale_cuda는 느림 → 안 씀.
+- `FfmpegGpu`: `DecodeKind`(Hwaccel·Cuvid) · `DecodeOption`(+Kind, CudaIndex = NVIDIA 장치 차례, Key = 방식:장치 — 실패를 방식마다 셈) ·
+  `DecodeOptions(path, cuvid)` NVIDIA면 cuvid 먼저 그다음 d3d11va · `CuvidDecoder(codec)`(h264·hevc·av1·vp9·vp8·mpeg1/2/4·mjpeg·vc1) ·
+  `DecodeAsync(…, attempt(DecodeOption?), failure, cuvid)`(CPU면 null) · Status에 'NVIDIA …, 분석은 영역 자르기·줄이기까지 GPU'.
+- `VideoAnalyzer`: probe의 Height·Codec을 넘김 · 베젤 없고 cuvid 코덱이면 cuvid 시도 · cuvid면 입력 `-c:v X_cuvid -gpu N -crop … -resize …`
+  + 필터는 `Region.WarpFilter`(펴기·안쪽 자르기만, 직사각형이면 null) · `Region.GpuCrop(w,h)`(짝수 픽셀, 꼭짓점은 640폭까지만 줄임, 직사각형은 320폭)
+  · `Filter` = crop + shrink + WarpFilter. 이미지 찾기·사본 변환은 d3d11va만(cuvid 아님).
+- 확인: 에이전트(Windows·Linux) 빌드, 임시 콘솔로 실제 `MeasureOnceAsync`를 방식마다(cuvid·NVIDIA d3d11va·AMD d3d11va·CPU) — 프레임 900·시각 같음,
+  값 차이 위와 같음. 사용자 PC(GTX 1660 SUPER)로는 못 봄 — NVDEC가 그 PC의 상한일 수 있음.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)
