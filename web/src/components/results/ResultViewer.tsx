@@ -727,7 +727,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
       ...excludeWall.flatMap(([a, b]): [number, number][] => {
         const t0 = videoAt(sv, a)
         const t1 = videoAt(sv, b)
-        return t0 === null || t1 === null || t1 <= 0 || (duration != null && t0 >= duration) ? [] : [[Math.max(0, t0), t1]]
+        // 끝이 없는 구간(끝 스텝 없이 끊긴 Cycle)은 영상 끝까지
+        return t0 === null || t1 === null || t1 <= 0 || (duration != null && t0 >= duration) ? [] : [[Math.max(0, t0), duration != null ? Math.min(t1, duration) : t1]]
       }),
     ])
   }), [excludeWall, searchVideos, videoAt, testStarts])

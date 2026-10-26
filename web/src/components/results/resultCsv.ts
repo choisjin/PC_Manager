@@ -64,7 +64,7 @@ export interface ParsedResult {
   rows: ResultRow[]
   /** 형식이 정해진 결과(ATS·RFW): 열을 그대로 보여 주는 표 설정. 없으면 자동 판별 표 */
   table?: TableSpec
-  /** 계획한 Cycle 수 (RFW 'Cycle Total'). 모르면 없음 */
+  /** 계획한 Cycle 수 (RFW 'Cycle Total' · ATS 'TOTAL TC REPEAT'). 모르면 없음 */
   cycleTotal?: number | null
 }
 
@@ -337,7 +337,7 @@ export function formatSeconds(sec: number): string {
 // ── 열 역할 자동 판별
 const NAME_PATTERNS: Record<ColumnRole, RegExp> = {
   time: /time ?stamp|^\s*time\s*$|start ?time|date ?time|^date$|시각|시간|^time\b/i,
-  cycle: /cycle ?index|iteration|^cycle$|current script repeat|회차|반복/i,
+  cycle: /cycle ?index|iteration|^cycle$|current tc repeat|current script repeat|회차|반복/i,
   status: /^status$|result$|^action check$|verdict|판정|결과/i,
   name: /kw name|keyword|step ?name|test ?step|^control$|command|^action$|description|스텝|명령/i,
   duration: /elapsed|duration|exec(ution)? ?time|소요/i,
@@ -495,9 +495,12 @@ export function statusTone(status: string): 'ok' | 'bad' | 'warn' | 'idle' | '' 
 export type ResultMode = 'ats' | 'rfw'
 export const RESULT_MODE_LABEL: Record<ResultMode, string> = { ats: 'ATS', rfw: 'RFW' }
 
-/** ATS: 원본 열 A·B·N·O·P·U·V·X·Y만 보여 준다 */
-const ATS_COLUMNS = [0, 1, 13, 14, 15, 20, 21, 23, 24]
-const ATS_FALLBACK = ['Time Stamp', 'ITERATION IN JOB', 'DEVICE', 'Control', 'STATUS', 'ACTION CHECK', 'STEP REMARK', 'STEP RESULT', 'STEP RESULT(DETAIL)']
+/** ATS: 원본 열 A·I·N·O·P·U·V·X·Y만 보여 준다 (I = CURRENT TC REPEAT → CYCLE) */
+const ATS_COLUMNS = [0, 8, 13, 14, 15, 20, 21, 23, 24]
+const ATS_FALLBACK = ['Time Stamp', 'CURRENT TC REPEAT', 'DEVICE', 'Control', 'STATUS', 'ACTION CHECK', 'STEP REMARK', 'STEP RESULT', 'STEP RESULT(DETAIL)']
+/** ATS Cycle = I열 CURRENT TC REPEAT (TC를 되풀이한 횟수. B열 ITERATION IN JOB이 아님) · 계획한 Cycle 수 = H열 TOTAL TC REPEAT */
+const ATS_CYCLE_COL = 8
+const ATS_CYCLE_TOTAL_COL = 7
 /** ATS 화면 열: ACTION CHECK(OK/ERROR) · STEP RESULT(PASS/FAIL, 판정 스텝만) */
 export const ATS_ACTION_CELL = 5
 export const ATS_RESULT_CELL = 7
@@ -517,23 +520,32 @@ function atsStamp(ms: number): string {
 export function parseAts(text: string): ParsedResult {
   const all = parseCsv(text)
   const preamble = all.slice(0, 6).map((r) => r.join(',').trim()).filter(Boolean)
-  // 머리말 마지막 줄이 열 이름 줄이면 그 이름을 쓴다
+  // 머리말 마지막 줄이 열 이름 줄이면 그 이름을 쓴다 (열 자리는 이름으로 찾고, 이름이 없으면 정해진 자리)
   const named = all[5] && all[5].length > 24 ? all[5].map(unq) : []
-  // 'ITERATION IN JOB'은 'CYCLE'로 (돈 횟수)
-  const headers = ATS_COLUMNS.map((c, i) => named[c] || ATS_FALLBACK[i]).map((h) => h.trim().replace(/^ITERATION IN JOB$/i, 'CYCLE'))
+  const columnNamed = (pattern: RegExp, fallback: number) => {
+    const i = named.findIndex((h) => pattern.test(h))
+    return i >= 0 ? i : fallback
+  }
+  // Cycle은 'CURRENT TC REPEAT'(TC를 되풀이한 횟수) → 'CYCLE'. 'ITERATION IN JOB'은 Cycle이 아니다
+  const cycleAt = columnNamed(/^\s*current tc repeat\s*$/i, ATS_CYCLE_COL)
+  const columns = ATS_COLUMNS.map((c, i) => (i === ATS_MAPPING.cycle ? cycleAt : c))
+  const headers = columns.map((c, i) => named[c] || ATS_FALLBACK[i]).map((h) => h.trim().replace(/^CURRENT TC REPEAT$/i, 'CYCLE'))
   // R열 DURATION(ms): 스텝이 걸린 시간. Time Stamp는 스텝이 끝난 시각이라(앞 행과의 간격 = 이 행의 DURATION) 시작 = Time Stamp − DURATION
-  const durationNamed = named.findIndex((h) => /^\s*duration\s*$/i.test(h))
-  const durationAt = durationNamed >= 0 ? durationNamed : ATS_DURATION_COL
+  const durationAt = columnNamed(/^\s*duration\s*$/i, ATS_DURATION_COL)
+  // H열 TOTAL TC REPEAT: 계획한 Cycle 수
+  const totalAt = columnNamed(/^\s*total tc repeat\s*$/i, ATS_CYCLE_TOTAL_COL)
+  let cycleTotal = 0
   const rows: ResultRow[] = []
   for (const r of all.slice(6)) {
     if (r.length === 0 || !r[0].includes('[') || !r[0].includes(']')) break
-    const cells = ATS_COLUMNS.map((c) => unq(r[c] ?? ''))
+    const cells = columns.map((c) => unq(r[c] ?? ''))
     const v = parseTime(cells[0])
     const dur = unq(r[durationAt] ?? '')
     const durationMs = NUMBER.test(dur) ? Number(dur) : null
     const time = v?.kind === 'absolute' ? v.ms - (durationMs ?? 0) : null
     // 표의 시각 칸도 시작 시각으로 (영상 위치와 같게)
     if (time !== null && durationMs) cells[0] = `[${atsStamp(time)}]`
+    cycleTotal = Math.max(cycleTotal, Number(unq(r[totalAt] ?? '')) || 0)
     rows.push({
       index: rows.length,
       cells,
@@ -560,7 +572,7 @@ export function parseAts(text: string): ParsedResult {
     alertCells: [ATS_ACTION_CELL],
     timeCell: 0,
   }
-  return { startTime: startFromPreamble(preamble), preamble, headers, mapping: ATS_MAPPING, timeKind: 'absolute', rows, table }
+  return { startTime: startFromPreamble(preamble), preamble, headers, mapping: ATS_MAPPING, timeKind: 'absolute', rows, table, cycleTotal: cycleTotal || null }
 }
 
 const IMAGE_FILE = /\.(?:bmp|png|jpe?g|gif|webp)$/i

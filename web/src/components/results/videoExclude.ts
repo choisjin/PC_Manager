@@ -39,14 +39,14 @@ export function stepKeys(rows: ResultRow[]): Map<number, string> {
   return keys
 }
 
-/** 스텝이 끝난 시각: 걸린 시간, 없으면 다음 스텝 시작 (자르기와 같은 계산) */
+/** 스텝이 끝난 시각: 걸린 시간, 없으면 다음 스텝 시작, 마지막 행이면 끝이 기록되지 않은 것이라 끝까지(Infinity) (자르기는 마지막 행이면 0초) */
 function stepEnd(rows: ResultRow[], i: number): number {
   const r = rows[i]
   if (r.durationMs !== null) return r.time! + r.durationMs
-  return rows[i + 1]?.time ?? r.time!
+  return rows[i + 1]?.time ?? Infinity
 }
 
-/** 제외 구간 하나가 빼는 시각 구간들 [시작, 끝] (Result 행 시각과 같은 ms). rows: 시각이 있는 행, 시각순 */
+/** 제외 구간 하나가 빼는 시각 구간들 [시작, 끝] (Result 행 시각과 같은 ms, 끝이 없으면 Infinity). rows: 시각이 있는 행, 시각순 */
 export function spansOf(ex: Exclusion, rows: ResultRow[]): [number, number][] {
   const order = new Map(rows.map((r, i) => [r.index, i]))
   const si = order.get(ex.start)
@@ -68,6 +68,13 @@ export function spansOf(ex: Exclusion, rows: ResultRow[]): [number, number][] {
       open.delete(r.cycle)
     }
   })
+  // 시작 스텝은 있는데 끝 스텝 없이 끝난 Cycle (테스트를 중간에 끊음 · 실패로 건너뜀): 시작 스텝부터 그 Cycle 다음 행(다음 Cycle 시작)까지,
+  // 마지막 Cycle이면 끝까지. 전에는 이 구간이 통째로 빠져 끊은 뒤의 화면(꺼진 화면 등)이 검출됐다
+  for (const [cycle, from] of open) {
+    let last = from
+    for (let i = from + 1; i < rows.length; i++) if (rows[i].cycle === cycle) last = i
+    out.push([rows[from].time!, rows[last + 1]?.time ?? Infinity])
+  }
   return out
 }
 

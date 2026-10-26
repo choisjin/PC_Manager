@@ -227,7 +227,8 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
       for (const [a, b] of excluded) {
         if (b < v.t0 || a > v.t1) continue
         const x = xOf(a)
-        ctx.fillRect(x, 0, Math.max(1, xOf(b) - x), plotH)
+        // 끝이 없는 구간(Infinity)은 보이는 끝까지 (fillRect는 무한 값이면 그리지 않는다)
+        ctx.fillRect(x, 0, Math.max(1, xOf(Math.min(b, v.t1)) - x), plotH)
       }
     }
     // 검출 구간 음영

@@ -1,7 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.9.3** (GPU 디코딩 실패를 영상 단위로 세고, 중간에 멈춘 GPU 디코딩은 그 구간을 다시 — **에이전트 업데이트**,
-아래 1절의 0.9.3 항목. 그 앞 0.9.2: NVIDIA cuvid로 영역 자르기·줄이기까지 GPU, 0.9.1: 동시 ffmpeg 수, 0.9.0: GPU 고르기. 버전은 0.9.x)
+작성: 2026-10-26 · 최신 릴리스 **v0.9.4** (중간에 끊긴 Cycle에도 제외 구간 적용, ATS Cycle 열 = CURRENT TC REPEAT — **서버(웹) 업데이트**, 에이전트는 그대로,
+아래 1절의 0.9.4 항목. 그 앞 0.9.3: GPU 디코딩 실패를 영상 단위로(에이전트), 0.9.2: NVIDIA cuvid, 0.9.1: 동시 ffmpeg 수, 0.9.0: GPU 고르기. 버전은 0.9.x)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -519,6 +519,20 @@ CPU 일을 줄여야 함: 1080p 프레임을 통째로 내려받고 CPU에서 �
 - 리뷰에서 남긴 것(안 고침): NVDEC가 상한이면(Video Decode 100%) CPU 디코딩 작업자를 섞어야 더 빨라짐(CPU가 병목일 땐 역효과라 자동 판단 필요) ·
   꺼진 GPU는 재시작까지 영구 · 같은 모델 GPU 2장은 하나로 합쳐짐 · cuvid -gpu 번호는 DXGI 차례(NVIDIA 1장이면 무관) · 4K 8개 동시 cuvid 메모리 ~2.4GB ·
   디코더 `-threads 2`면 CPU 디코딩 5% 더 빠름(측정, 사소).
+
+### 0.9.4: 끊긴 Cycle에도 제외 구간 적용 · ATS Cycle 열 = CURRENT TC REPEAT (웹만)
+사용자 보고: 테스트를 중간에 끊은 마지막 Cycle이 "모든 Cycle" 제외 구간에서 빠지지 않음 / ATS에서 Cycle은 ITERATION IN JOB이 아니라 CURRENT TC REPEAT 열.
+- `videoExclude.ts` `spansOf`: 시작 스텝은 있는데 끝 스텝이 없는 Cycle(중간에 끊김·실패로 건너뜀)은 시작 스텝 ~ 그 Cycle 다음 행(다음 Cycle 시작)까지,
+  마지막 Cycle이면 끝까지(Infinity). 전에는 구간이 통째로 빠져 끊은 뒤 화면(꺼진 화면 등)이 검출됐음. `stepEnd`: 걸린 시간 없는 마지막 행도 끝까지(전엔 길이 0).
+  `ResultViewer` `excludeSpans`는 영상 길이로 자르고, `AnalysisChart` 빗금은 보이는 끝까지(canvas fillRect는 무한 값이면 안 그림). 제외는 브라우저에서만 적용.
+- `resultCsv.ts` `parseAts`: Cycle 열 = I열 `CURRENT TC REPEAT`(이름으로 찾고 없으면 8번째 열), 표 머리글 CYCLE, 계획 Cycle 수 = H열 `TOTAL TC REPEAT`
+  최댓값(`cycleTotal`, 표 위 "Cycle n / 계획"). B열 ITERATION IN JOB은 이제 표에 없음. `Reference/0.0.0meminfo…csv` 샘플은 ITERATION 1~6·TC REPEAT 1 고정이라
+  Cycle 1개로 읽힘(사용자 정의대로). 자동 판별 정규식에 `current tc repeat` 추가.
+- 확인: `tsc -b`·oxlint 32(기존), tsx 테스트(scratchpad exclude-test): 끊긴 마지막 Cycle·끝 스텝 건너뛴 중간 Cycle·정상 / 샘플·합성(TC REPEAT 1~3)·열 순서 바뀐 파일.
+- 미해결(사용자 보고 "현재 테스트 중인 CSV가 로드 안 돼 예약을 못 함", 어느 화면인지 미확인): 녹화 중인 MKV(OBS, 길이·Cues 없음)는 결과 확인 영상 자리에
+  "바로 재생할 수 없는 영상 — 영상 길이 정보가 없습니다(녹화가 비정상 종료…)" 안내가 뜸. 로컬 재현(ffmpeg -re로 쓰는 중인 mkv): 에이전트 probe `Duration: N/A`,
+  [변환 시작]은 지금까지 녹화된 부분 사본(remux 성공), [원본 재생]도 Chrome이 재생·길이 파악. 화면 영역을 지정해야 예약되므로 둘 중 하나를 골라야 함.
+  후보 개선: 수정 시각이 최근이면 '녹화 중' 문구로 나누고 사본 자동 생성 · 에이전트 분석은 길이를 모르면 구간 하나(병렬 없음)라 마지막 Cluster 시각으로 길이 추정.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)
