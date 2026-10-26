@@ -1,7 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.8.107** (원격조작 화면 인코딩에 하드웨어(GPU) H.264 인코더 — **에이전트 업데이트**, 아래 1절의 0.8.107 항목.
-그 앞 0.8.106: 영상 분석·찾기·사본 변환 GPU 디코딩/인코딩 · 경과 시간, 0.8.105: 예약 분석·작업 유지 — 서버·에이전트 업데이트 필요)
+작성: 2026-10-26 · 최신 릴리스 **v0.8.108** (원격조작 BGRA→NV12 변환 SIMD · GPU 사용 표시(원격 창 상태 줄·PC 정보 '영상 가속') —
+**에이전트·서버 업데이트**(PcSystemInfo에 VideoAcceleration), 아래 1절의 0.8.108 항목. 그 앞 0.8.107: 원격조작 하드웨어 인코더)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -438,6 +438,19 @@ NuGet 경고 NU1903 (GHSA-334f-vvp4-7g6p, CVE-2026-70159, SignalR stateful recon
 - BGRA→NV12 변환은 그대로 CPU (`Nv12Converter`). D3D11 텍스처를 바로 넘기려면 DXGI 관리자·D3D 인식 MFT가 필요 — 하지 않음. Linux 그대로.
 - 확인: 임시 콘솔(리플렉션)로 1080p 300장 — GPU(NVIDIA) 출력 300·키 2(요청한 대로)·CPU 0.8초 vs 소프트웨어 4~5초, 평균 1.7ms vs 2.2ms,
   ffmpeg로 GPU 출력 300장 디코딩(Constrained Baseline). 실제 원격조작 화면으로는 못 봄.
+
+### 0.8.108: 원격조작 변환 SIMD · GPU 사용 표시
+사용자 질문·요청: BGRA→NV12 변환이 무엇·효과 → 측정(4코어 제한, 1080p 같은 크기 프레임당 CPU 5~11ms로 인코딩(GPU 2.8ms)보다 큼) →
+SIMD 최적화 + 테스트 PC에서 GPU를 실제로 쓰는지 화면에 표시. (낮은 GPU도 효과: 영상 전용 회로라 등급 영향 적음 — 답변만)
+- `Remote/Nv12Converter.cs`: 같은 크기는 Vector128로 8픽셀씩(BGRA를 Shuffle로 R·G·B 16비트 평면, Y는 ushort 산술, UV는 2×2 합을 32비트로),
+  축소는 원본 줄을 열마다 SIMD로 세로 합(`SumRows`) → 가로 구간 합(구간 폭 표) → 나눗셈 대신 역수 곱(ceil(2^32/n), 정확) → 평면 R·G·B로
+  `WriteRows`(SIMD). `[SkipLocalsInit]`. 예전 코드와 바이트 단위로 같음(11가지 크기, 8의 배수 아닌 폭 포함). 4코어 CPU/프레임:
+  1080p 같은 크기 5.3→1.9ms, 4K 같은 크기 21.7→7.5ms, 1080p→720p 9.4→5.6ms, 1440p→1080p 20→11.4ms, 4K→1080p 23→15.6ms(메모리 대역폭).
+- 표시: `PcSystemInfo.VideoAcceleration`(선택 인자 — 서버도 업데이트해야 전달) · Windows `SystemMonitor.VideoAcceleration()`:
+  `H264Encoder.HardwareEncoders`(하드웨어 MFT 제조사 VEN_10DE/8086/1002, 처음 한 번 Lazy) · `HardwareBroken` · `FfmpegGpu.Status()`(디코딩
+  GPU/CPU, 사본 인코더 확인 전/GPU(이름)/CPU). Linux는 원격 CPU(libx264) + ffmpeg 상태. 웹 PC 정보 시스템 탭 '영상 가속' 줄들.
+  원격조작: format에 `hardware`, 도중에 소프트웨어로 바뀌면 `{type:'encoder'}` → 상태 줄 끝 'GPU 인코딩'/'CPU 인코딩'(마우스: 인코더 이름).
+- 확인: 에이전트(Windows·Linux)·서버 빌드, `tsc -b`·oxlint, 임시 콘솔로 정확성·속도·HardwareEncoders(이 PC: AMD·NVIDIA)·Status.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)

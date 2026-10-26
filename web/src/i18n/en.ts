@@ -1453,6 +1453,7 @@ const EXACT: Record<string, string> = {
   "직전 10분의 상위 25% 값 (기준 밝기와의 차이 · 윤곽이 가장 많은 칸) · 프레임 차이 중앙값": "Top 25% over the last 10 minutes (difference from the reference · busiest cell edges) · median frame difference",
   "분석 완료": "Done",
   "사라짐": "Lost",
+  "영상 가속": "Video acceleration",
   "⏰ 예약 분석": "⏰ Scheduled analysis",
   "예약 분석": "Scheduled analysis",
   "예약": "Schedule",

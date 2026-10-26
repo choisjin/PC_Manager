@@ -25,7 +25,7 @@ public sealed partial class SystemMonitor
         return new PcSystemInfo("linux", Environment.MachineName, os, null,
             ReadLine("/proc/sys/kernel/osrelease") ?? Environment.OSVersion.Version.ToString(), Architecture(), maker, model,
             Join(Dmi("bios_version"), Dmi("bios_date")), cpu, cores, Environment.ProcessorCount, MemInfo().GetValueOrDefault("MemTotal"),
-            gpus, BootTime(), Users(), ReadDrives());
+            gpus, BootTime(), Users(), ReadDrives(), ["원격조작 인코딩: CPU (libx264)", .. FfmpegGpu.Status()]);
     }
 
     private static string? Dmi(string name) => ReadLine("/sys/class/dmi/id/" + name);

@@ -59,6 +59,58 @@ internal sealed class H264Encoder : IDisposable
     /// <summary>하드웨어(GPU) 인코더인지</summary>
     public bool Hardware => _events is not null;
 
+    /// <summary>이 PC의 하드웨어 H.264 인코더 (제조사, PC 정보 표시용 — 처음 한 번만 찾는다)</summary>
+    public static IReadOnlyList<string> HardwareEncoders => HardwareList.Value;
+
+    /// <summary>하드웨어 인코더가 실패해 소프트웨어만 쓰는 중</summary>
+    public static bool HardwareBroken => _hardwareBroken;
+
+    private static readonly Lazy<IReadOnlyList<string>> HardwareList = new(FindHardware);
+
+    private static IReadOnlyList<string> FindHardware()
+    {
+        if (Interlocked.Increment(ref _startupCount) == 1)
+            MediaFactory.MFStartup(true).CheckError();
+        try
+        {
+            using var activates = MediaFactory.MFTEnumEx(TransformCategoryGuids.VideoEncoder, EnumHardware | EnumSortAndFilter,
+                new RegisterTypeInfo { GuidMajorType = MediaTypeGuids.Video, GuidSubtype = VideoFormatGuids.NV12 },
+                new RegisterTypeInfo { GuidMajorType = MediaTypeGuids.Video, GuidSubtype = VideoFormatGuids.H264 });
+            var list = new List<string>();
+            foreach (var activate in activates)
+            {
+                string? vendor = null;
+                try
+                {
+                    vendor = activate.GetString(TransformAttributeKeys.MftEnumHardwareVendorIdAttribute);
+                }
+                catch (SharpGenException)
+                {
+                    // 제조사를 모름
+                }
+                list.Add(VendorName(vendor) ?? (string.IsNullOrEmpty(activate.FriendlyName) ? "하드웨어 인코더" : activate.FriendlyName));
+            }
+            return list.Distinct().ToList();
+        }
+        catch (SharpGenException)
+        {
+            return [];
+        }
+        finally
+        {
+            Shutdown();
+        }
+    }
+
+    /// <summary>VEN_10DE 같은 PCI 제조사 id → 이름</summary>
+    private static string? VendorName(string? id) => id?.ToUpperInvariant() switch
+    {
+        { } v when v.Contains("10DE") => "NVIDIA",
+        { } v when v.Contains("8086") => "Intel",
+        { } v when v.Contains("1002") || v.Contains("1022") => "AMD",
+        _ => null,
+    };
+
     public H264Encoder(int width, int height, int fps, int bitrate)
     {
         if (width % 2 != 0 || height % 2 != 0)

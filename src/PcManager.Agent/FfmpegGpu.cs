@@ -52,6 +52,16 @@ internal static class FfmpegGpu
         logger.LogWarning("GPU 인코딩({Encoder}) 실패, 이제 CPU(libx264)로만 인코딩합니다: {Error}", encoder, error);
     }
 
+    /// <summary>PC 정보에 보여 줄 지금 상태 (영상 분석·찾기 디코딩 · 사본 변환·자르기 인코딩)</summary>
+    public static IEnumerable<string> Status()
+    {
+        yield return _decodeOff ? "영상 분석·이미지 찾기 디코딩: CPU (GPU 디코딩이 실패해 바꿈)" : "영상 분석·이미지 찾기 디코딩: GPU (GPU로 안 되는 영상은 CPU)";
+        yield return _encodeOff ? "사본 변환·자르기 인코딩: CPU (GPU 인코딩이 실패해 바꿈)"
+            : _encoder is { IsCompletedSuccessfully: true } done
+                ? done.Result is { } name ? $"사본 변환·자르기 인코딩: GPU ({name})" : "사본 변환·자르기 인코딩: CPU (하드웨어 인코더 없음)"
+                : "사본 변환·자르기 인코딩: 확인 전 (처음 변환할 때 GPU 인코더를 찾음)";
+    }
+
     /// <summary>H.264 인코딩 옵션 (encoder가 null이면 libx264). 화질은 libx264 -crf 23쯤</summary>
     public static string[] EncodeArgs(string? encoder) => encoder switch
     {

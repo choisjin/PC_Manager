@@ -228,6 +228,16 @@ function SystemView({ info, at, agent }: { info: PcSystemInfo | null; at: number
           </dd>
         </>
       )}
+      {info.videoAcceleration && info.videoAcceleration.length > 0 && (
+        <>
+          <dt>영상 가속</dt>
+          <dd>
+            {info.videoAcceleration.map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
+          </dd>
+        </>
+      )}
       <dt>가동 시간</dt>
       <dd>
         <div>{formatUptime(at - new Date(info.bootTime).getTime())}</div>

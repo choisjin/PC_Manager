@@ -623,6 +623,8 @@ export interface PcSystemInfo {
   bootTime: string
   users: string[]
   drives: DriveDetail[]
+  /** 영상 처리에 GPU를 쓰는지 (원격조작 인코딩 · 영상 분석 디코딩 · 사본 변환 인코딩), 한 줄씩. 옛 에이전트는 없음 */
+  videoAcceleration?: string[] | null
 }
 
 export interface DriveDetail {

@@ -670,6 +670,7 @@ internal static class RemoteSessionApp
                             monitor = new { x = b.X, y = b.Y, width = b.Width, height = b.Height },
                             capture = capturer is DxgiCapturer ? "dxgi" : "gdi",
                             encoder = encoder.Name,
+                            hardware = encoder.Hardware,
                         }, ct);
                     }
 
@@ -732,8 +733,12 @@ internal static class RemoteSessionApp
                     _keyFrameRequested = false;
                     lastEncode = clock.Elapsed;
                     var timestamp = lastEncode.Ticks; // 100ns
-                    foreach (var frame in encoder!.Encode(nv12, timestamp, forceKey))
+                    var wasHardware = encoder!.Hardware;
+                    foreach (var frame in encoder.Encode(nv12, timestamp, forceKey))
                         SendFrame(frame, ct);
+                    // 하드웨어 인코더가 실패해 소프트웨어로 바뀌었으면 화면에 알린다
+                    if (wasHardware && !encoder.Hardware)
+                        _ = SendJsonAsync(new { type = "encoder", encoder = encoder.Name, hardware = false }, ct);
                 }
             }
             catch (OperationCanceledException)

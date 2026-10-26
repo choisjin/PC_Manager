@@ -34,7 +34,22 @@ public sealed partial class SystemMonitor
         return new PcSystemInfo("windows", Environment.MachineName, product, Text(nt, "DisplayVersion") ?? Text(nt, "ReleaseId"), build,
             Architecture(), maker, model, Join(Text(bios, "BIOSVersion"), Text(bios, "BIOSReleaseDate")),
             Text(cpu, "ProcessorNameString") ?? "", PhysicalCores(), Environment.ProcessorCount, InstalledMemory(),
-            DeviceNames(DisplayClass), DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64), LoggedOnUsers(), ReadDrives());
+            DeviceNames(DisplayClass), DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64), LoggedOnUsers(), ReadDrives(),
+            VideoAcceleration());
+    }
+
+    /// <summary>영상 처리에 GPU를 쓰는지: 원격조작 인코딩(하드웨어 H.264 인코더) · 영상 분석 디코딩 · 사본 변환 인코딩</summary>
+    private static List<string> VideoAcceleration()
+    {
+        var encoders = Remote.H264Encoder.HardwareEncoders;
+        var lines = new List<string>
+        {
+            encoders.Count == 0 ? "원격조작 인코딩: CPU (하드웨어 H.264 인코더 없음)"
+            : Remote.H264Encoder.HardwareBroken ? $"원격조작 인코딩: CPU ({string.Join(" · ", encoders)} 인코더가 실패해 바꿈)"
+            : $"원격조작 인코딩: GPU ({string.Join(" · ", encoders)})",
+        };
+        lines.AddRange(FfmpegGpu.Status());
+        return lines;
     }
 
     private static string? Text(RegistryKey? key, string name) =>

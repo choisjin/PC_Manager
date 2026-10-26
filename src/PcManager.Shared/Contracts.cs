@@ -247,9 +247,11 @@ public record VideoAnalysisProgress(string State, double Progress, string? Curre
 /// <param name="Cores">물리 코어 수 (모르면 0)</param>
 /// <param name="MemoryBytes">설치된 메모리</param>
 /// <param name="Users">로그인한 사용자 (화면·원격 데스크톱)</param>
+/// <param name="VideoAcceleration">영상 처리에 GPU를 쓰는지 (원격조작 인코딩 · 영상 분석 디코딩 · 사본 변환 인코딩), 한 줄씩</param>
 public record PcSystemInfo(string Platform, string MachineName, string Os, string? OsVersion, string OsBuild, string Architecture,
     string? Manufacturer, string? Model, string? Bios, string Cpu, int Cores, int LogicalProcessors, long MemoryBytes,
-    IReadOnlyList<string> Gpus, DateTime BootTime, IReadOnlyList<string> Users, IReadOnlyList<DriveDetail> Drives);
+    IReadOnlyList<string> Gpus, DateTime BootTime, IReadOnlyList<string> Users, IReadOnlyList<DriveDetail> Drives,
+    IReadOnlyList<string>? VideoAcceleration = null);
 
 /// <summary>드라이브 하나 (Linux는 마운트 지점)</summary>
 /// <param name="Type">fixed · removable · network · cdrom · other</param>

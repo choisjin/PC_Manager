@@ -30,6 +30,9 @@ interface Format {
   width: number
   height: number
   capture: string
+  /** 인코더 이름 · 하드웨어(GPU) 인코더인지 (옛 에이전트는 없음) */
+  encoder?: string
+  hardware?: boolean
 }
 
 type Phase = 'connecting' | 'live' | 'closed'
@@ -446,6 +449,10 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
                 ? `화면을 기다리는 중… (캡처 ${String(msg.capture).toUpperCase()})`
                 : m,
             )
+            break
+          case 'encoder':
+            // 하드웨어 인코더가 실패해 소프트웨어로 바뀜
+            setFormat((f) => (f ? { ...f, encoder: msg.encoder, hardware: msg.hardware } : f))
             break
           case 'status':
             setDesktop(msg.desktop ?? null)
@@ -1009,7 +1016,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
   const secureDesktop = desktop != null && desktop.toLowerCase() !== 'default'
   const statusText =
     phase === 'live' && format
-      ? `${format.width}×${format.height} · ${stats.fps}fps · ${(stats.kbps / 1000).toFixed(1)}Mbps · ${useWebCodecs ? 'WebCodecs' : 'MSE'} · ${format.capture.toUpperCase()}`
+      ? `${format.width}×${format.height} · ${stats.fps}fps · ${(stats.kbps / 1000).toFixed(1)}Mbps · ${useWebCodecs ? 'WebCodecs' : 'MSE'} · ${format.capture.toUpperCase()}${format.hardware === undefined ? '' : format.hardware ? ' · GPU 인코딩' : ' · CPU 인코딩'}`
       : phase === 'connecting'
         ? '연결 중…'
         : '연결 끊김'
@@ -1027,7 +1034,7 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
         <span className="remote-title ellipsis">
           <span className={`remote-dot ${phase}`} />
           <b>{machineName}</b>
-          <span className="muted small">{statusText}</span>
+          <span className="muted small" title={format?.encoder ? `인코더: ${format.encoder}` : undefined}>{statusText}</span>
           {secureDesktop && <span className="remote-badge">보안 데스크톱</span>}
           {(keyLock === 'locked' || keyLock === 'agent') && <span className="remote-badge ok">키보드 잠금</span>}
           {pasting ? (
