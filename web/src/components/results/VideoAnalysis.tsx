@@ -71,6 +71,15 @@ function readHidden(): Set<Series> {
     return new Set()
   }
 }
+/** 그래프가 재생 위치를 따라갈지 (끄면 재생 중에도 드래그·휠로 자유롭게 본다). 기본 켬 */
+const FOLLOW_KEY = 'results.va.follow'
+function readFollow(): boolean {
+  try {
+    return localStorage.getItem(FOLLOW_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
 
 // 제외 구간 빗금 (한 번 만들어 쓴다)
 let hatchTile: HTMLCanvasElement | null = null
@@ -187,18 +196,34 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
     }
   }
 
-  // 재생하거나 옮겨 가서 지금 위치가 보는 범위 밖으로 나가면 따라간다 (전체 보기면 그대로, 멈춘 채 확대·이동한 것은 그대로)
+  // 따라가기: 재생하거나 옮겨 가서 지금 위치가 보는 범위 밖으로 나가면 따라간다 (전체 보기면 그대로, 멈춘 채 확대·이동한 것은 그대로,
+  // 끌고 있는 동안은 그대로). 끄면 재생 중에도 드래그·휠로 자유롭게 본다
+  const [follow, setFollow] = useState(readFollow)
   const lastNow = useRef(now)
   useEffect(() => {
     const moved = now !== lastNow.current
     lastNow.current = now
-    if (!moved || !view || (now >= view.t0 && now <= view.t1)) return
+    if (!follow || !moved || !view || dragRef.current?.moved || (now >= view.t0 && now <= view.t1)) return
     const id = requestAnimationFrame(() => {
       const t0 = Math.max(0, Math.min(end - (view.t1 - view.t0), now - (view.t1 - view.t0) * 0.1))
       setView({ t0, t1: t0 + (view.t1 - view.t0) })
     })
     return () => cancelAnimationFrame(id)
-  }, [now, view, end])
+  }, [now, view, end, follow])
+  const toggleFollow = () => {
+    const next = !follow
+    setFollow(next)
+    try {
+      localStorage.setItem(FOLLOW_KEY, next ? '1' : '0')
+    } catch {
+      // 저장이 막힌 브라우저면 기억만 못 한다
+    }
+    // 켤 때 재생 위치가 범위 밖이면 바로 데려온다
+    if (next && view && (now < view.t0 || now > view.t1)) {
+      const t0 = Math.max(0, Math.min(end - (view.t1 - view.t0), now - (view.t1 - view.t0) * 0.1))
+      setView({ t0, t1: t0 + (view.t1 - view.t0) })
+    }
+  }
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current
@@ -441,6 +466,15 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
             {label}
           </button>
         ))}
+        <button
+          type="button"
+          className={`rv-va-key rv-va-follow${follow ? '' : ' off'}`}
+          aria-pressed={follow}
+          onClick={toggleFollow}
+          title="켜면 재생 위치가 그래프 밖으로 나갈 때 그래프가 따라갑니다. 끄면 재생 중에도 드래그·휠로 자유롭게 봅니다"
+        >
+          ▶ 따라가기
+        </button>
         <span className="rv-spacer" />
         <span className="mono muted" title="휠 = 시간축 확대·축소 · 드래그 = 좌우 이동 · 클릭 = 그 시점으로 이동 · 더블클릭 = 전체 보기">
           {at >= 0

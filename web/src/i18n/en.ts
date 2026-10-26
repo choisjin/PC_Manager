@@ -1419,6 +1419,8 @@ const EXACT: Record<string, string> = {
   "화면 전환": "Transition",
   "실패 스텝": "Failed step",
   "휠 = 시간축 확대·축소 · 드래그 = 좌우 이동 · 클릭 = 그 시점으로 이동 · 더블클릭 = 전체 보기": "Wheel = zoom the time axis · drag = pan · click = jump there · double-click = whole video",
+  "▶ 따라가기": "▶ Follow",
+  "켜면 재생 위치가 그래프 밖으로 나갈 때 그래프가 따라갑니다. 끄면 재생 중에도 드래그·휠로 자유롭게 봅니다": "On: the chart follows when the playback position leaves the view. Off: drag and wheel freely even while playing",
   "정지 구간": "Freezes",
   "아직 없음 (분석 중)": "None yet (analyzing)",
   "영상 위치": "Video position",
