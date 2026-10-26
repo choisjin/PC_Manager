@@ -1,7 +1,7 @@
 # HANDOFF — PC Manager ("RemoteKit")
 
-작성: 2026-10-26 · 최신 릴리스 **v0.8.106** (영상 분석·이미지 찾기·재생용 사본·자르기에 GPU 디코딩/인코딩 · 분석 경과·걸린 시간 표시 —
-**에이전트·서버 업데이트**, 아래 1절의 0.8.106 항목. 그 앞 0.8.105: 예약 분석·작업 유지, 서버·에이전트 업데이트 필요)
+작성: 2026-10-26 · 최신 릴리스 **v0.8.107** (원격조작 화면 인코딩에 하드웨어(GPU) H.264 인코더 — **에이전트 업데이트**, 아래 1절의 0.8.107 항목.
+그 앞 0.8.106: 영상 분석·찾기·사본 변환 GPU 디코딩/인코딩 · 경과 시간, 0.8.105: 예약 분석·작업 유지 — 서버·에이전트 업데이트 필요)
 작업 트리: `tools/net/add-lan-ip.ps1`(사용자 개인 네트워크 스크립트, **커밋하지 않음**)만 남음.
 
 테스트 PC 관리 도구. 웹 대시보드(React, `web/`) + ASP.NET Core 서버 + .NET 에이전트(Windows·Linux) + **서버 런처**.
@@ -427,6 +427,17 @@ NuGet 경고 NU1903 (GHSA-334f-vvp4-7g6p, CVE-2026-70159, SignalR stateful recon
 - 경과·걸린 시간: `useNow(active)`(resultJobs, 1초마다) · 분석 패널 "분석 중 n% · 경과 …"·"멈춤 — …(걸린 시간)" · 이미지 찾기 "찾는 중 n% · 경과 …"·
   "찾은 구간 n개 · 걸린 시간 …"(`startedAt`·`elapsed` 상태, 다시 열면 서버 작업의 started·finished로) · PiP 작업 "경과 …"/"걸린 시간 …".
 - 확인: 에이전트(Windows·Linux)·`tsc -b`·oxlint, ffmpeg로 인코더 감지(이 PC nvenc·amf 됨, qsv 안 됨)·위 측정. 실제 에이전트로 끝까지는 못 봄.
+
+### 0.8.107: 원격조작 하드웨어 H.264 인코더
+사용자 요청: GPU 사용 3번 — 원격조작 화면 인코딩.
+- `Remote/H264Encoder.cs`: MFTEnumEx(HARDWARE|SORTANDFILTER)로 하드웨어 MFT 먼저 (비동기: Attributes TransformAsync 확인 → TransformAsyncUnlock=1,
+  IMFMediaEventGenerator 이벤트를 전용 스레드 `PumpEvents`가 GetEvent(0)로 받아 BlockingCollection에). `EncodeAsync`: NeedInput 자리를 기다려
+  (최대 2초, 넘으면 고장) ProcessInput → HaveOutput을 100ms까지 기다려 ProcessOutput, 와 있는 이벤트 마저 처리 — 동기 MFT와 같은 Encode 모양.
+  설정 실패면 다음 후보 → 소프트웨어(SYNCMFT). 인코딩 중 예외·시간 초과면 `_hardwareBroken`(이후 소프트웨어만) + 그 자리에서 소프트웨어로 바꿔
+  키 프레임부터. 닫을 때 비동기면 MFShutdownObject로 GetEvent를 풀고 스레드 Join. FriendlyName이 빈 문자열로 와서 기본 이름. `Hardware` 속성.
+- BGRA→NV12 변환은 그대로 CPU (`Nv12Converter`). D3D11 텍스처를 바로 넘기려면 DXGI 관리자·D3D 인식 MFT가 필요 — 하지 않음. Linux 그대로.
+- 확인: 임시 콘솔(리플렉션)로 1080p 300장 — GPU(NVIDIA) 출력 300·키 2(요청한 대로)·CPU 0.8초 vs 소프트웨어 4~5초, 평균 1.7ms vs 2.2ms,
+  ffmpeg로 GPU 출력 300장 디코딩(Constrained Baseline). 실제 원격조작 화면으로는 못 봄.
 
 ### 취소된 작업 (사용자 결정, 2026-10-22)
 에이전트 접속 주소를 인증서에 자동으로 넣기 · 런처 자체 업데이트 — 하지 않기로 함. (런처 [인증서 추가 주소…]로 손으로 넣는 방식 유지)
