@@ -1,5 +1,5 @@
 import type { ResultRow } from './resultCsv'
-import { type DetectedSegment, type DetectResult, pyRound } from './videoDetect'
+import { type DetectedSegment, type DetectResult, MIN_BLACK_S, pyRound } from './videoDetect'
 
 // 영상 분석 제외 구간: Result 표에서 고른 시작 스텝 ~ 끝 스텝(끝 스텝이 끝날 때까지)은 검출에서 뺀다
 // (종료 명령으로 일부러 끈 화면 등). 모든 Cycle이면 Cycle마다 같은 스텝 사이를 뺀다.
@@ -22,9 +22,6 @@ export interface ExclusionDraft {
   /** 고치는 중인 제외 구간 (Exclusion.id), 없으면 새로 추가 */
   editing: string | null
 }
-
-/** 검은 화면이 이보다 짧게 남으면 버린다 (판정의 0.3초 미만 빈 화면과 같게) */
-const MIN_BLACK_S = 0.3
 
 /** 행 → Cycle 안에서의 자리 ("이름\0몇 번째"): Cycle마다 같은 스텝을 찾는 열쇠 (rows: 시각순) */
 export function stepKeys(rows: ResultRow[]): Map<number, string> {

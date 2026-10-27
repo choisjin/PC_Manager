@@ -23,8 +23,8 @@ const TABS: [ListTab, string][] = [
 ]
 // 탭에 대면 보이는 판정 기준
 const RULES: Record<ListTab, string> = {
-  black_screen: '검은 화면: 밝기가 기준 밝기(영상에서 가장 어두웠던 밝기)에 가깝고(차이가 5 · 기준 밝기의 15% · 켜진 평소 차이의 20% 중 큰 값 이하), 윤곽이 가장 많은 칸도 비어 있고, 색이 없음 (0.3초 미만·깜박임은 뺌)',
-  flicker: '깜박임: 밝기가 평소보다 25%(최소 12) 넘게 어두워지고 기준 밝기까지 5% 미만(평소 밝기 − 기준 밝기의 5%)으로 내려갔다가 0.6초 안에 돌아옴 (밝게 번쩍이는 것은 뺌, 3초 안에 이어지면 한 묶음)',
+  black_screen: '검은 화면: 꺼진 수준 — 밝기가 기준 밝기(영상에서 가장 어두웠던 밝기)에 가깝고(차이가 5 · 기준 밝기의 15% · 켜진 평소 차이의 20% 중 큰 값 이하) 색이 없음 — 이 0.3초 넘게 이어진 곳. 윤곽이 가장 많은 칸까지 비어 있거나(완전히 꺼짐), 급격히 꺼져 2초 넘게 꺼져 있으면(아이콘·글자가 남아도). 2초 안에 다시 켜지면 깜박임',
+  flicker: '깜박임: 꺼지기 전 밝기보다 25%(최소 12) 넘게 어두워지기 시작해 0.3초 안에 꺼진 수준(검은 화면과 같은 기준)까지 내려갔다가 2초 안에 다시 켜짐 (돌아온 밝기는 안 따짐, 서서히 어두워지거나 밝게 번쩍이는 것은 뺌, 첫 깜박임부터 3초 안에 이어지면 한 묶음)',
   static: '정지 구간: 화면 영역의 프레임 간 차이가 잡음 수준으로 정지 기준 이상 이어짐 (통째로 꺼진 구간은 뺌)',
   transitions: '화면 전환: 프레임 차이가 평소의 8배(최소 6) 넘게 튄 시점 (0.5초 안에 이어지면 한 건, 깜박임은 뺌)',
   cycle: 'Cycle 비교: 첫 Cycle을 기준으로 이후 Cycle의 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지) 동안 화면 밝기·평균 색을 스텝 시작부터 0.2초마다 견줘, 밝기 차이(평균 색은 1.5배)가 기준을 넘는 것이 0.6초 넘게 이어진 곳 (앞뒤 0.6초 어긋남은 봐 줌, 스텝 시작·끝 0.4초는 뺌)',
@@ -504,7 +504,9 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
 function SegmentDetail({ seg }: { seg: DetectedSegment }) {
   const info = seg.info
   if (info.type === 'black_screen') {
-    const parts: string[] = []
+    // 완전히 꺼지지 않고 아이콘·글자 윤곽이 남은 채 급격히 꺼진 것 (칸 윤곽이 꺼짐 기준 위)
+    const icons = info.sudden && ((info.grid && info.grid.value > info.grid.off) || (info.edge && info.edge.value >= 0.4 * Math.max(info.edge.ref, 0.05)))
+    const parts: string[] = [`${seg.dur.toFixed(2)}초 동안 꺼짐${info.sudden ? ` (급격히 꺼짐${icons ? ', 아이콘·글자 윤곽 남음' : ''})` : ''}`]
     if (info.contrast) {
       parts.push(`기준 밝기와 차이 ${info.contrast.value.toFixed(0)} (꺼짐 기준 ≤${info.contrast.off.toFixed(0)} · 기준 밝기 ${info.contrast.floor.toFixed(0)}, 켜진 평소 차이 ${info.contrast.on.toFixed(0)})`)
     }
@@ -517,7 +519,7 @@ function SegmentDetail({ seg }: { seg: DetectedSegment }) {
     return (
       <>
         <span>{info.count === 1 ? '순간 깜박임 1회' : `깜박임 ${info.count}회 반복`}</span>{' ('}
-        <span>{`최대 ${info.depth}% 어두워짐`}</span>{', '}<span>{`${info.dur.toFixed(2)}초 안에 원래 밝기로 복귀`}</span>{')'}
+        <span>{`최대 ${info.depth}% 어두워짐`}</span>{', '}<span>{`최대 ${info.dur.toFixed(2)}초 꺼졌다 켜짐`}</span>{')'}
       </>
     )
   }
