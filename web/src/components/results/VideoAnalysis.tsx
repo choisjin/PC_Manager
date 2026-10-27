@@ -8,7 +8,7 @@ import { useNow } from './resultJobs'
 import { formatWall, type ResultRow, statusTone } from './resultCsv'
 import { rowAtTime } from './sync'
 import type { VideoAnalysisState, VideoFrames } from './videoAnalysisState'
-import { CYCLE_COLOR, type CycleAnomaly, type CycleCompare, type CycleMap } from './videoCycle'
+import { type AnomalyKind, CYCLE_COLOR, type CycleAnomaly, type CycleCompare, type CycleMap, markKey, type OffEvent, THUMB_H, THUMB_W } from './videoCycle'
 import { bisectLeft, type DetectedSegment, type DetectResult, type SegmentKind } from './videoDetect'
 import { type Exclusion, type ExclusionDraft, spansOf } from './videoExclude'
 
@@ -27,7 +27,23 @@ const RULES: Record<ListTab, string> = {
   flicker: '깜박임: 검은 화면과 같은 1차 밝기 · 2차 윤곽 기준으로 꺼졌다가 2초 안에 다시 켜짐. 꺼지기 전 밝기의 25%(최소 12) 넘게 떨어지기 시작해 0.3초 안에 꺼져야 함 (서서히 어두워진 것 · 밝게 번쩍이는 것은 뺌, 돌아온 밝기는 안 따짐, 첫 깜박임부터 3초 안에 이어지면 한 묶음)',
   static: '정지 구간: 화면 영역의 프레임 간 차이가 잡음 수준으로 정지 기준 이상 이어짐 (통째로 꺼진 구간은 뺌)',
   transitions: '화면 전환: 프레임 차이가 평소의 8배(최소 6) 넘게 튄 시점 (0.5초 안에 이어지면 한 건, 깜박임은 뺌)',
-  cycle: 'Cycle 비교: 첫 Cycle을 기준으로 이후 Cycle의 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지) 동안 화면 밝기·평균 색을 스텝 시작부터 0.2초마다 견줘, 밝기 차이(평균 색은 1.5배)가 기준을 넘는 것이 0.6초 넘게 이어진 곳 (앞뒤 0.6초 어긋남은 봐 줌, 스텝 시작·끝 0.4초는 뺌)',
+  cycle: 'Cycle 비교: 기준 Cycle(정상 동작을 확인한 Cycle, 기본 첫 Cycle)과 이후 Cycle의 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지)을 스텝 시작부터 지난 시간으로 맞춰 견줌. 꺼짐 — 깜박임·검은 화면이 같은 자리(±1초)에 없으면 추가, 기준에만 있으면 빠짐, 길이가 0.5초와 30% 넘게 다르면 길어짐·짧아짐. 지연 — 화면 전환이 지연 기준보다 늦음. 반응 없음 — 기준엔 있던 화면 전환이 없음. 멈춤 — 정지 구간인데 기준은 그동안 화면이 바뀜. 화면 다름 — 0.2초마다 밝기 차이(평균 색은 1.5배)가 기준을 넘거나 16×9 칸 절반 넘게 다름. 화면 깨짐 — 칸 일부(3칸 이상)만 다름. 화면은 0.6초 넘게 이어진 곳만 (앞뒤 0.6초 어긋남은 봐 줌, 스텝 시작·끝 0.4초와 꺼짐 동안은 뺌)',
+}
+/** Cycle 비교 종류 묶음 (목록 거르기) */
+type KindGroup = 'off' | 'response' | 'screen'
+const KIND_GROUP: Record<AnomalyKind, KindGroup> = {
+  'off-extra': 'off', 'off-missing': 'off', 'off-longer': 'off', 'off-shorter': 'off',
+  delay: 'response', 'no-response': 'response', frozen: 'response', screen: 'screen', corrupt: 'screen',
+}
+const KIND_FILTERS: [KindGroup | 'all', string][] = [['all', '전체'], ['off', '꺼짐'], ['response', '지연·반응'], ['screen', '화면']]
+/** 검출 목록에서 기준 Cycle에도 있는 것(정상)·기준 Cycle의 것을 감출지 (이 브라우저에 기억) */
+const ONLY_ABNORMAL_KEY = 'results.va.onlyAbnormal'
+function readOnlyAbnormal(): boolean {
+  try {
+    return localStorage.getItem(ONLY_ABNORMAL_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 const SEG_COLOR: Record<SegmentKind, string> = {
   black_screen: 'rgba(201, 57, 47, 0.35)', flicker: 'rgba(183, 121, 31, 0.4)', static: 'rgba(120, 130, 145, 0.22)',
@@ -52,7 +68,7 @@ const STATIC_MAX = 86400
 type Series = 'bright' | 'floor' | 'rgb' | SegmentKind | 'transitions' | 'refBright' | 'cycle' | 'exclude' | 'steps' | 'fail'
 const SERIES: [Series, string][] = [
   ['bright', '화면 밝기'], ['floor', '기준 밝기'], ['rgb', '화면 평균 색 (아래 띠)'], ['black_screen', '검은 화면'], ['flicker', '깜박임'],
-  ['static', '정지'], ['transitions', '화면 전환'], ['refBright', '첫 Cycle 밝기'], ['cycle', 'Cycle 차이'],
+  ['static', '정지'], ['transitions', '화면 전환'], ['refBright', '기준 Cycle 밝기'], ['cycle', 'Cycle 차이'],
   ['exclude', '제외 구간'], ['steps', '스텝'], ['fail', '실패 스텝'],
 ]
 // 첫 Cycle 밝기 (같은 스텝 자리에 겹쳐 그림) · Cycle 차이 음영
@@ -765,7 +781,7 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
 
 // ─────────────────────────────── 검출 목록 (결과 표 아래): 종류별 탭 · 목록
 
-/** 목록 한 줄: 영상 index번째의 검출 구간 또는 화면 전환 (number: 전체에서 몇 번째) */
+/** 목록 한 줄: 영상 index번째의 검출 구간 또는 화면 전환 (number: 목록에서 몇 번째, mark: 기준 Cycle에도 있음 · 기준 Cycle의 것) */
 interface Item {
   key: string
   video: number
@@ -773,6 +789,7 @@ interface Item {
   start: number
   seg: DetectedSegment | null
   number: number
+  mark: 'normal' | 'ref' | null
 }
 
 export function VideoAnalysisResults({ state, results, removed, cycle, videos, steps, wallOf, onSeek }: {
@@ -795,6 +812,18 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
   // Cycle 비교 탭은 Cycle이 둘 이상일 때만
   const tab: ListTab = tabSel === 'cycle' && !cycle ? 'black_screen' : tabSel
   const [limit, setLimit] = useState(LIST_PAGE)
+  // 검출 목록에서 기준 Cycle에도 있는 것·기준 Cycle의 것을 감춤 · Cycle 비교 목록의 종류 거르기
+  const [onlyAbnormal, setOnlyAbnormalState] = useState(readOnlyAbnormal)
+  const setOnlyAbnormal = (on: boolean) => {
+    setOnlyAbnormalState(on)
+    try {
+      localStorage.setItem(ONLY_ABNORMAL_KEY, on ? '1' : '0')
+    } catch {
+      // 저장이 막힌 브라우저면 기억만 못 한다
+    }
+  }
+  const [kindFilter, setKindFilter] = useState<KindGroup | 'all'>('all')
+  const hideNormal = onlyAbnormal && cycle !== null
 
   // 검출 시점의 스텝: 그때 하던 스텝 (영상 시작 시각을 몰라 벽시계를 모르면 없음, 테스트가 끝난 뒤면 없음)
   const timedRows = useMemo(() => steps.rows.filter((r) => r.time !== null).sort((a, b) => a.time! - b.time! || a.index - b.index), [steps.rows])
@@ -805,21 +834,27 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
     return wall !== null && row?.time != null ? { row, offset: (wall - row.time) / 1000 } : null
   }
 
-  // 모든 영상의 검출을 종류별로 (영상 차례 → 시작 순)
+  // 모든 영상의 검출을 종류별로 (영상 차례 → 시작 순). 이상만 보기면 기준 Cycle에도 있는 것·기준 Cycle의 것은 뺀다
   const items = useMemo(() => {
     const out: Record<ListTab, Item[]> = { black_screen: [], flicker: [], static: [], transitions: [], cycle: [] }
     results.forEach((r, video) => {
       const path = state.frames[video]?.path ?? videos[video]?.path ?? ''
       for (const seg of r.segments) {
+        const mark = cycle?.marks.get(markKey(video, seg.kind, seg.start)) ?? null
+        if (hideNormal && mark) continue
         const list = out[seg.kind]
-        list.push({ key: `${seg.kind}:${path}:${seg.start}`, video, path, start: seg.start, seg, number: list.length + 1 })
+        list.push({ key: `${seg.kind}:${path}:${seg.start}`, video, path, start: seg.start, seg, number: list.length + 1, mark })
       }
       for (const t of r.transitions) {
-        out.transitions.push({ key: `t:${path}:${t}`, video, path, start: t, seg: null, number: out.transitions.length + 1 })
+        out.transitions.push({ key: `t:${path}:${t}`, video, path, start: t, seg: null, number: out.transitions.length + 1, mark: null })
       }
     })
     return out
-  }, [results, state.frames, videos])
+  }, [results, state.frames, videos, cycle, hideNormal])
+  const anomalies = useMemo(
+    () => (cycle?.anomalies ?? []).filter((a) => kindFilter === 'all' || KIND_GROUP[a.kind] === kindFilter),
+    [cycle, kindFilter],
+  )
   const counts: Record<ListTab, number> = {
     black_screen: items.black_screen.length, flicker: items.flicker.length, static: items.static.length,
     transitions: results.reduce((n, r) => n + r.nTransitions, 0),
@@ -861,10 +896,34 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
         ))}
         <span className="rv-spacer" />
         {tab === 'cycle' && cycle && (
-          <label className="small rv-va-cycle-diff" title="첫 Cycle과 화면 밝기가 이만큼(0~255) 넘게 다르면 특이점 (평균 색은 1.5배). Enter 또는 칸을 벗어나면 적용">
-            {`첫 Cycle(${cycle.ref}) 대비 밝기 차이`}
-            <NumberField key={state.cycleDiff} value={state.cycleDiff} min={5} max={200} onCommit={state.setCycleDiff} />
-            {`이상 · 스텝 ${cycle.compared}개 비교`}
+          <span className="small rv-va-cycle-diff">
+            <label title="정상 동작을 확인한 Cycle: 다른 Cycle을 이 Cycle과 견줍니다">
+              기준 Cycle
+              <select value={cycle.ref} onChange={(e) => state.setRefCycle(e.target.value)}>
+                {cycle.cycles.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+            <label title="기준 Cycle과 화면 밝기가 이만큼(0~255) 넘게 다르면 화면 다름 (평균 색은 1.5배). Enter 또는 칸을 벗어나면 적용">
+              밝기 차이
+              <NumberField key={state.cycleDiff} value={state.cycleDiff} min={5} max={200} onCommit={state.setCycleDiff} />
+            </label>
+            <label title="화면 전환이 기준 Cycle보다 이만큼(초) 넘게 늦으면 지연. Enter 또는 칸을 벗어나면 적용">
+              지연
+              <NumberField key={state.delayS} value={state.delayS} min={0.1} max={30} onCommit={state.setDelayS} />
+              초
+            </label>
+            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as KindGroup | 'all')} title="목록에 보일 종류">
+              {KIND_FILTERS.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            </select>
+            <span className="muted" title={cycle.thumbs ? undefined : '이 PC의 에이전트가 축소 이미지를 보내지 않아 화면 깨짐(칸별 비교)은 보지 못합니다. 에이전트를 업데이트하고 다시 분석하세요'}>
+              {`스텝 ${cycle.compared}개 비교${cycle.thumbs ? '' : ' · 화면 깨짐 못 봄 (에이전트 업데이트 필요)'}`}
+            </span>
+          </span>
+        )}
+        {tab !== 'cycle' && cycle && (
+          <label className="small" title="기준 Cycle에도 같은 자리에 있는 검출(정상)과 기준 Cycle의 검출을 목록에서 감춥니다">
+            <input type="checkbox" checked={onlyAbnormal} onChange={(e) => setOnlyAbnormal(e.target.checked)} />
+            이상만 보기
           </label>
         )}
         {removed > 0 && tab !== 'cycle' && (
@@ -882,10 +941,10 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
             <span>스텝</span>
             <span>내용</span>
           </li>
-          {cycle.anomalies.length === 0 && (
-            <li className="muted small rv-va-empty">{state.running ? '아직 없음 (분석 중)' : `첫 Cycle(${cycle.ref})과 다른 곳 없음`}</li>
+          {anomalies.length === 0 && (
+            <li className="muted small rv-va-empty">{state.running ? '아직 없음 (분석 중)' : `기준 Cycle(${cycle.ref})과 다른 곳 없음`}</li>
           )}
-          {cycle.anomalies.slice(0, limit).map((a) => (
+          {anomalies.slice(0, limit).map((a) => (
             <CycleItem
               key={a.key}
               a={a}
@@ -900,9 +959,9 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
               }}
             />
           ))}
-          {cycle.anomalies.length > limit && (
+          {anomalies.length > limit && (
             <li className="rv-va-more">
-              <button type="button" className="small-btn" onClick={() => setLimit(limit + LIST_PAGE)}>{`더 보기 (${cycle.anomalies.length - limit}개 남음)`}</button>
+              <button type="button" className="small-btn" onClick={() => setLimit(limit + LIST_PAGE)}>{`더 보기 (${anomalies.length - limit}개 남음)`}</button>
             </li>
           )}
         </ol>
@@ -933,7 +992,16 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
               <span className="small ellipsis" title={step ? `#${step.row.index + 1} ${step.row.name}` : undefined}>
                 {step ? <>{`#${step.row.index + 1} ${step.row.name} `}<span className="muted">{`(+${step.offset.toFixed(2)}s)`}</span></> : <span className="muted">-</span>}
               </span>
-              {item.seg && <span className="small rv-va-detail"><SegmentDetail seg={item.seg} /></span>}
+              {item.seg && (
+                <span className="small rv-va-detail">
+                  {item.mark && (
+                    <span className="rv-va-mark" title={item.mark === 'ref' ? '정상 동작을 확인한 기준 Cycle의 검출' : '기준 Cycle에도 같은 자리에 있는 검출 (정상 동작으로 봄)'}>
+                      {item.mark === 'ref' ? '기준 Cycle' : '기준 Cycle에도 있음'}
+                    </span>
+                  )}
+                  <SegmentDetail seg={item.seg} />
+                </span>
+              )}
             </li>
           )
         })}
@@ -951,7 +1019,59 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
   )
 }
 
-/** Cycle 비교 목록 한 줄: 누르면 그 순간, [첫 Cycle]은 기준 Cycle의 같은 자리 */
+/** 꺼짐 하나를 글로: "검은 화면 3.07초" · "깜박임 2회 1.60초" */
+function offText(o: OffEvent): string {
+  return o.kind === 'flicker' ? `깜박임 ${o.count > 1 ? `${o.count}회 ` : ''}${o.dur.toFixed(2)}초` : `검은 화면 ${o.dur.toFixed(2)}초`
+}
+
+/** Cycle 비교 항목의 종류 이름 */
+function kindLabel(a: CycleAnomaly): string {
+  switch (a.kind) {
+    case 'screen': return '화면 다름'
+    case 'corrupt': return '화면 깨짐'
+    case 'off-extra': return a.off?.kind === 'flicker' ? '깜박임 추가' : '검은 화면 추가'
+    case 'off-missing': return '꺼짐 빠짐'
+    case 'off-longer': return '꺼짐 길어짐'
+    case 'off-shorter': return '꺼짐 짧아짐'
+    case 'delay': return '지연'
+    case 'no-response': return '반응 없음'
+    case 'frozen': return '화면 멈춤'
+  }
+}
+
+/** Cycle 비교 항목의 내용 */
+function anomalyText(a: CycleAnomaly): string {
+  switch (a.kind) {
+    case 'screen':
+    case 'corrupt': {
+      const delta = a.bright - a.refBright
+      const cells = a.cells ? ` · 칸 ${a.cells}/${THUMB_W * THUMB_H} 다름${a.region ? ` (${a.region})` : ''}` : ''
+      return `밝기 ${a.refBright.toFixed(0)} → ${a.bright.toFixed(0)} (${delta >= 0 ? '+' : ''}${delta.toFixed(0)}) · 색 차이 ${a.colorDiff}${cells}`
+    }
+    case 'off-extra': return `${offText(a.off!)} (기준 Cycle엔 없음)`
+    case 'off-missing': return `기준 Cycle엔 ${offText(a.refOff!)}가 있었음`
+    case 'off-longer':
+    case 'off-shorter': return `기준 Cycle ${offText(a.refOff!)} → ${offText(a.off!)}`
+    case 'delay': return `화면 전환이 ${a.lag.toFixed(2)}초 늦음`
+    case 'no-response': return `기준 Cycle엔 있던 화면 전환이 없음${a.during === 'static' ? ' (그때 화면 정지)' : ''}`
+    case 'frozen': return `${a.seconds.toFixed(1)}초 동안 화면 변화 없음 (기준 Cycle은 화면이 바뀜)`
+  }
+}
+
+/** 화면 깨짐: 다른 칸(16×9)을 작은 격자로 */
+function CellMap({ mask }: { mask: number[] }) {
+  const on = new Set(mask)
+  const s = 3
+  return (
+    <svg className="rv-va-cells" width={THUMB_W * s + 2} height={THUMB_H * s + 2} viewBox={`-1 -1 ${THUMB_W * s + 2} ${THUMB_H * s + 2}`} aria-label="다른 칸">
+      <title>{`다른 칸 (화면 영역을 ${THUMB_W}×${THUMB_H}으로 나눔)`}</title>
+      <rect x={-0.5} y={-0.5} width={THUMB_W * s + 1} height={THUMB_H * s + 1} className="frame" />
+      {[...on].map((c) => <rect key={c} x={(c % THUMB_W) * s} y={Math.floor(c / THUMB_W) * s} width={s} height={s} className="on" />)}
+    </svg>
+  )
+}
+
+/** Cycle 비교 목록 한 줄: 누르면 그 순간, [기준 Cycle 보기]는 기준 Cycle의 같은 자리 */
 function CycleItem({ a, picked, path, refPath, nameOf, wallOf, onPick }: {
   a: CycleAnomaly
   picked: boolean
@@ -963,10 +1083,10 @@ function CycleItem({ a, picked, path, refPath, nameOf, wallOf, onPick }: {
   onPick: (path: string, seconds: number) => void
 }) {
   const wall = wallOf(path, a.start)
-  const delta = a.bright - a.refBright
+  const length = a.kind === 'delay' ? `+${a.lag.toFixed(2)}s` : a.kind === 'no-response' ? '-' : `${(a.end - a.start).toFixed(1)}s`
   return (
     <li className={picked ? 'picked' : ''} onClick={() => onPick(path, a.start)} title="누르면 그 순간 조금 앞부터 재생">
-      <span className="mono small rv-search-num">{`${(a.end - a.start).toFixed(1)}s`}</span>
+      <span className="mono small rv-search-num">{length}</span>
       <button type="button" className="link mono">{wall !== null ? formatWall(wall, true) : formatFrameTime(a.start)}</button>
       <span className="mono small muted ellipsis" title={nameOf ? nameOf(path) : undefined}>
         {`${formatFrameTime(a.start)}${nameOf ? ` · ${nameOf(path)}` : ''}`}
@@ -975,18 +1095,20 @@ function CycleItem({ a, picked, path, refPath, nameOf, wallOf, onPick }: {
         {`#${a.row.index + 1} ${a.row.name} `}<span className="muted">{`(+${a.offset.toFixed(1)}s)`}</span>
       </span>
       <span className="small rv-va-detail">
+        <span className={`rv-va-kind ${KIND_GROUP[a.kind]}`}>{kindLabel(a)}</span>
         <span className="rv-va-cycle-tag" style={{ color: CYCLE_COLOR }}>{`Cycle ${a.cycle}`}</span>
-        {` 밝기 ${a.refBright.toFixed(0)} → ${a.bright.toFixed(0)} (${delta >= 0 ? '+' : ''}${delta.toFixed(0)}) · 색 차이 ${a.colorDiff} `}
+        {` ${anomalyText(a)} `}
+        {a.kind === 'corrupt' && a.mask && <CellMap mask={a.mask} />}
         <button
           type="button"
           className="link small"
-          title={`첫 Cycle의 같은 자리 (#${a.refRow.index + 1} ${a.refRow.name} +${a.offset.toFixed(1)}s)`}
+          title={`기준 Cycle의 같은 자리 (#${a.refRow.index + 1} ${a.refRow.name})`}
           onClick={(e) => {
             e.stopPropagation()
             onPick(refPath, a.refAt)
           }}
         >
-          첫 Cycle 보기
+          기준 Cycle 보기
         </button>
       </span>
     </li>

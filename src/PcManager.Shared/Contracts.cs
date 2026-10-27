@@ -226,7 +226,11 @@ public record VideoAnalysisRequest(IReadOnlyList<string> Paths, double[]? Roi = 
 /// </summary>
 /// <param name="Marks">이 조각 안에서 측정 구간이 끝난 자리 (프레임 수). 웹은 이 경계마다 판정한다 (기준값 창이 ReplayKit_FailAnalyzer와 같게)</param>
 /// <param name="Done">이 영상의 마지막 조각 (다 쟀다)</param>
-public record VideoAnalysisChunk(int Video, string Path, int Offset, byte[] Frames, int[] Marks, bool Done, string? Error);
+/// <param name="Thumbs">
+/// 이 조각의 프레임 시각 안에 든 축소 이미지 (기준 Cycle과 화면을 칸별로 견줘 화면 깨짐을 찾는다): 0.2초마다 하나, 152바이트씩
+/// double 시각(초) · 화면 영역을 16×9로 줄인 회색 화소 144바이트 (왼쪽 위부터 가로로). 옛 에이전트는 null
+/// </param>
+public record VideoAnalysisChunk(int Video, string Path, int Offset, byte[] Frames, int[] Marks, bool Done, string? Error, byte[]? Thumbs = null);
 
 /// <param name="State">running · done · failed · canceled</param>
 /// <param name="Progress">0~1 (잰 시간의 합 기준)</param>

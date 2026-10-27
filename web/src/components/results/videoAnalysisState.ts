@@ -6,7 +6,7 @@ import { baseName, toMessage } from './resultSessions'
 import { Detector, type DetectResult, type FrameArrays, type SegmentKind } from './videoDetect'
 import { findJob } from './resultJobs'
 import type { ResultTabRequest } from './resultTab'
-import { CYCLE_DIFF_DEFAULT } from './videoCycle'
+import { CYCLE_DIFF_DEFAULT, DELAY_DEFAULT, THUMB_BYTES, THUMB_CELLS } from './videoCycle'
 import type { Exclusion } from './videoExclude'
 
 // 결과 확인: 영상 분석 (ReplayKit_FailAnalyzer 영상 페이지의 영상 분석을 옮김)
@@ -40,6 +40,9 @@ interface AnalysisParams {
   excludes: Exclusion[]
   cycleDiff: number
   starts: number[]
+  /** Cycle 비교의 기준 Cycle (사용자가 정상 동작을 확인한 Cycle, 없으면 첫 Cycle) · 지연 기준 (초) */
+  refCycle?: string | null
+  delayS?: number
 }
 
 /** 정지 기준의 가장 작은 값 (초): 실제로는 제외 구간 밖 스텝의 가장 짧은 DURATION (그보다 작으면 이 값) */
@@ -66,6 +69,10 @@ export interface VideoFrames {
   sat: Uint8Array
   /** 판정에 쓴 기준 밝기: 그 영상에서 0.3초 넘게 이어진 가장 낮은 밝기 (받는 중에 낮아질 수 있음, 받기 전이면 null) */
   floor: number | null
+  /** 축소 이미지 (Cycle 비교의 화면 깨짐): 앞 tn개만 유효 — 시각(초) · 화소 (THUMB_CELLS씩, 16×9 회색). 옛 에이전트면 0개 */
+  tn: number
+  tt: Float64Array
+  tp: Uint8Array
   done: boolean
   error: string | null
 }
@@ -91,8 +98,34 @@ function newFrames(path: string, capacity = 4096): VideoFrames {
   return {
     path, n: 0, t: new Float64Array(capacity), y: new Float32Array(capacity), d: new Float32Array(capacity), e: new Float32Array(capacity),
     g: new Float32Array(capacity), c: new Float32Array(capacity), rgb: new Uint8Array(capacity * 3), sat: new Uint8Array(capacity),
-    floor: null, done: false, error: null,
+    floor: null, tn: 0, tt: new Float64Array(0), tp: new Uint8Array(0), done: false, error: null,
   }
+}
+
+/** 축소 이미지를 이어 붙인다 (이미 받은 시각까지는 건너뜀, 자리가 모자라면 두 배로) */
+function appendThumbs(f: VideoFrames, bytes: Uint8Array): VideoFrames {
+  const count = Math.floor(bytes.length / THUMB_BYTES)
+  if (!count) return f
+  let { tn, tt, tp } = f
+  if (tn + count > tt.length) {
+    const capacity = Math.max(tn + count, tt.length * 2, 1024)
+    const nt = new Float64Array(capacity)
+    nt.set(tt.subarray(0, tn))
+    const np = new Uint8Array(capacity * THUMB_CELLS)
+    np.set(tp.subarray(0, tn * THUMB_CELLS))
+    tt = nt
+    tp = np
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  for (let k = 0; k < count; k++) {
+    const o = k * THUMB_BYTES
+    const time = view.getFloat64(o, true)
+    if (tn && time <= tt[tn - 1]) continue
+    tt[tn] = time
+    tp.set(bytes.subarray(o + 8, o + THUMB_BYTES), tn * THUMB_CELLS)
+    tn++
+  }
+  return { ...f, tn, tt, tp }
 }
 
 /** 자리가 모자라면 두 배로 (앞 n개를 옮긴다) */
@@ -143,6 +176,7 @@ function append(f: VideoFrames, chunk: VideoAnalysisChunk): VideoFrames {
     out.sat[i] = Math.max(r, g, b) - Math.min(r, g, b)
   }
   out = { ...out, n: i }
+  if (chunk.thumbs) out = appendThumbs(out, fromBase64(chunk.thumbs))
   if (chunk.done) out = { ...out, done: true, error: chunk.error }
   return out
 }
@@ -201,6 +235,9 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
   const [excludeEdit, setExcludeEdit] = useState(false)
   // Cycle 비교: 첫 Cycle과 밝기가 이만큼(0~255) 넘게 다르면 특이점 (평균 색은 1.5배)
   const [cycleDiff, setCycleDiff] = useState(CYCLE_DIFF_DEFAULT)
+  // Cycle 비교의 기준 Cycle (사용자가 정상 동작을 확인한 Cycle, null이면 첫 Cycle) · 화면 전환이 이만큼(초) 넘게 늦으면 지연
+  const [refCycle, setRefCycle] = useState<string | null>(null)
+  const [delayS, setDelayS] = useState(DELAY_DEFAULT)
   const [frames, setFrames] = useState<VideoFrames[]>([])
   const [results, setResults] = useState<DetectResult[]>([])
   const [setup, setSetup] = useState<AnalysisSetup | null>(null)
@@ -257,6 +294,8 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
         staticRef.current = params.staticS
         setExcludes(params.excludes ?? [])
         setCycleDiff(params.cycleDiff ?? CYCLE_DIFF_DEFAULT)
+        setRefCycle(params.refCycle ?? null)
+        setDelayS(params.delayS ?? DELAY_DEFAULT)
       }
       reset()
       const finished = job.finished ? Date.parse(job.finished) : null
@@ -270,11 +309,11 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
     const id = shownJobRef.current
     if (!id) return
     const timer = window.setTimeout(() => {
-      const params: AnalysisParams = { customRoi, staticS, excludes, cycleDiff, starts: startsRef.current }
+      const params: AnalysisParams = { customRoi, staticS, excludes, cycleDiff, starts: startsRef.current, refCycle, delayS }
       void api.saveResultJobParams(id, params).catch(() => {})
     }, 1000)
     return () => window.clearTimeout(timer)
-  }, [customRoi, staticS, excludes, cycleDiff])
+  }, [customRoi, staticS, excludes, cycleDiff, refCycle, delayS])
 
   // 끝난 결과를 패널에서 봤으면 PC 목록의 '분석 완료'를 지운다 (작업마다 한 번)
   const seenRef = useRef<string | null>(null)
@@ -369,7 +408,7 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
       return
     }
     // 서버 작업 목록에 적는다: 결과 확인을 닫아도 PiP·PC 목록에 진행·완료가 보이고, 다시 열면 이어 받는다
-    const params: AnalysisParams = { customRoi: roi, staticS, excludes, cycleDiff, starts }
+    const params: AnalysisParams = { customRoi: roi, staticS, excludes, cycleDiff, starts, refCycle, delayS }
     void api.registerResultJob({
       id, kind: 'analysis', agentId, machineName: ctx.machineName, title: ctx.title, sourceKey: ctx.sourceKey, open: ctx.open, params,
     }).catch(() => {})
@@ -487,13 +526,14 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
   /** 예약 분석에 넣을 요청·설정 (화면 영역을 아직 안 정했으면 null). 영상·테스트 시작 초는 서버가 시작할 때 채운다 */
   const schedulePayload = (): { request: VideoAnalysisRequest; params: AnalysisParams } | null => customRoi && {
     request: { paths: [], roi: customRoi, starts: [] },
-    params: { customRoi, staticS, excludes, cycleDiff, starts: [] },
+    params: { customRoi, staticS, excludes, cycleDiff, starts: [], refCycle, delayS },
   }
 
   return {
     schedulePayload,
     open, setOpen, close, customRoi, setCustomRoi, staticS, changeStatic, showRoi, setShowRoi,
     picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit, cycleDiff, setCycleDiff,
+    refCycle, setRefCycle, delayS, setDelayS,
     frames, results, setup, status, error, warning, running, retrying, elapsed, startedAt, run, stop, picked, setPicked, startsRef,
   }
 }

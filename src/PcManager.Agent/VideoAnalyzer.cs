@@ -19,8 +19,16 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
 {
     /// <summary>프레임 한 장의 크기 (VideoAnalysisChunk 참고). 값은 ReplayKit_FailAnalyzer와 같은 정밀도 (시각 double, 나머지 float)</summary>
     public const int FrameBytes = 31;
-    // 한 번에 돌려주는 프레임 수 (base64로 1.4MB: 서버 SignalR 메시지 한도 2MB를 넘으면 서버가 에이전트 연결을 끊는다)
-    private const int ChunkFrames = 1_000_000 / FrameBytes;
+    /// <summary>
+    /// 화면 깨짐 비교용 축소 이미지: 화면 영역을 ThumbW×ThumbH 회색으로 줄인 것을 ThumbSeconds마다 하나 (시각 double + 화소 ThumbW×ThumbH바이트).
+    /// 웹이 기준 Cycle의 같은 자리와 칸별로 견준다 (밝기·평균 색·윤곽 요약으로는 화면 일부만 깨진 것이 보이지 않아서)
+    /// </summary>
+    public const int ThumbW = 16;
+    public const int ThumbH = 9;
+    public const int ThumbBytes = 8 + ThumbW * ThumbH;
+    private const double ThumbSeconds = 0.2;
+    // 한 번에 돌려주는 크기 (프레임 + 축소 이미지, base64로 1.4MB: 서버 SignalR 메시지 한도 2MB를 넘으면 서버가 에이전트 연결을 끊는다)
+    private const int ChunkBytes = 1_000_000;
     // 구간 길이: 첫 두 구간은 1/4·1/2로 작게(첫 결과가 빨리), 10구간 길이 뒤부터는 5배(ffmpeg 실행 횟수를 줄임)
     private const double ChunkSeconds = 60;
     // 구간마다 이만큼 앞에서 시작해 탐색 직후의 덜 준비된 프레임은 버린다 (첫 프레임의 프레임 차이도 앞 프레임과 비교되게)
@@ -47,9 +55,15 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         public readonly List<byte> Frames = [];
         // 구간이 하나 끝날 때마다의 프레임 수 (웹이 이 경계마다 판정한다: ReplayKit_FailAnalyzer와 같은 기준값 창)
         public readonly List<int> Marks = [];
+        // 축소 이미지 (ThumbBytes씩, 시각순) · 그 시각 (프레임 범위에 드는 것을 찾을 때)
+        public readonly List<byte> Thumbs = [];
+        public readonly List<double> ThumbTimes = [];
         public bool Done;
         public string? Error;
     }
+
+    /// <summary>구간 하나를 잰 결과: 프레임별 측정값 · 축소 이미지 (시각, 화소)</summary>
+    private sealed record Measured(List<Row> Rows, List<(double T, byte[] Pixels)> Thumbs);
 
     private sealed class Job
     {
@@ -116,7 +130,10 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             _jobs.TryRemove(key, out _);
     }
 
-    /// <summary>진행과 video번째 영상의 offset 프레임부터 이어지는 결과 (한 번에 ChunkFrames까지, 재는 중인 영상은 앞에서부터 이어진 부분까지)</summary>
+    /// <summary>
+    /// 진행과 video번째 영상의 offset 프레임부터 이어지는 결과 (한 번에 ChunkBytes까지, 재는 중인 영상은 앞에서부터 이어진 부분까지).
+    /// 축소 이미지는 보내는 프레임들의 시각 안에 든 것을 함께 보낸다
+    /// </summary>
     public VideoAnalysisProgress? GetChunks(string id, int video, int offset)
     {
         if (!_jobs.TryGetValue(id, out var job))
@@ -124,27 +141,35 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         lock (job)
         {
             var chunks = new List<VideoAnalysisChunk>();
-            var budget = ChunkFrames;
+            var budget = ChunkBytes;
             var more = false;
             for (var v = Math.Max(0, video); v < job.Results.Count; v++)
             {
                 var r = job.Results[v];
                 var have = r.Frames.Count / FrameBytes;
                 var from = v == video ? Math.Clamp(offset, 0, have) : 0;
-                var count = Math.Min(have - from, budget);
+                var count = Math.Min(have - from, budget / FrameBytes);
+                var (first, thumbs) = ThumbRange(r, from, count);
+                // 축소 이미지까지 넣어 예산을 넘으면 프레임을 줄인다
+                while (count > 0 && count * FrameBytes + thumbs * ThumbBytes > budget)
+                {
+                    count = count * 4 / 5;
+                    (first, thumbs) = ThumbRange(r, from, count);
+                }
                 var done = r.Done && from + count == have;
                 if (count > 0 || done)
                     chunks.Add(new VideoAnalysisChunk(v, r.Path, from,
                         CollectionsMarshal.AsSpan(r.Frames).Slice(from * FrameBytes, count * FrameBytes).ToArray(),
-                        r.Marks.Where(m => m > from && m <= from + count).ToArray(), done, done ? r.Error : null));
-                budget -= count;
+                        r.Marks.Where(m => m > from && m <= from + count).ToArray(), done, done ? r.Error : null,
+                        thumbs > 0 ? CollectionsMarshal.AsSpan(r.Thumbs).Slice(first * ThumbBytes, thumbs * ThumbBytes).ToArray() : null));
+                budget -= count * FrameBytes + thumbs * ThumbBytes;
                 // 영상은 차례로 재므로 끝나지 않은 영상 뒤는 아직 없다
                 if (!done)
                 {
                     more = from + count < have;
                     break;
                 }
-                if (budget <= 0)
+                if (budget < FrameBytes + ThumbBytes)
                 {
                     more = v + 1 < job.Results.Count;
                     break;
@@ -152,6 +177,35 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             }
             return new VideoAnalysisProgress(job.State, job.Progress, job.Current, job.Error, job.Roi, job.RoiSource, job.Bezel, chunks, more);
         }
+    }
+
+    /// <summary>프레임 [from, from+count)의 시각 안에 든 축소 이미지: 첫 차례와 개수</summary>
+    private static (int First, int Count) ThumbRange(VideoResult r, int from, int count)
+    {
+        if (count <= 0 || r.ThumbTimes.Count == 0)
+            return (0, 0);
+        var frames = CollectionsMarshal.AsSpan(r.Frames);
+        var t0 = BinaryPrimitives.ReadDoubleLittleEndian(frames.Slice(from * FrameBytes, 8));
+        var t1 = BinaryPrimitives.ReadDoubleLittleEndian(frames.Slice((from + count - 1) * FrameBytes, 8));
+        // 첫 조각은 앞에 남은 것까지 (프레임이 빠진 축소 이미지)
+        var first = from == 0 ? 0 : LowerBound(r.ThumbTimes, t0 - 1e-6);
+        var end = LowerBound(r.ThumbTimes, t1 + 1e-6);
+        return (first, Math.Max(0, end - first));
+    }
+
+    /// <summary>정렬된 values에서 x 이상인 첫 차례</summary>
+    private static int LowerBound(List<double> values, double x)
+    {
+        int lo = 0, hi = values.Count;
+        while (lo < hi)
+        {
+            var mid = (lo + hi) / 2;
+            if (values[mid] < x)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        return lo;
     }
 
     public bool Cancel(string id)
@@ -246,7 +300,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         Region roi, Region? bezel, int workers, Job job, VideoResult result, Action<double> progress)
     {
         var bounds = Chunks(duration ?? 0, from);
-        var outputs = bounds.Select(_ => new TaskCompletionSource<List<Row>>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+        var outputs = bounds.Select(_ => new TaskCompletionSource<Measured>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(job.Cancel.Token);
         var next = -1;
         async Task Work()
@@ -266,11 +320,14 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         }
         var pool = Enumerable.Range(0, Math.Min(workers, bounds.Count)).Select(_ => Task.Run(Work)).ToList();
         var last = double.NegativeInfinity;
+        // 마지막으로 붙인 축소 이미지 시각: 칸(ThumbSeconds)은 ffmpeg가 골랐으니 다시 나누지 않고 구간 경계에서 거의 겹친 것만 뺀다
+        // (C#에서 시각을 칸 크기로 나누면 소수 오차로 ffmpeg와 칸이 달라져 멀쩡한 것까지 빠진다)
+        var lastThumb = double.NegativeInfinity;
         try
         {
             for (var i = 0; i < bounds.Count; i++)
             {
-                var rows = await outputs[i].Task.WaitAsync(stop.Token);
+                var (rows, thumbs) = await outputs[i].Task.WaitAsync(stop.Token);
                 lock (job)
                 {
                     foreach (var row in rows)
@@ -280,6 +337,17 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                             continue;
                         Append(result.Frames, row);
                         last = row.T;
+                    }
+                    foreach (var (t, pixels) in thumbs)
+                    {
+                        if (t < lastThumb + ThumbSeconds / 2)
+                            continue;
+                        lastThumb = t;
+                        var time = new byte[8];
+                        BinaryPrimitives.WriteDoubleLittleEndian(time, t);
+                        result.Thumbs.AddRange(time);
+                        result.Thumbs.AddRange(pixels);
+                        result.ThumbTimes.Add(t);
                     }
                     result.Marks.Add(result.Frames.Count / FrameBytes);
                     // 마지막 구간은 끝남과 함께 (웹이 마지막 판정을 한 번에 닫게)
@@ -326,11 +394,11 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
     }
 
     /// <summary>
-    /// [start, start+length) 구간 프레임들의 측정값. 밝기·차이·평균 색은 stdout, 윤곽·칸 윤곽·베젤 외곽은 작업 폴더의 파일로 받는다
-    /// (윈도우 경로의 ':'를 필터 문법에서 피하려고 작업 폴더 안의 상대 경로). width·height: 영상 크기 (사다리꼴을 펴기 전에 줄일지 · GPU에서 자를 픽셀),
-    /// codec: 영상 코덱 (NVIDIA cuvid 디코더를 고를 때)
+    /// [start, start+length) 구간 프레임들의 측정값과 축소 이미지. 밝기·차이·평균 색은 stdout, 윤곽·칸 윤곽·베젤 외곽·축소 이미지는 작업 폴더의
+    /// 파일로 받는다 (윈도우 경로의 ':'를 필터 문법에서 피하려고 작업 폴더 안의 상대 경로). width·height: 영상 크기 (사다리꼴을 펴기 전에
+    /// 줄일지 · GPU에서 자를 픽셀), codec: 영상 코덱 (NVIDIA cuvid 디코더를 고를 때)
     /// </summary>
-    private async Task<List<Row>> MeasureAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, int height, string? codec,
+    private async Task<Measured> MeasureAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, int height, string? codec,
         double start, double? length, CancellationToken token)
     {
         // GPU 디코딩으로 먼저 (NVIDIA는 GPU에서 영역을 잘라 줄이기까지, 외장 → 내장), 안 되면 이 영상만 CPU로.
@@ -341,7 +409,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
     }
 
     /// <summary>MeasureAsync 한 번 (decode: GPU 디코딩 방법, null이면 CPU)</summary>
-    private static async Task<List<Row>> MeasureOnceAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, int height, string? codec,
+    private static async Task<Measured> MeasureOnceAsync(string ffmpeg, string path, Region roi, Region? bezel, int width, int height, string? codec,
         double start, double? length, FfmpegGpu.DecodeOption? decode, CancellationToken token)
     {
         var folder = Directory.CreateTempSubdirectory("pcm_va_");
@@ -350,7 +418,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             var seek = Math.Max(start - Lead, 0);
             var end = length is { } l ? start + l : double.PositiveInfinity;
             var threads = FilterThreads.ToString(CultureInfo.InvariantCulture);
-            var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-filter_threads", threads, "-filter_complex_threads", threads };
+            var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-filter_threads", threads, "-filter_complex_threads", threads };
             if (start > 0)
                 args.AddRange(["-ss", Seconds(seek)]);
             if (length is { } span)
@@ -370,28 +438,36 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
                 input = decode?.Args ?? [];
                 region = roi.Filter(width, inset: true);
             }
-            var main = $"{region},scale=320:-2,signalstats,metadata=print:file=-,"
+            // 화면 영역을 320 폭으로 줄여 둘로 나눈다: 측정 (밝기·차이·평균 색 → stdout, 윤곽 → edge.txt, 가장 많은 칸 → grid.txt) ·
+            // 축소 이미지 (ThumbSeconds 칸마다 첫 프레임만 ThumbW×ThumbH 회색으로 → thumb.raw, 그 시각 → thumb.txt)
+            var bin = Seconds(ThumbSeconds);
+            var main = $"{region},scale=320:-2,split=2[m][t];"
+                + "[m]signalstats,metadata=print:file=-,"
                 + "edgedetect=low=0.08:high=0.2,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=edge.txt,"
-                + "scale=8:4:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YMAX:file=grid.txt";
+                + "scale=8:4:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YMAX:file=grid.txt[out];"
+                + $"[t]select='isnan(prev_selected_t)+gt(floor(t/{bin}+0.0001),floor(prev_selected_t/{bin}+0.0001))',"
+                + $"scale={ThumbW}:{ThumbH}:flags=area,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=thumb.txt,format=gray[thumb]";
             args.AddRange([.. input, "-copyts", "-i", path]);
             // 베젤 테두리 띠: 직사각형끼리면 외곽 전체를 재서 화면을 빼고 (ReplayKit_FailAnalyzer와 같게),
             // 꼭짓점이면 변마다 사다리꼴 띠 넷을 각각 펴서 재고 넓이로 평균한다 (얇은 띠에서 빼기의 오차가 커지지 않게)
             var boxRing = bezel is not null && roi.IsBox && bezel.IsBox;
             List<Region> strips = bezel is null ? [] : boxRing ? [bezel] : Region.Ring(bezel, roi);
+            var graph = new StringBuilder();
             if (strips.Count > 0)
             {
-                var graph = new StringBuilder($"[0:v]split={strips.Count + 1}[a]");
+                graph.Append($"[0:v]split={strips.Count + 1}[a]");
                 for (var k = 0; k < strips.Count; k++)
                     graph.Append($"[r{k}]");
-                graph.Append($";[a]{main}[out]");
+                graph.Append($";[a]{main}");
                 for (var k = 0; k < strips.Count; k++)
                     graph.Append($";[r{k}]{strips[k].Filter(width)},scale={(boxRing ? "160:-2" : "64:16")},signalstats,"
                         + $"metadata=print:key=lavfi.signalstats.YAVG:file=ring{k}.txt,nullsink");
-                args.AddRange(["-filter_complex", graph.ToString(), "-map", "[out]"]);
             }
             else
-                args.AddRange(["-vf", main]);
-            args.AddRange(["-fps_mode", "passthrough", "-an", "-sn", "-dn", "-f", "null", "-"]);
+                graph.Append($"[0:v]{main}");
+            args.AddRange(["-filter_complex", graph.ToString(),
+                "-map", "[out]", "-fps_mode", "passthrough", "-an", "-sn", "-dn", "-f", "null", "-",
+                "-map", "[thumb]", "-fps_mode", "passthrough", "-f", "rawvideo", "thumb.raw"]);
 
             var info = new ProcessStartInfo(ffmpeg)
             {
@@ -458,7 +534,7 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
             // GPU 디코더가 중간에 멈춰도 ffmpeg가 0으로 끝나기도 한다: 구간 앞 절반도 못 채웠으면 실패로 (가변 프레임 영상의 긴 빈틈은 넘기게 절반까지만)
             if (strict && length is { } chunk && rows.Count > 0 && rows[^1].T < start + chunk / 2 - 1)
                 throw new FfmpegGpu.DecodeIncompleteException($"GPU 디코딩이 구간 중간({rows[^1].T:0.0}초, 구간 {start:0.0}~{end:0.0}초)에서 멈췄습니다");
-            return rows;
+            return new Measured(rows, ReadThumbs(folder.FullName, start, end));
         }
         finally
         {
@@ -509,6 +585,34 @@ public class VideoAnalyzer(VideoTrimmer trimmer, ILogger<VideoAnalyzer> logger)
         }
         Flush();
         return frames;
+    }
+
+    /// <summary>
+    /// 축소 이미지: thumb.raw(ThumbW×ThumbH바이트씩)와 같은 차례로 thumb.txt에 찍힌 시각을 짝지어 [start, end) 안의 것만 (시각순).
+    /// 끝이 잘려 개수가 다르면 둘 다 있는 데까지
+    /// </summary>
+    private static List<(double T, byte[] Pixels)> ReadThumbs(string folder, double start, double end)
+    {
+        var thumbs = new List<(double, byte[])>();
+        var raw = Path.Combine(folder, "thumb.raw");
+        var txt = Path.Combine(folder, "thumb.txt");
+        if (!File.Exists(raw) || !File.Exists(txt))
+            return thumbs;
+        var times = new List<double>();
+        foreach (var line in File.ReadLines(txt))
+            if (PtsTime(line) is { } t)
+                times.Add(t);
+        const int size = ThumbW * ThumbH;
+        using var stream = File.OpenRead(raw);
+        var count = (int)Math.Min(stream.Length / size, times.Count);
+        for (var i = 0; i < count; i++)
+        {
+            var pixels = new byte[size];
+            stream.ReadExactly(pixels);
+            if (times[i] >= start - 1e-6 && times[i] < end)
+                thumbs.Add((times[i], pixels));
+        }
+        return thumbs;
     }
 
     /// <summary>key=로 한 값만 찍은 metadata=print 파일 → 프레임 시각(µs)별 값</summary>

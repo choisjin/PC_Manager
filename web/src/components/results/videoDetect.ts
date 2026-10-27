@@ -335,6 +335,8 @@ export class Detector {
     if (this.group.length && bl.t0 - this.group[0].t0 > BLINK_GROUP_S) this.closeGroup(f)
     this.group.push(bl)
     this.flick.push([start, b])
+    // 꺼지는 순간의 큰 차이(묶음이 닫힐 때 빠질 전환 후보)에 뒤의 전환이 합쳐져 사라지지 않게
+    if (this.trLast !== null && this.trLast >= f.t[start] - this.margin()) this.trLast = null
   }
 
   private closeQuiet(f: FrameArrays) {
@@ -416,8 +418,10 @@ export class Detector {
           this.quiet[2] += isOff ? 1 : 0
         } else this.quiet = [i, i, isOff ? 1 : 0]
       } else if (this.quiet) this.closeQuiet(f)
-      // 깜박임(어두워지기 시작 ~ 다시 켜진 프레임)의 큰 차이는 전환이 아니다 (꺼지는 순간의 차이는 묶음이 닫힐 때 뺀다 — flushTransitions)
-      if (d[i] > big && !this.flick.some(([f0, f1]) => f0 <= i && i <= f1 + 1)) {
+      // 깜박임(어두워지기 시작 ~ 다시 켜진 뒤 여유까지)의 큰 차이는 전환이 아니다 (꺼지는 순간의 차이는 묶음이 닫힐 때 뺀다 — flushTransitions).
+      // 여유 안 프레임은 전환 합치기 기준에도 넣지 않는다 (뒤따르는 진짜 전환이 빠질 전환에 합쳐지지 않게)
+      const m = this.margin()
+      if (d[i] > big && !this.flick.some(([f0, f1]) => t[f0] - m <= t[i] && t[i] <= t[f1] + (this.dt || 0.1) + m)) {
         // 직전 "크게 바뀐 프레임"에서 0.5초 안이면 같은 전환의 이어지는 프레임 → 새로 세지 않음 (시작 시각만 남김)
         if (this.trLast === null || t[i] - this.trLast > TRANSITION_MERGE_S) this.trPending.push(pyRound(t[i], 2))
         this.trLast = t[i]

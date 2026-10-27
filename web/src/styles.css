@@ -5316,9 +5316,21 @@ th.sortable:hover {
 .rv-va-count.on.flicker { background: #d4972a; }
 .rv-va-count.on.transitions { background: #8e44ad; }
 .rv-va-count.on.cycle { background: #0f9aa8; }
-.rv-va-cycle-tag { font-weight: 600; }
-.rv-va-cycle-diff { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.rv-va-cycle-diff input { width: 56px; }
+.rv-va-cycle-tag { font-weight: 600; margin-right: 4px; }
+.rv-va-cycle-diff { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.rv-va-cycle-diff > label { display: inline-flex; align-items: center; gap: 4px; }
+.rv-va-cycle-diff input { flex: none; width: 56px; }
+.rv-va-cycle-diff select { flex: none; width: auto; min-width: 52px; }
+/* Cycle 비교 종류 (꺼짐 · 지연·반응 · 화면) */
+.rv-va-kind { display: inline-block; margin-right: 4px; padding: 0 5px; border-radius: 3px; font-size: 10px; font-weight: 600; color: #fff; background: #0f9aa8; }
+.rv-va-kind.off { background: #c9392f; }
+.rv-va-kind.response { background: #d4972a; }
+/* 검출 목록: 기준 Cycle에도 있음 · 기준 Cycle */
+.rv-va-mark { display: inline-block; margin-right: 4px; padding: 0 5px; border-radius: 3px; font-size: 10px; color: var(--muted); border: 1px solid var(--border); }
+/* 화면 깨짐: 다른 칸 격자 */
+.rv-va-cells { vertical-align: middle; margin-right: 4px; }
+.rv-va-cells .frame { fill: color-mix(in srgb, var(--border) 40%, transparent); stroke: var(--border); stroke-width: 1; }
+.rv-va-cells .on { fill: #c9392f; }
 .rv-va-list { flex: 1; min-height: 0; margin: 0; padding: 2px 4px; list-style: none; overflow: auto; }
 .rv-va-list > li { display: grid; grid-template-columns: 58px 168px minmax(70px, 96px) minmax(110px, 1fr) minmax(150px, 1.6fr); gap: 8px; align-items: baseline; padding: 1px 6px; border-radius: 4px; cursor: pointer; }
 .rv-va-list.multi > li { grid-template-columns: 58px 168px minmax(120px, 0.8fr) minmax(110px, 1fr) minmax(150px, 1.6fr); }

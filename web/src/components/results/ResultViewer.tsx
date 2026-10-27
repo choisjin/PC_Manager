@@ -738,7 +738,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   )
   const shownResults = useMemo(() => shown.map((x) => x.result), [shown])
   const removedCount = shown.reduce((n, x) => n + x.removed, 0)
-  // Cycle 비교: 첫 Cycle 기준으로 이후 Cycle의 같은 스텝 화면이 다른 곳 (Cycle이 둘 이상일 때)
+  // Cycle 비교: 기준 Cycle(기본 첫 Cycle)과 이후 Cycle의 같은 스텝을 견줘 이상 증상 (Cycle이 둘 이상일 때)
   const cycleCompare = useMemo(() => {
     if (!vaOpen || !analysis.frames.some((f) => f?.n)) return null
     const index = new Map(searchVideos.map((v, i) => [v.path, i]))
@@ -746,8 +746,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
       const at = stepSource.position(row)
       const video = at ? index.get(at.path) : undefined
       return at && video !== undefined ? { video, seconds: at.seconds } : null
-    }, analysis.frames, analysis.cycleDiff, excludeSpans)
-  }, [vaOpen, analysis.frames, analysis.cycleDiff, sortedRows, stepSource, searchVideos, excludeSpans])
+    }, analysis.frames, shownResults, { diff: analysis.cycleDiff, delayS: analysis.delayS, refCycle: analysis.refCycle }, excludeSpans)
+  }, [vaOpen, analysis.frames, shownResults, analysis.cycleDiff, analysis.delayS, analysis.refCycle, sortedRows, stepSource, searchVideos, excludeSpans])
   // 제외 구간에 드는 행 (표에 빗금): 둘 다 시각순이라 한 번 훑는다
   const rowsInExclude = useMemo(() => {
     const rowsIn = new Set<number>()

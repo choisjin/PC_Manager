@@ -582,6 +582,11 @@ export interface VideoAnalysisChunk {
   /** 이 영상의 마지막 조각 */
   done: boolean
   error: string | null
+  /**
+   * 이 조각의 프레임 시각 안에 든 축소 이미지 (base64, 기준 Cycle과 화면을 칸별로 견준다): 0.2초마다 하나, 152바이트씩
+   * float64 시각(초) · 화면 영역을 16×9로 줄인 회색 화소 144바이트. 옛 에이전트는 없음
+   */
+  thumbs?: string | null
 }
 
 export interface VideoAnalysisProgress {
