@@ -825,6 +825,13 @@ export interface ResultProfiles {
   presets?: Record<string, ResultPreset> | null
 }
 
+/** 영상 분석 기준값 (프로젝트별): 이름 → 값 (없는 이름은 대시보드 기본값 — components/results/analysisDefaults) */
+export interface AnalysisDefaultsView {
+  values: Record<string, number>
+  updatedBy?: string | null
+  updatedAt?: string | null
+}
+
 export interface CreateResultSet {
   name: string
   agentId: string
@@ -886,6 +893,13 @@ let currentUserId: string | null = null
 export function setCurrentUser(userId: string | null) {
   currentUserId = userId
 }
+
+// 로그인한 프로젝트 id: 프로젝트별 설정(영상 분석 기준값)을 읽고 쓸 때
+let currentProjectId: string | null = null
+export function setCurrentProject(projectId: string | null) {
+  currentProjectId = projectId
+}
+export const currentProject = () => currentProjectId
 
 // PIN으로 잠긴 PC(423)를 만났을 때: PIN을 물어 풀면 true (pcLocks가 등록)
 let lockedHandler: ((agentId: string) => Promise<boolean>) | null = null
@@ -1130,6 +1144,9 @@ export const api = {
     request<ResultProfiles>(`/api/result-profiles/presets/${encodeURIComponent(presetId)}`, { method: 'PUT', body: JSON.stringify(preset) }),
   removeResultPreset: (presetId: string) =>
     request<ResultProfiles>(`/api/result-profiles/presets/${encodeURIComponent(presetId)}`, { method: 'DELETE' }),
+  analysisDefaults: (projectId: string) => request<AnalysisDefaultsView>(`/api/analysis-defaults/${encodeURIComponent(projectId)}`),
+  saveAnalysisDefaults: (projectId: string, values: Record<string, number>) =>
+    request<AnalysisDefaultsView>(`/api/analysis-defaults/${encodeURIComponent(projectId)}`, { method: 'PUT', body: JSON.stringify({ values }) }),
   resultSetFileUrl: (id: string, path: string) => `/api/result-sets/${id}/file?${query({ path })}`,
   /** 테스트 PC에서 ffmpeg로 영상 구간 자르기 → 원래 영상 폴더에 저장 */
   trimVideo: (agentId: string, path: string, start: number, end: number) =>

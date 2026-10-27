@@ -7,7 +7,9 @@ import { Detector, type DetectResult, type FrameArrays, type SegmentKind } from 
 import { findJob } from './resultJobs'
 import type { ResultTabRequest } from './resultTab'
 import { CYCLE_DIFF_DEFAULT, DELAY_DEFAULT, THUMB_BYTES, THUMB_CELLS } from './videoCycle'
+import { STATIC_DEFAULT, useProjectParams } from './analysisDefaults'
 import type { Exclusion } from './videoExclude'
+import type { MemoSpan } from './videoMemo'
 
 // 결과 확인: 영상 분석 (ReplayKit_FailAnalyzer 영상 페이지의 영상 분석을 옮김)
 //   1) 테스트 PC 에이전트가 이 실행의 영상들을 ffmpeg로 프레임마다 잰다: 화면 영역의 밝기·프레임 차이·윤곽·
@@ -43,6 +45,18 @@ interface AnalysisParams {
   /** Cycle 비교의 기준 Cycle (사용자가 정상 동작을 확인한 Cycle, 없으면 첫 Cycle) · 지연 기준 (초) */
   refCycle?: string | null
   delayS?: number
+  /** 메모 구간 (고른 Cycle에 있던 것과 같은 검출은 모든 Cycle에서 뺀다) */
+  memos?: MemoSpan[]
+}
+
+/** 메모 구간 고르는 중: 영상(차례) 안 초 · 메모 · 모든 Cycle · 고치는 중인 메모 구간 (MemoSpan.id, 없으면 새로) */
+export interface MemoDraft {
+  video: number
+  start: number | null
+  end: number | null
+  memo: string
+  everyCycle: boolean
+  editing: string | null
 }
 
 /** 정지 기준의 가장 작은 값 (초): 실제로는 제외 구간 밖 스텝의 가장 짧은 DURATION (그보다 작으면 이 값) */
@@ -225,7 +239,7 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
   // 화면 영역 (늘 직접 지정, 지정해야 분석): 꼭짓점 넷 (비스듬히 찍힌 화면도 그대로, 에이전트가 반듯하게 펴서 잰다)
   const [customRoi, setCustomRoi] = useState<Quad | null>(null)
   // 정지 구간 기준 (초): 바꾸면 받은 프레임으로 바로 다시 판정
-  const [staticS, setStaticS] = useState(10)
+  const [staticS, setStaticS] = useState(STATIC_DEFAULT)
   // 영상 위에 화면 영역(빨강) 표시
   const [showRoi, setShowRoi] = useState(true)
   // 열린 영역 고르기 창의 프레임 (지금 프레임)
@@ -233,6 +247,9 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
   // 제외 구간 (Result 표의 스텝으로) · 제외 구간 고르는 중 (결과 표 위에 고르는 줄)
   const [excludes, setExcludes] = useState<Exclusion[]>([])
   const [excludeEdit, setExcludeEdit] = useState(false)
+  // 메모 구간 · 메모 구간 고르는 줄 (영상 분석 패널 안, 열려 있으면 그래프를 끌어 구간을 고른다)
+  const [memos, setMemos] = useState<MemoSpan[]>([])
+  const [memoDraft, setMemoDraft] = useState<MemoDraft | null>(null)
   // Cycle 비교: 첫 Cycle과 밝기가 이만큼(0~255) 넘게 다르면 특이점 (평균 색은 1.5배)
   const [cycleDiff, setCycleDiff] = useState(CYCLE_DIFF_DEFAULT)
   // Cycle 비교의 기준 Cycle (사용자가 정상 동작을 확인한 Cycle, null이면 첫 Cycle) · 화면 전환이 이만큼(초) 넘게 늦으면 지연
@@ -269,6 +286,11 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
   const staticRef = useRef(staticS)
   // 영상마다 테스트가 시작한 영상 안 초 (그 앞은 재지 않는다, 모르면 0): Viewer가 Result 시각으로 정해 넣는다
   const startsRef = useRef<number[]>([])
+  // 프로젝트 기준값 (판정·Cycle 비교): 바뀌면 받은 프레임으로 처음부터 다시 판정. 정지 기준·밝기 차이·지연은 이 분석에서 아직
+  // 정하지 않았으면(되살린 설정이 없고 사용자가 바꾸지 않음) 프로젝트 값으로
+  const project = useProjectParams()
+  const paramsRef = useRef(project.params)
+  const touchedRef = useRef(false)
 
   // 보이는 결과의 작업 (끝난 뒤에도: 설정을 바꾸면 서버에 다시 적는다)
   const shownJobRef = useRef<string | null>(null)
@@ -289,10 +311,12 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
       const params = (await api.resultJobParams(job.id).catch(() => null)) as AnalysisParams | null
       if (jobRef.current) return
       if (params) {
+        touchedRef.current = true
         setCustomRoi(params.customRoi)
         setStaticS(params.staticS)
         staticRef.current = params.staticS
         setExcludes(params.excludes ?? [])
+        setMemos(params.memos ?? [])
         setCycleDiff(params.cycleDiff ?? CYCLE_DIFF_DEFAULT)
         setRefCycle(params.refCycle ?? null)
         setDelayS(params.delayS ?? DELAY_DEFAULT)
@@ -309,11 +333,11 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
     const id = shownJobRef.current
     if (!id) return
     const timer = window.setTimeout(() => {
-      const params: AnalysisParams = { customRoi, staticS, excludes, cycleDiff, starts: startsRef.current, refCycle, delayS }
+      const params: AnalysisParams = { customRoi, staticS, excludes, cycleDiff, starts: startsRef.current, refCycle, delayS, memos }
       void api.saveResultJobParams(id, params).catch(() => {})
     }, 1000)
     return () => window.clearTimeout(timer)
-  }, [customRoi, staticS, excludes, cycleDiff, refCycle, delayS])
+  }, [customRoi, staticS, excludes, cycleDiff, refCycle, delayS, memos])
 
   // 끝난 결과를 패널에서 봤으면 PC 목록의 '분석 완료'를 지운다 (작업마다 한 번)
   const seenRef = useRef<string | null>(null)
@@ -328,13 +352,14 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
     setOpen(false)
     setPicking(null)
     setExcludeEdit(false)
+    setMemoDraft(null)
   }
 
   /** i번째 영상: 아직 판정하지 않은 구간 경계마다 판정 (마지막 경계는 다 받았으면 끝까지 닫음). close: 멈춤·오류 — 받은 데까지 닫는다 */
   const feedVideo = (i: number, close: boolean) => {
     const f = framesRef.current[i]
     if (!f) return
-    const det = (detectorsRef.current[i] ??= new Detector(staticRef.current))
+    const det = (detectorsRef.current[i] ??= new Detector(staticRef.current, paramsRef.current))
     const marks = marksRef.current[i] ?? []
     let k = fedRef.current[i] ?? 0
     for (; k < marks.length; k++) det.feed(arraysOf(f, marks[k]), f.done && k === marks.length - 1)
@@ -350,7 +375,7 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
     let from = filledRef.current[i] ?? 0
     if (f.floor === null || low <= f.floor - FLOOR_STEP) {
       framesRef.current[i] = { ...f, floor: low }
-      detectorsRef.current[i] = new Detector(staticRef.current)
+      detectorsRef.current[i] = new Detector(staticRef.current, paramsRef.current)
       fedRef.current[i] = 0
       from = 0
     }
@@ -408,7 +433,7 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
       return
     }
     // 서버 작업 목록에 적는다: 결과 확인을 닫아도 PiP·PC 목록에 진행·완료가 보이고, 다시 열면 이어 받는다
-    const params: AnalysisParams = { customRoi: roi, staticS, excludes, cycleDiff, starts, refCycle, delayS }
+    const params: AnalysisParams = { customRoi: roi, staticS, excludes, cycleDiff, starts, refCycle, delayS, memos }
     void api.registerResultJob({
       id, kind: 'analysis', agentId, machineName: ctx.machineName, title: ctx.title, sourceKey: ctx.sourceKey, open: ctx.open, params,
     }).catch(() => {})
@@ -513,27 +538,60 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
     if (jobRef.current) void api.cancelVideoAnalysis(agentId, jobRef.current).catch(() => {})
   }
 
-  /** 정지 기준을 바꾸면 받은 프레임으로 처음부터 다시 판정 (같은 구간 경계에서) */
-  const changeStatic = (seconds: number) => {
-    setStaticS(seconds)
-    staticRef.current = seconds
+  /** 받은 프레임으로 처음부터 다시 판정 (같은 구간 경계에서) */
+  const rejudge = () => {
     detectorsRef.current = []
     fedRef.current = []
     for (let i = 0; i < framesRef.current.length; i++) feedVideo(i, !running)
     setResults(detectorsRef.current.map((d) => d.result()))
   }
 
+  /** 정지 기준을 바꾸면 받은 프레임으로 처음부터 다시 판정. auto: 사용자가 바꾼 게 아님 (가장 작은 값으로 올림 등 — 프로젝트 값을 막지 않는다) */
+  const changeStatic = (seconds: number, auto = false) => {
+    if (!auto) touchedRef.current = true
+    setStaticS(seconds)
+    staticRef.current = seconds
+    rejudge()
+  }
+
+  // 프로젝트 기준값이 오거나 바뀌면: 판정 기준을 바꿔 다시 판정, 이 분석에서 아직 정하지 않은 값은 프로젝트 값으로
+  useEffect(() => {
+    const p = project.params
+    if (p === paramsRef.current && !project.loaded) return
+    paramsRef.current = p
+    if (!touchedRef.current) {
+      setStaticS(p.staticS)
+      staticRef.current = p.staticS
+      setCycleDiff(p.cycleDiff)
+      setDelayS(p.delayS)
+    }
+    if (framesRef.current.length) rejudge()
+    // 기준값이 바뀔 때만 (rejudge는 그때의 받은 프레임으로)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.params, project.loaded])
+
   /** 예약 분석에 넣을 요청·설정 (화면 영역을 아직 안 정했으면 null). 영상·테스트 시작 초는 서버가 시작할 때 채운다 */
   const schedulePayload = (): { request: VideoAnalysisRequest; params: AnalysisParams } | null => customRoi && {
     request: { paths: [], roi: customRoi, starts: [] },
-    params: { customRoi, staticS, excludes, cycleDiff, starts: [], refCycle, delayS },
+    params: { customRoi, staticS, excludes, cycleDiff, starts: [], refCycle, delayS, memos },
+  }
+
+  // 사용자가 바꾼 Cycle 비교 기준 (프로젝트 값을 덮지 않게 표시)
+  const changeCycleDiff = (value: number) => {
+    touchedRef.current = true
+    setCycleDiff(value)
+  }
+  const changeDelayS = (value: number) => {
+    touchedRef.current = true
+    setDelayS(value)
   }
 
   return {
-    schedulePayload,
+    schedulePayload, project,
     open, setOpen, close, customRoi, setCustomRoi, staticS, changeStatic, showRoi, setShowRoi,
-    picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit, cycleDiff, setCycleDiff,
-    refCycle, setRefCycle, delayS, setDelayS,
+    picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit, memos, setMemos, memoDraft, setMemoDraft,
+    cycleDiff, setCycleDiff: changeCycleDiff,
+    refCycle, setRefCycle, delayS, setDelayS: changeDelayS,
     frames, results, setup, status, error, warning, running, retrying, elapsed, startedAt, run, stop, picked, setPicked, startsRef,
   }
 }

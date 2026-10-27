@@ -15,6 +15,7 @@ import { Icon } from './explorer/Icon'
 import type { PaneController } from './explorer/paneController'
 import { PcInfoPanel } from './explorer/PcInfoPanel'
 import { PcTree } from './explorer/PcTree'
+import { useSideCollapse } from './explorer/sideCollapse'
 import { AGENT_MIME, displayName, type FileClipboard, newId } from './explorer/pcGroups'
 
 interface Props {
@@ -72,7 +73,6 @@ function saveLocal(key: string, value: unknown) {
 }
 
 const MODE_KEY = 'explorer.mode'
-const COLLAPSE_KEY = 'pcm.explorer.collapsed'
 const PANES_KEY = 'pcm.explorer.panes'
 
 export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, clientIp, selfPc, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun, fileFavorites, saveFileFavorites }: Props) {
@@ -111,7 +111,8 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   }
   const removeFavorite = (agentId: string, path: string) =>
     setAgentFavorites(agentId, (favorites.favorites[agentId] ?? []).filter((p) => p !== path))
-  const [collapsed, setCollapsed] = useState(() => loadLocal(COLLAPSE_KEY, false))
+  // 사이드바 접기 (Result 화면과 함께 기억)
+  const [collapsed, toggleCollapse] = useSideCollapse()
   // Browser(파일 탐색기) ↔ Remote(PC 화면 미리보기) 모드
   const [savedMode, setMode] = useState<'browser' | 'remote'>(() => loadLocal<'browser' | 'remote'>(MODE_KEY, 'browser'))
   // 원격조작 권한이 없으면 Remote 모드(PC 화면 미리보기 → 원격)는 쓰지 않는다
@@ -173,13 +174,6 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
 
   // 활성 창만 컨트롤러를 알려온다 → 툴바가 그 창을 조작
   const handleController = (controller: PaneController) => setActiveController(controller)
-
-  const toggleCollapse = () => {
-    setCollapsed((v) => {
-      saveLocal(COLLAPSE_KEY, !v)
-      return !v
-    })
-  }
 
   // PC당 창은 하나만 (중복 방지). 이미 있으면 활성화만.
   const openPane = (agentId: string) => {

@@ -1,7 +1,7 @@
 import type { ResultRow } from './resultCsv'
 import type { VideoFrames } from './videoAnalysisState'
 import { bisectLeft, type DetectedSegment, type DetectResult, pyRound } from './videoDetect'
-import { stepKeys } from './videoExclude'
+import { mergeSpans, stepKeys } from './videoExclude'
 
 // 영상 분석 Cycle 비교: 기준 Cycle(사용자가 정상 동작을 확인한 Cycle, 기본은 첫 Cycle)을 기준으로 이후 Cycle의 같은 스텝(이름과 그
 // Cycle 안에서 몇 번째인지)을 견줘 이상 증상을 찾는다. 시각은 스텝 시작부터 지난 시간으로 맞춘다 (Result 시각과 영상의 어긋남·스텝 길이 차이를 흡수).
@@ -58,6 +58,25 @@ const CORRUPT_MAX_SHARE = 0.5
  */
 const ACTIVE_X = 4
 const ACTIVE_MIN = 1
+
+/**
+ * Cycle 비교 기준값 (프로젝트별로 바꾼다 — analysisDefaults.DetectParams와 같은 이름, 비율은 %). 위 상수가 기본값이고,
+ * 이름이 없는 상수(칸 크기·여유 등)는 바꾸지 않는다. 밝기 차이·지연 기준은 분석마다 CompareOptions.diff·delayS로
+ */
+export interface CycleParams {
+  earlyS: number
+  lateS: number
+  eventTolS: number
+  offDurAbsS: number
+  offDurPct: number
+  screenMinS: number
+  cellDiff: number
+  corruptCells: number
+}
+export const CYCLE_PARAM_DEFAULTS: CycleParams = {
+  earlyS: EARLY_S, lateS: LATE_S, eventTolS: EVENT_TOL_S, offDurAbsS: OFF_DUR_ABS, offDurPct: OFF_DUR_REL * 100,
+  screenMinS: MIN_BINS * BIN_S, cellDiff: CELL_DIFF, corruptCells: CORRUPT_MIN_CELLS,
+}
 
 /** 탐색 막대·그래프·목록의 Cycle 비교 색 */
 export const CYCLE_COLOR = '#0f9aa8'
@@ -152,7 +171,7 @@ export interface CycleCompare {
   thumbs: boolean
 }
 
-export interface CompareOptions {
+export interface CompareOptions extends Partial<CycleParams> {
   /** 밝기 차이 기준 (0~255) */
   diff: number
   /** 지연 기준 (초) */
@@ -229,9 +248,9 @@ function thumbAt(f: VideoFrames, t: number): number {
 
 /**
  * 축소 이미지 칸별 비교: 기준(b)을 이 Cycle(a) 밝기에 맞게 늘이고 옮긴 뒤(노출·조명 차이를 지움 — 가장 다른 20% 칸은 빼고 한 번 더 맞춤)
- * 차이가 CELL_DIFF 넘는 칸들
+ * 차이가 limit(기본 CELL_DIFF) 넘는 칸들
  */
-export function cellDiff(a: Uint8Array, ao: number, b: Uint8Array, bo: number): number[] {
+export function cellDiff(a: Uint8Array, ao: number, b: Uint8Array, bo: number, limit = CELL_DIFF): number[] {
   const n = THUMB_CELLS
   const fit = (keep: (i: number) => boolean) => {
     let sa = 0
@@ -262,14 +281,14 @@ export function cellDiff(a: Uint8Array, ao: number, b: Uint8Array, bo: number): 
   const cut = Float64Array.from(res).sort()[Math.floor(n * 0.8)]
   m = fit((i) => res[i] <= cut)
   const out: number[] = []
-  for (let i = 0; i < n; i++) if (Math.abs(a[ao + i] - (m.gain * b[bo + i] + m.offset)) > CELL_DIFF) out.push(i)
+  for (let i = 0; i < n; i++) if (Math.abs(a[ao + i] - (m.gain * b[bo + i] + m.offset)) > limit) out.push(i)
   return out
 }
 
 const NO_CELLS: number[] = []
 
-/** cellDiff 앞의 빠른 확인: 평균만 맞춰도 모든 칸 차이가 CELL_DIFF 이하면 다른 칸 없음 (대부분의 칸이 여기서 끝난다) */
-function cellDiffQuick(a: Uint8Array, ao: number, b: Uint8Array, bo: number): number[] {
+/** cellDiff 앞의 빠른 확인: 평균만 맞춰도 모든 칸 차이가 limit 이하면 다른 칸 없음 (대부분의 칸이 여기서 끝난다) */
+function cellDiffQuick(a: Uint8Array, ao: number, b: Uint8Array, bo: number, limit: number): number[] {
   let sa = 0
   let sb = 0
   for (let i = 0; i < THUMB_CELLS; i++) {
@@ -277,7 +296,7 @@ function cellDiffQuick(a: Uint8Array, ao: number, b: Uint8Array, bo: number): nu
     sb += b[bo + i]
   }
   const offset = (sa - sb) / THUMB_CELLS
-  for (let i = 0; i < THUMB_CELLS; i++) if (Math.abs(a[ao + i] - b[bo + i] - offset) > CELL_DIFF) return cellDiff(a, ao, b, bo)
+  for (let i = 0; i < THUMB_CELLS; i++) if (Math.abs(a[ao + i] - b[bo + i] - offset) > limit) return cellDiff(a, ao, b, bo, limit)
   return NO_CELLS
 }
 
@@ -301,22 +320,22 @@ function regionOf(cells: Iterable<number>): string | null {
 
 /**
  * 기준 전환 시각 g와 이 Cycle 전환 시각 c(둘 다 기준 Cycle 시각, ms, 정렬됨)를 순서를 지켜 짝짓는다:
- * 짝의 값은 어긋난 초, 짝이 없으면 GAP_S (기준보다 EARLY_S 넘게 이르거나 LATE_S 넘게 늦으면 짝이 될 수 없다)
+ * 짝의 값은 어긋난 초, 짝이 없으면 GAP_S (기준보다 early초 넘게 이르거나 late초 넘게 늦으면 짝이 될 수 없다)
  */
-function align(g: number[], c: number[]): [number, number][] {
+function align(g: number[], c: number[], early: number, late: number): [number, number][] {
   const m = g.length
   const n = c.length
   if (!m || !n) return []
   const cost = (i: number, j: number) => {
     const lag = (c[j] - g[i]) / 1000
-    return lag < -EARLY_S || lag > LATE_S ? Infinity : Math.abs(lag)
+    return lag < -early || lag > late ? Infinity : Math.abs(lag)
   }
   if ((m + 1) * (n + 1) > MAX_DP) {
     // 너무 크면 기준 전환마다 아직 안 쓴 다음 전환 중 짝이 될 수 있는 첫 것
     const out: [number, number][] = []
     let j = 0
     for (let i = 0; i < m; i++) {
-      while (j < n && (c[j] - g[i]) / 1000 < -EARLY_S) j++
+      while (j < n && (c[j] - g[i]) / 1000 < -early) j++
       if (j < n && cost(i, j) < Infinity) out.push([i, j++])
     }
     return out
@@ -373,7 +392,8 @@ const offEvent = (seg: DetectedSegment): OffEvent => ({
 /**
  * 기준 Cycle 기준 비교.
  * rows: 시각이 있는 Result 행 (시각순) · position: 행의 영상 위치 (영상 차례, 초) · frames: 영상마다 잰 프레임 ·
- * results: 영상마다 제외 구간을 뺀 검출 · excluded: 영상마다 제외 구간 (그 안은 판정하지 않는다)
+ * results: 영상마다 제외 구간·메모 구간에서 뺄 것을 뺀 검출 · excluded: 영상마다 제외 구간 (그 안은 판정하지 않는다) ·
+ * quiet: 영상마다 메모 구간 (화면 비교만 하지 않는다 — 꺼짐·반응은 메모 구간에서 빼고 남은 검출로 견준다)
  */
 export function compareCycles(
   rows: ResultRow[],
@@ -382,9 +402,12 @@ export function compareCycles(
   results: (DetectResult | undefined)[],
   opts: CompareOptions,
   excluded: [number, number][][],
+  quiet: [number, number][][] = [],
 ): CycleCompare | null {
   const cycles = [...new Set(rows.map((r) => r.cycle).filter(Boolean))]
   if (cycles.length < 2) return null
+  const p: CycleParams = { ...CYCLE_PARAM_DEFAULTS, ...opts }
+  const minBins = Math.max(1, Math.round(p.screenMinS / BIN_S))
   const ref = opts.refCycle && cycles.includes(opts.refCycle) ? opts.refCycle : cycles[0]
   const keys = stepKeys(rows)
   // 행마다 영상 구간: 시작 ~ 걸린 시간(없으면 다음 스텝 시작)
@@ -406,7 +429,7 @@ export function compareCycles(
   const refByKey = byCycle.get(ref) ?? new Map<string, Span>()
   const refSorted = [...refByKey.values()].sort((a, b) => a.row.time! - b.row.time!)
 
-  // (영상, 초)가 든 스텝: 시작이 그 앞인 마지막 스텝 (그 스텝이 끝나고 LATE_S초 넘게 지났으면 없음)
+  // (영상, 초)가 든 스텝: 시작이 그 앞인 마지막 스텝 (그 스텝이 끝나고 늦은 반응 최대(lateS)초 넘게 지났으면 없음)
   const byVideo: Span[][] = frames.map(() => [])
   for (const s of spans) byVideo[s.video]?.push(s)
   for (const list of byVideo) list.sort((a, b) => a.start - b.start)
@@ -421,7 +444,7 @@ export function compareCycles(
       else hi = mid
     }
     const s = list[lo - 1]
-    return s && t <= s.end + LATE_S ? s : null
+    return s && t <= s.end + p.lateS ? s : null
   }
   // 기준 Cycle 시각(ms)으로: 기준 Cycle 것은 그대로, 다른 Cycle은 기준 Cycle 같은 스텝 시작 + 같은 오프셋
   const ownWall = (s: Span, t: number) => s.row.time! + (t - s.start) * 1000
@@ -444,8 +467,22 @@ export function compareCycles(
     const offset = (wall - r.row.time!) / 1000
     return { s, video: s.video, t: s.start + offset, offset }
   }
-  // 제외 구간 안 (끝은 밖: 테스트 시작 등 경계에 딱 맞는 것은 견준다)
+  // 제외 구간 안 (끝은 밖: 테스트 시작 등 경계에 딱 맞는 것은 견준다) · 메모 구간 안 (화면 비교만 하지 않는다)
   const inside = (video: number, t: number) => (excluded[video] ?? []).some(([a, b]) => a <= t && t < b)
+  // 메모 구간은 Cycle마다 있어 많다: 합쳐서 정렬해 두고 이진 탐색 (칸마다 부른다)
+  const quietSpans = quiet.map((list) => mergeSpans(list))
+  const quietAt = (video: number, t: number) => {
+    const list = quietSpans[video]
+    if (!list?.length) return false
+    let lo = 0
+    let hi = list.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (list[mid][0] <= t) lo = mid + 1
+      else hi = mid
+    }
+    return lo > 0 && t < list[lo - 1][1]
+  }
   // 판정할 수 있는 끝: 다 잰 영상은 끝까지, 재는 중이면 잰 끝에서 조금 앞까지
   const measuredEnd = (video: number) => {
     const f = frames[video]
@@ -520,11 +557,11 @@ export function compareCycles(
       return p && !inside(p.video, p.t) && p.t <= measuredEnd(p.video) ? [{ ...g, p }] : []
     })
 
-    // ① 꺼짐: 같은 자리(±EVENT_TOL_S) 짝 → 길이 비교, 짝이 없으면 추가 · 기준에만 있으면 빠짐
+    // ① 꺼짐: 같은 자리(±eventTolS) 짝 → 길이 비교, 짝이 없으면 추가 · 기준에만 있으면 빠짐
     const used = new Set<number>()
     for (const x of mapped(offs)) {
       let best = -1
-      let gap = EVENT_TOL_S * 1000
+      let gap = p.eventTolS * 1000
       refOffs.forEach((g, i) => {
         const d = Math.abs(g.wall - x.wall)
         if (!used.has(i) && d <= gap) {
@@ -542,7 +579,7 @@ export function compareCycles(
       const g = refOffs[best]
       const refOff = offEvent(g.e.seg!)
       const diff = off.dur - refOff.dur
-      if (Math.abs(diff) > Math.max(OFF_DUR_ABS, OFF_DUR_REL * refOff.dur)) {
+      if (Math.abs(diff) > Math.max(p.offDurAbsS, (p.offDurPct / 100) * refOff.dur)) {
         anomalies.push({
           ...base(cycle, x.e.s, g.e.s.row, x.e.video, seg.start, seg.end, g.e.video, g.e.t),
           key: `o:${x.e.video}:${seg.start}`, kind: diff > 0 ? 'off-longer' : 'off-shorter', off, refOff,
@@ -561,7 +598,7 @@ export function compareCycles(
     const gs = visible(refTrans)
     const cs = mapped(trans)
     const paired = new Set<number>()
-    for (const [gi, ci] of align(gs.map((g) => g.wall), cs.map((c) => c.wall))) {
+    for (const [gi, ci] of align(gs.map((g) => g.wall), cs.map((c) => c.wall), p.earlyS, p.lateS)) {
       paired.add(gi)
       const g = gs[gi]
       const c = cs[ci]
@@ -616,7 +653,7 @@ export function compareCycles(
     const len = Math.min(s.end - s.start, r.end - r.start)
     const bins = Math.floor(len / BIN_S)
     const edge = Math.ceil(EDGE_S / BIN_S)
-    if (bins - 2 * edge < MIN_BINS) continue
+    if (bins - 2 * edge < minBins) continue
     compared++
     maps[s.video].push({ start: s.start, end: s.start + len, refVideo: r.video, refStart: r.start })
     const a = profile(fa, s.start, bins)
@@ -633,7 +670,7 @@ export function compareCycles(
     const skip = new Uint8Array(bins)
     for (let k = edge; k < bins - edge; k++) {
       const ta = s.start + (k + 0.5) * BIN_S
-      if (Number.isNaN(a.y[k]) || inside(s.video, ta) || offAt(s.video, ta, BIN_S)) {
+      if (Number.isNaN(a.y[k]) || inside(s.video, ta) || quietAt(s.video, ta) || offAt(s.video, ta, BIN_S)) {
         skip[k] = 1
         continue
       }
@@ -650,8 +687,9 @@ export function compareCycles(
           best[k] = j
         }
       }
-      // 기준 쪽이 꺼져 있던 칸도 뺀다 (꺼짐 비교에서 본다)
-      if (low === Infinity || offAt(r.video, r.start + (best[k] + 0.5) * BIN_S, BIN_S)) {
+      // 기준 쪽이 꺼져 있던 칸(꺼짐 비교에서 본다)·메모 구간이던 칸도 뺀다
+      const tr = r.start + (best[k] + 0.5) * BIN_S
+      if (low === Infinity || offAt(r.video, tr, BIN_S) || quietAt(r.video, tr)) {
         skip[k] = 1
         continue
       }
@@ -669,13 +707,13 @@ export function compareCycles(
         if (j < j0 || j > j1) continue
         const ib = thumbAt(fr, r.start + (j + 0.5) * BIN_S)
         if (ib < 0) continue
-        const diff = cellDiffQuick(fa.tp, ia * THUMB_CELLS, fr.tp, ib * THUMB_CELLS)
+        const diff = cellDiffQuick(fa.tp, ia * THUMB_CELLS, fr.tp, ib * THUMB_CELLS, p.cellDiff)
         if (!cells[k] || diff.length < cells[k]!.length) cells[k] = diff
         if (!diff.length) break
       }
     }
-    const bad = (k: number) => !skip[k] && (score[k] >= 1 || (cells[k]?.length ?? 0) >= CORRUPT_MIN_CELLS)
-    // 다른 칸이 MIN_BINS 넘게 이어진 곳마다 하나: 밝기·색이 다르거나 칸 절반 넘게 다르면 화면 다름, 아니면 화면 깨짐
+    const bad = (k: number) => !skip[k] && (score[k] >= 1 || (cells[k]?.length ?? 0) >= p.corruptCells)
+    // 다른 칸이 화면 차이 최소 길이(screenMinS) 넘게 이어진 곳마다 하나: 밝기·색이 다르거나 칸 절반 넘게 다르면 화면 다름, 아니면 화면 깨짐
     for (let k = edge; k < bins - edge;) {
       if (!bad(k)) {
         k++
@@ -694,7 +732,7 @@ export function compareCycles(
         for (const c of cells[e] ?? []) union.add(c)
         e++
       }
-      if (e - k >= MIN_BINS) {
+      if (e - k >= minBins) {
         const j = best[top]
         const t0 = s.start + k * BIN_S
         anomalies.push({

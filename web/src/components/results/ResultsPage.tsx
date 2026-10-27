@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, type Agent, type FileEntry, type Org, type PcGroups, type ResultPreset, type ResultProfile } from '../../api'
+import { api, type Agent, type FileEntry, type Org, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type ResultPreset, type ResultProfile } from '../../api'
 import { formatBytes } from '../../format'
 import { PcInfoPanel } from '../explorer/PcInfoPanel'
+import { PcTree } from '../explorer/PcTree'
+import { useSideCollapse } from '../explorer/sideCollapse'
 import { displayName } from '../explorer/pcGroups'
-import { projectAgents, remoteSections } from '../remote/remotePcs'
+import { projectAgents } from '../remote/remotePcs'
 import { RESULT_MODE_LABEL } from './resultCsv'
 import { JOB_KIND_LABEL, openJob, scheduleTimeText, useResultJobs, useResultSchedules } from './resultJobs'
 import { buildSource, cachedRuns, type FoundSource, type ResultRun, type RunScan, scanRuns } from './resultFinder'
@@ -14,6 +16,15 @@ import { VideoStorage } from './VideoStorage'
 interface Props {
   agents: Agent[]
   pcGroups: PcGroups
+  /** 왼쪽 사이드바는 PC Manager와 같은 PC 목록 (폴더 만들기·옮기기·별칭·상태·PIN·프로젝트 배정) */
+  saveGroups: (groups: PcGroups) => void
+  removeAgent: (agentId: string) => Promise<void>
+  setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
+  presence: Record<string, string[]>
+  pcStatuses: Record<string, PcStatus>
+  setPcStatus: (agentId: string, status: PcStatusValue, note: string | null) => Promise<void>
+  remoteUsage: RemoteUsage['inUseBy']
+  setFolderProject: (folderId: string, projectId: string | null) => Promise<void>
   org: Org
   filterProjectId: string | null
   selfUserId: string | null
@@ -60,12 +71,14 @@ type BuildState = { path: string; loading: boolean; error: string | null; found:
  * 결과 확인 탭: PC별로 결과 폴더를 미리 정해 두면, 그 PC의 Result 파일을 최신순 목록으로 보여 주고
  * 고른 실행의 영상·이미지까지 찾아 채워 연다. PC의 ▶는 가장 최신 결과를 바로 새 탭에서 연다
  */
-export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId, profiles, saveProfile, presets, savePreset, userName }: Props) {
-  const sections = useMemo(
-    () => remoteSections(pcGroups, projectAgents(agents, org, filterProjectId), org, filterProjectId, selfUserId, null).allSections,
-    [pcGroups, agents, org, filterProjectId, selfUserId],
-  )
+export function ResultsPage({ agents, pcGroups, saveGroups, removeAgent, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, org, filterProjectId, selfUserId, profiles, saveProfile, presets, savePreset, userName }: Props) {
   const [onlySet, setOnlySet] = useState(() => readKey(ONLY_SET_KEY) === '1')
+  // 사이드바 PC: 이 프로젝트의 PC (결과 폴더를 정한 PC만 보기면 그것만). 폴더 구조는 PC Manager와 같다
+  const treeAgents = useMemo(
+    () => projectAgents(agents, org, filterProjectId).filter((a) => !onlySet || profiles[a.id]),
+    [agents, org, filterProjectId, onlySet, profiles],
+  )
+  const [collapsed, toggleCollapse] = useSideCollapse()
   const [selectedId, setSelectedId] = useState<string | null>(() => readKey(PC_KEY))
   const [editing, setEditing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
@@ -168,12 +181,77 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
     return dir.toLowerCase().startsWith(root.toLowerCase()) ? dir.slice(root.length).replace(/^[\\/]/, '') : dir
   }
 
+  // PC 줄 끝: 예약 분석 대기 · 분석 진행/완료 · 결과 형식 · ▶ 최신
+  const agentExtra = (a: Agent) => {
+    const p = profiles[a.id]
+    // 예약 분석 대기 (가장 이른 것)
+    const next = schedules.find((s) => s.agentId === a.id && s.state === 'pending')
+    const job = jobOf(a.id)
+    const running = job?.state === 'running'
+    return (
+      <>
+        {next && (
+          <span className="rp-job scheduled" title={`예약 분석 · ${next.title} · ${new Date(next.at).toLocaleString()}`}>
+            ⏰ {scheduleTimeText(next.at)}
+          </span>
+        )}
+        {job && (
+          <button
+            type="button"
+            className={`rp-job${running ? '' : ' done'}`}
+            title={`${JOB_KIND_LABEL[job.kind]} · ${job.title} — 누르면 결과를 엽니다`}
+            onClick={(e) => {
+              e.stopPropagation()
+              openJob(job)
+            }}
+          >
+            {running ? `분석 ${Math.round(job.progress * 100)}%` : '분석 완료'}
+          </button>
+        )}
+        {p ? <span className="rp-chip">{RESULT_MODE_LABEL[p.mode]}</span> : <span className="small muted rp-unset">미설정</span>}
+        <button
+          type="button"
+          className="small rp-latest"
+          disabled={!p || !a.online}
+          title={!p ? '결과 폴더를 먼저 정하세요' : !a.online ? 'PC가 연결되어 있지 않습니다' : '가장 최신 결과를 새 탭에서 엽니다'}
+          onClick={(e) => {
+            e.stopPropagation()
+            select(a.id)
+            openLatest(a)
+          }}
+        >
+          ▶ 최신
+        </button>
+      </>
+    )
+  }
+
   return (
     <div className="rp">
-      <aside className="panel rp-pcs">
-        <div className="panel-head">
-          <h2>PC</h2>
-          <label className="small muted rp-only">
+      <PcTree
+        variant="results"
+        agents={treeAgents}
+        groups={pcGroups}
+        saveGroups={saveGroups}
+        removeAgent={removeAgent}
+        org={org}
+        setAgentProject={setAgentProject}
+        presence={presence}
+        pcStatuses={pcStatuses}
+        setPcStatus={setPcStatus}
+        remoteUsage={remoteUsage}
+        setFolderProject={setFolderProject}
+        selfUserId={selfUserId}
+        filterProjectId={filterProjectId}
+        collapsed={collapsed}
+        onToggleCollapse={toggleCollapse}
+        onOpenAgent={select}
+        infoAgentId={agent?.id ?? null}
+        infoPanel={<PcInfoPanel agent={agent} name={agent ? nameOf(agent) : null} />}
+        renderAgentExtra={agentExtra}
+        emptyText={onlySet ? '결과 폴더를 정한 PC가 없습니다' : 'PC가 없습니다'}
+        headExtra={
+          <label className="small muted rp-only" title="결과 폴더를 정한 PC만 목록에 보입니다">
             <input
               type="checkbox"
               checked={onlySet}
@@ -184,82 +262,8 @@ export function ResultsPage({ agents, pcGroups, org, filterProjectId, selfUserId
             />
             결과 폴더를 정한 PC만
           </label>
-        </div>
-        <div className="rp-pc-list">
-          {sections.map((section) => {
-            const list = section.agents
-              .filter((a) => !onlySet || profiles[a.id])
-              .sort((x, y) => nameOf(x).localeCompare(nameOf(y), 'ko', { numeric: true, sensitivity: 'base' }))
-            if (list.length === 0) return null
-            return (
-              <div key={section.key} className="rp-section">
-                <div className="rp-section-name small muted">{section.name}</div>
-                {list.map((a) => {
-                  const p = profiles[a.id]
-                  return (
-                    <div
-                      key={a.id}
-                      className={`rp-pc${a.id === selectedId ? ' selected' : ''}${a.online ? '' : ' offline'}`}
-                      onClick={() => select(a.id)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => e.key === 'Enter' && select(a.id)}
-                    >
-                      <span className={`dot ${a.online ? 'on' : 'off'}`} />
-                      <span className="rp-pc-name ellipsis" title={a.machineName}>{nameOf(a)}</span>
-                      {(() => {
-                        // 예약 분석 대기 (가장 이른 것)
-                        const next = schedules.find((s) => s.agentId === a.id && s.state === 'pending')
-                        return next && (
-                          <span className="rp-job scheduled" title={`예약 분석 · ${next.title} · ${new Date(next.at).toLocaleString()}`}>
-                            ⏰ {scheduleTimeText(next.at)}
-                          </span>
-                        )
-                      })()}
-                      {(() => {
-                        const job = jobOf(a.id)
-                        if (!job) return null
-                        const running = job.state === 'running'
-                        return (
-                          <button
-                            type="button"
-                            className={`rp-job${running ? '' : ' done'}`}
-                            title={`${JOB_KIND_LABEL[job.kind]} · ${job.title} — 누르면 결과를 엽니다`}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              openJob(job)
-                            }}
-                          >
-                            {running ? `분석 ${Math.round(job.progress * 100)}%` : '분석 완료'}
-                          </button>
-                        )
-                      })()}
-                      {p ? <span className="rp-chip">{RESULT_MODE_LABEL[p.mode]}</span> : <span className="small muted">미설정</span>}
-                      <button
-                        type="button"
-                        className="small rp-latest"
-                        disabled={!p || !a.online}
-                        title={!p ? '결과 폴더를 먼저 정하세요' : !a.online ? 'PC가 연결되어 있지 않습니다' : '가장 최신 결과를 새 탭에서 엽니다'}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          select(a.id)
-                          openLatest(a)
-                        }}
-                      >
-                        ▶ 최신
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            )
-          })}
-          {sections.every((s) => s.agents.every((a) => onlySet && !profiles[a.id])) && (
-            <p className="muted small rp-empty">{onlySet ? '결과 폴더를 정한 PC가 없습니다' : 'PC가 없습니다'}</p>
-          )}
-        </div>
-        <PcInfoPanel agent={agent} name={agent ? nameOf(agent) : null} />
-      </aside>
+        }
+      />
 
       <section className="panel rp-main">
         {!agent ? (

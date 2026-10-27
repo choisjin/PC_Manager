@@ -551,20 +551,31 @@ function atsStamp(ms: number): string {
     + `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}.${p(d.getUTCMilliseconds(), 3)}000`
 }
 
-/** ATS Result: 앞 6줄은 머리말, 그 뒤 첫 열이 [시각]인 줄까지만 데이터 */
+/** ATS 데이터 줄: 첫 열이 [시각] */
+const atsData = (r: string[] | undefined) => !!r && r.length > 0 && r[0].includes('[') && r[0].includes(']')
+
+/**
+ * ATS Result: 머리말 · 열 이름 줄 · 첫 열이 [시각]인 데이터 줄들. 머리말 줄 수는 파일마다 달라(앞 빈 줄·버전 줄 유무) 첫 데이터 줄로 찾는다
+ * (전에는 앞 6줄을 머리말로 못 박아, 머리말이 짧은 파일은 첫 데이터 줄이 열 이름이 되고 표에서 빠졌다)
+ */
 export function parseAts(text: string): ParsedResult {
   const all = parseCsv(text)
-  const preamble = all.slice(0, 6).map((r) => r.join(',').trim()).filter(Boolean)
-  // 머리말 마지막 줄이 열 이름 줄이면 그 이름을 쓴다 (열 자리는 이름으로 찾고, 이름이 없으면 정해진 자리)
-  const named = all[5] && all[5].length > 24 ? all[5].map(unq) : []
+  // 첫 데이터 줄: 첫 열이 시각으로 읽히는 [ ] (머리말에서 찾지 못하면 앞 6줄 뒤)
+  let first = all.findIndex((r) => atsData(r) && parseTime(unq(r[0])) !== null)
+  if (first < 0) first = Math.min(all.length, 6)
+  // 열 이름 줄: 첫 데이터 줄 바로 위의 내용 있는 줄 (열이 24개 넘어야 — 머리말의 버전 줄은 아님). 열 자리는 이름으로 찾고, 이름이 없으면 정해진 자리
+  let headerAt = first - 1
+  while (headerAt >= 0 && all[headerAt].every((c) => !c.trim())) headerAt--
+  const named = headerAt >= 0 && all[headerAt].length > 24 ? all[headerAt].map(unq) : []
+  const preamble = all.slice(0, named.length ? headerAt : first).map((r) => r.join(',').trim()).filter(Boolean)
   const columnNamed = (pattern: RegExp, fallback: number) => {
     const i = named.findIndex((h) => pattern.test(h))
     return i >= 0 ? i : fallback
   }
   // 데이터 줄: 첫 열이 [시각]인 줄까지
   const data: string[][] = []
-  for (const r of all.slice(6)) {
-    if (r.length === 0 || !r[0].includes('[') || !r[0].includes(']')) break
+  for (const r of all.slice(first)) {
+    if (!atsData(r)) break
     data.push(r)
   }
   // Cycle 열: 'CURRENT TC REPEAT'와 'ITERATION IN JOB' 중 값이 1씩 올라가는 쪽 → 'CYCLE'
@@ -694,11 +705,16 @@ export function parseRfw(text: string): ParsedResult {
   return { startTime: rows.find((r) => r.time !== null)?.time ?? null, preamble: [], headers: RFW_SHOWN, mapping: RFW_MAPPING, timeKind: 'absolute', rows, table, cycleTotal }
 }
 
-/** 내용으로 형식 판별: 첫 줄이 RFW 열 이름이면 RFW, 7번째 줄이 [시각]으로 시작하면 ATS, 모르면 null */
+/**
+ * 내용으로 형식 판별: 첫 줄이 RFW 열 이름이면 RFW, 머리말(Script Name·START TIME) 뒤 첫 열이 [시각]인 줄이 있거나 7번째 줄이 [시각]으로
+ * 시작하면 ATS (머리말 줄 수는 파일마다 조금 다르다), 모르면 null
+ */
 export function detectResultMode(text: string): ResultMode | null {
   const all = parseCsv(text.slice(0, 64 * 1024))
   const head = (all[0] ?? []).map((c) => unq(c.replace(/^﻿/, '')))
   if (RFW_COLUMNS.every((name) => head.includes(name))) return 'rfw'
+  const first = all.slice(0, 20).findIndex((r) => /^\[.+\]$/.test(unq(r[0] ?? '')))
+  if (first >= 3 && all.slice(0, first).some((r) => /script name|start time/i.test(r.join(',')))) return 'ats'
   if (/^\[.+\]$/.test(unq(all[6]?.[0] ?? ''))) return 'ats'
   return null
 }

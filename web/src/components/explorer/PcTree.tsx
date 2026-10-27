@@ -1,24 +1,31 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react'
 import { api, type Agent, isLinuxAgent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type SharedFolder } from '../../api'
 import { ensureUnlocked, pcLockStore, usePcLocks } from '../../pcLocks'
 import { useCan } from '../../perms'
 import { askPin } from '../../pinPrompt'
+import { HubBadges, HubPanel } from '../SideHub'
+import { HUB_ICON, HUB_TABS, type HubTab, useHubReveal, useReportChatShown, useSideHub, useSidebarCovered } from '../sideHubState'
 import { AddShareModal } from './AddShareModal'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { Icon } from './Icon'
 import { addFolder, AGENT_MIME, assignAgent, buildTree, deleteFolder, displayName, type FolderNode, renameFolder, setAlias } from './pcGroups'
 
 interface Props {
+  /**
+   * files = PC Manager (Browser/Remote · 공유 서버·파일 즐겨찾기, PC를 누르면 창 열기/닫기),
+   * results = Result 화면 (PC를 누르면 그 PC의 결과를 고른다). 폴더·별칭·상태·PIN 같은 PC 관리는 같다
+   */
+  variant?: 'files' | 'results'
   agents: Agent[]
   groups: PcGroups
   saveGroups: (groups: PcGroups) => void
-  shares: SharedFolder[]
-  addShare: (name: string, path: string, username?: string, password?: string) => Promise<void>
-  removeShare: (id: string) => void
-  renameShare: (id: string, name: string) => Promise<void>
+  shares?: SharedFolder[]
+  addShare?: (name: string, path: string, username?: string, password?: string) => Promise<void>
+  removeShare?: (id: string) => void
+  renameShare?: (id: string, name: string) => Promise<void>
   /** 목록에서 삭제 (연결 끊긴 PC만). 에이전트가 다시 연결하면 다시 나타난다 */
   removeAgent: (agentId: string) => Promise<void>
-  reorderShares: (ids: string[]) => void
+  reorderShares?: (ids: string[]) => void
   org: Org
   setAgentProject: (agentId: string, projectId: string | null) => Promise<void>
   presence: Record<string, string[]>
@@ -31,24 +38,58 @@ interface Props {
   collapsed: boolean
   onToggleCollapse: () => void
   onOpenAgent: (agentId: string) => void
-  /** Remote 모드에서 그룹으로 쓸 폴더 (클릭으로 선택, 다시 클릭하면 해제) */
-  selectedFolderId: string | null
-  onSelectFolder: (folderId: string | null) => void
+  /** Remote 모드에서 그룹으로 쓸 폴더 (클릭으로 선택, 다시 클릭하면 해제). 없으면 폴더 줄을 누르면 펴고 접는다 */
+  selectedFolderId?: string | null
+  onSelectFolder?: (folderId: string | null) => void
   /** Browser(파일 탐색기) ↔ Remote(화면 미리보기) */
-  mode: 'browser' | 'remote'
-  onModeChange: (mode: 'browser' | 'remote') => void
+  mode?: 'browser' | 'remote'
+  onModeChange?: (mode: 'browser' | 'remote') => void
   /** 공유 서버 옆 탭에 보일 내용 (파일 즐겨찾기) */
   fileFavorites?: ReactNode
   /** PC 목록 아래 PC 정보 패널 */
   infoPanel?: ReactNode
   /** PC 정보 패널이 보여 주는 PC (목록에 표시) */
   infoAgentId?: string | null
+  /** PC 줄 끝에 붙일 것 (Result: 결과 형식·예약·분석 진행·▶ 최신) */
+  renderAgentExtra?: (agent: Agent) => ReactNode
+  /** PC 수 옆에 붙일 것 (Result: 결과 폴더를 정한 PC만) */
+  headExtra?: ReactNode
+  /** PC가 하나도 없을 때 글 */
+  emptyText?: string
 }
 
 type SideTab = 'shares' | 'favorites'
 const SIDE_TAB_KEY = 'pcm.tree.sideTab'
 
-export function PcTree({ agents, groups, saveGroups, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId, onSelectFolder, mode, onModeChange, fileFavorites, infoPanel, infoAgentId }: Props) {
+/** 사이드바 맨 위 탭: PC 목록 · 채팅 · 메모 · 진행상황 (마지막에 본 탭을 기억, PC Manager·Result 화면이 함께 쓴다) */
+type MenuTab = 'pc' | HubTab
+const MENU_TAB_KEY = 'pcm.side.menu'
+// 사이드바 폭 (오른쪽 가장자리를 끌어 조절, 기억): PC 목록·진행상황 / 채팅·메모 (방 목록과 내용이 나란히 보이게 넓게)
+type WidthKind = 'narrow' | 'wide'
+const WIDTH_KEY: Record<WidthKind, string> = { narrow: 'pcm.side.w', wide: 'pcm.side.w.wide' }
+const DEFAULT_WIDTH: Record<WidthKind, number> = { narrow: 260, wide: 460 }
+const MIN_WIDTH = 200
+
+const readMenuTab = (): MenuTab => {
+  try {
+    const saved = localStorage.getItem(MENU_TAB_KEY)
+    return saved === 'chat' || saved === 'notes' || saved === 'transfers' ? saved : 'pc'
+  } catch {
+    return 'pc'
+  }
+}
+const clampWidth = (w: number) => Math.round(Math.max(MIN_WIDTH, Math.min(window.innerWidth * 0.6, w)))
+const readWidth = (kind: WidthKind) => {
+  try {
+    const saved = Number(localStorage.getItem(WIDTH_KEY[kind]))
+    return saved > 0 ? clampWidth(saved) : DEFAULT_WIDTH[kind]
+  } catch {
+    return DEFAULT_WIDTH[kind]
+  }
+}
+
+export function PcTree({ variant = 'files', agents, groups, saveGroups, shares = [], addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, selfUserId, filterProjectId, collapsed, onToggleCollapse, onOpenAgent, selectedFolderId = null, onSelectFolder, mode = 'browser', onModeChange, fileFavorites, infoPanel, infoAgentId, renderAgentExtra, headExtra, emptyText }: Props) {
+  const files = variant === 'files'
   const pcLocks = usePcLocks()
   const { roots, ungrouped } = useMemo(() => buildTree(groups, agents), [groups, agents])
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(groups.folders.map((f) => f.id)))
@@ -81,12 +122,12 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
     const ids = shares.map((s) => s.id).filter((id) => id !== from)
     const index = ids.indexOf(targetId)
     ids.splice(after ? index + 1 : index, 0, from)
-    reorderShares(ids)
+    reorderShares?.(ids)
   }
 
   const renameShareAlias = (share: SharedFolder) => {
     const name = window.prompt(`'${share.path}'의 별칭 (표시 이름)`, share.name)
-    if (name === null || !name.trim() || name.trim() === share.name) return
+    if (name === null || !name.trim() || name.trim() === share.name || !renameShare) return
     renameShare(share.id, name.trim()).catch((err) => window.alert(err instanceof Error ? err.message : String(err)))
   }
 
@@ -163,12 +204,82 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
     }
   }
 
+  // 맨 위 탭: PC 목록 · 채팅 · 메모 · 진행상황 (App이 SideHub를 넘겼을 때)
+  const hub = useSideHub()
+  const [menuTab, setMenuTabState] = useState<MenuTab>(readMenuTab)
+  const tab: MenuTab = hub ? menuTab : 'pc'
+  const chooseTab = (next: MenuTab) => {
+    setMenuTabState(next)
+    try {
+      localStorage.setItem(MENU_TAB_KEY, next)
+    } catch {
+      // 기억만 못 한다
+    }
+  }
+  // 원격조작 창·전체 화면·결과 확인 전체 화면이 사이드바를 가리고 있으면 채팅을 보고 있는 게 아니다 (그때는 PiP가 그 위에 뜬다)
+  const covered = useSidebarCovered()
+  useReportChatShown(hub, 'side', !collapsed && !covered && tab === 'chat')
+  // 알림을 누름·결과 확인을 불러옴: 그 탭으로 펼친다 (분석이 시작·끝난 것은 탭 배지로만 — 보던 PC 목록을 바꾸지 않게)
+  useHubReveal(hub, (r) => {
+    if (r.reason !== 'user' || covered) return
+    chooseTab(r.tab)
+    if (collapsed) onToggleCollapse()
+  })
+  const widthKind: WidthKind = tab === 'chat' || tab === 'notes' ? 'wide' : 'narrow'
+  const [widths, setWidths] = useState<Record<WidthKind, number>>(() => ({ narrow: readWidth('narrow'), wide: readWidth('wide') }))
+  const saveWidth = (kind: WidthKind, w: number | null) => {
+    try {
+      if (w === null) localStorage.removeItem(WIDTH_KEY[kind])
+      else localStorage.setItem(WIDTH_KEY[kind], String(w))
+    } catch {
+      // 기억만 못 한다
+    }
+  }
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const kind = widthKind
+    const startX = e.clientX
+    const startW = widths[kind]
+    let last = startW
+    const onMove = (ev: MouseEvent) => {
+      last = clampWidth(startW + ev.clientX - startX)
+      setWidths((w) => ({ ...w, [kind]: last }))
+    }
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      saveWidth(kind, last)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+  const resetWidth = () => {
+    setWidths((w) => ({ ...w, [widthKind]: DEFAULT_WIDTH[widthKind] }))
+    saveWidth(widthKind, null)
+  }
+
   if (collapsed) {
     return (
       <aside className="panel pc-tree collapsed">
         <button type="button" className="icon tree-expand" title="PC 목록 펼치기" onClick={onToggleCollapse}>
           ▸
         </button>
+        {hub && HUB_TABS.map(([k, label]) => (
+          <button
+            key={k}
+            type="button"
+            className="icon side-menu-icon"
+            title={label}
+            aria-label={label}
+            onClick={() => {
+              chooseTab(k)
+              onToggleCollapse()
+            }}
+          >
+            <span aria-hidden="true">{HUB_ICON[k]}</span>
+            <HubBadges hub={hub} tab={k} />
+          </button>
+        ))}
       </aside>
     )
   }
@@ -209,10 +320,16 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
           e.dataTransfer.effectAllowed = 'copyMove'
         }}
         onClick={() => onOpenAgent(agent.id)}
+        // Result: 키보드로도 PC를 고른다 (전처럼 Tab으로 옮겨 Enter)
+        role={files ? undefined : 'button'}
+        tabIndex={files ? undefined : 0}
+        onKeyDown={files ? undefined : (e) => {
+          if (e.key === 'Enter' && e.target === e.currentTarget) onOpenAgent(agent.id)
+        }}
         onContextMenu={(e) => openAgentMenu(e, agent)}
         onMouseEnter={(e) => setHover({ agentId: agent.id, x: e.currentTarget.getBoundingClientRect().right, y: e.currentTarget.getBoundingClientRect().top })}
         onMouseLeave={() => setHover((h) => (h?.agentId === agent.id ? null : h))}
-        title="클릭하면 창 열기/닫기"
+        title={files ? '클릭하면 창 열기/닫기' : '클릭하면 이 PC의 결과를 봅니다'}
       >
         <span className={`dot ${agent.online ? 'on' : 'off'}`} />
         <span className="ellipsis" translate="no">{displayName(agent, groups)}</span>
@@ -230,6 +347,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         )}
         {remoteBy && <span className="remote-badge-tree" title={`원격조작 중: ${userName(remoteBy)}`}>원격 {userName(remoteBy)}</span>}
         {viewers.length > 0 && <span className="using-badge" title={`사용 중: ${viewers.join(', ')}`}>● {viewers.length}</span>}
+        {renderAgentExtra?.(agent)}
       </li>
     )
   }
@@ -245,7 +363,11 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         <div
           className={`tree-folder${isDrop ? ' drop-active' : ''}${selectedFolderId === node.folder.id ? ' selected' : ''}`}
           style={{ paddingLeft: folderPad(depth) }}
-          onClick={() => onSelectFolder(selectedFolderId === node.folder.id ? null : node.folder.id)}
+          onClick={(e) => {
+            if (onSelectFolder) onSelectFolder(selectedFolderId === node.folder.id ? null : node.folder.id)
+            // 고를 폴더가 없는 화면(Result): 줄을 누르면 펴고 접는다 (화살표는 그 자리에서 이미 펴고 접음)
+            else if (!(e.target as HTMLElement).closest('.tree-caret, .tree-folder-actions, input')) toggleFolder(node.folder.id)
+          }}
           onContextMenu={(e) => {
             e.preventDefault()
             if (manage) setFolderMenu({ x: e.clientX, y: e.clientY, folderId: node.folder.id, name: node.folder.name })
@@ -310,38 +432,62 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
   }
 
   return (
-    <aside className="panel pc-tree">
-      <div className="panel-head">
-        <div className="tree-head-row">
-          <button type="button" className="icon tree-collapse" title="접기" onClick={onToggleCollapse}>
-            ◂
+    <aside className={`panel pc-tree${files ? '' : ' results'}`} style={{ '--side-w': `${widths[widthKind]}px` } as CSSProperties}>
+      <div className="side-menu" role="tablist" aria-label="사이드 메뉴">
+        <button type="button" className="icon tree-collapse" title="접기" onClick={onToggleCollapse}>
+          ◂
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'pc'} className={tab === 'pc' ? 'active' : ''} onClick={() => chooseTab('pc')}>
+          PC
+        </button>
+        {hub && HUB_TABS.map(([k, label]) => (
+          <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => chooseTab(k)}>
+            {label}
+            <HubBadges hub={hub} tab={k} />
           </button>
-          <span className="segmented" role="radiogroup" aria-label="모드">
-            <button type="button" role="radio" aria-checked={mode === 'browser'} className={mode === 'browser' ? 'active' : ''} onClick={() => onModeChange('browser')}>
-              Browser
-            </button>
-            {can('remote') && (
-              <button type="button" role="radio" aria-checked={mode === 'remote'} className={mode === 'remote' ? 'active' : ''} onClick={() => onModeChange('remote')}>
-                Remote
-              </button>
-            )}
-          </span>
+        ))}
+      </div>
+
+      {hub && tab !== 'pc' ? (
+        <div className={`side-hub${tab === 'transfers' ? ' pip-body' : ''}`}>
+          <HubPanel hub={hub} tab={tab} shown={!covered} />
         </div>
+      ) : (
+      <>
+      <div className="panel-head">
+        {files && onModeChange && (
+          <div className="tree-head-row">
+            <span className="segmented" role="radiogroup" aria-label="모드">
+              <button type="button" role="radio" aria-checked={mode === 'browser'} className={mode === 'browser' ? 'active' : ''} onClick={() => onModeChange('browser')}>
+                Browser
+              </button>
+              {can('remote') && (
+                <button type="button" role="radio" aria-checked={mode === 'remote'} className={mode === 'remote' ? 'active' : ''} onClick={() => onModeChange('remote')}>
+                  Remote
+                </button>
+              )}
+            </span>
+          </div>
+        )}
         <div className="tree-head-row">
           <span className="muted small">{onlineCount}/{agents.length}</span>
+          {headExtra}
           <span className="head-actions">
             {manage && (
               <button type="button" className="small-btn" title="폴더 추가" onClick={() => createFolder(null)}>
                 + 폴더
               </button>
             )}
-            <button type="button" className="small-btn" title="공유 폴더 등록" onClick={() => setShowAddShare(true)}>
-              + 서버
-            </button>
+            {files && addShare && (
+              <button type="button" className="small-btn" title="공유 폴더 등록" onClick={() => setShowAddShare(true)}>
+                + 서버
+              </button>
+            )}
           </span>
         </div>
       </div>
 
+      {files && (
       <div className="share-section">
         <div className="share-head">
           <span className="side-tabs" role="tablist" aria-label="공유 서버 / 파일 즐겨찾기">
@@ -411,7 +557,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
                 title="공유 폴더 삭제"
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (window.confirm(`'${s.name}' 공유 폴더를 목록에서 제거할까요? (실제 파일은 지워지지 않습니다)`)) removeShare(s.id)
+                  if (window.confirm(`'${s.name}' 공유 폴더를 목록에서 제거할까요? (실제 파일은 지워지지 않습니다)`)) removeShare?.(s.id)
                 }}
               >
                 ✕
@@ -421,6 +567,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
         </ul>
         )}
       </div>
+      )}
 
       <ul className="tree-root">
         {roots.map((node) => renderFolder(node, 0))}
@@ -439,12 +586,16 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
           <ul className="tree-children">{ungrouped.map((agent) => renderAgent(agent, 1))}</ul>
         </li>
 
-        {agents.length === 0 && <li className="placeholder small">등록된 PC가 없습니다</li>}
+        {agents.length === 0 && <li className="placeholder small">{emptyText ?? '등록된 PC가 없습니다'}</li>}
       </ul>
 
       {infoPanel}
+      </>
+      )}
 
-      {showAddShare && <AddShareModal onConfirm={addShare} onClose={() => setShowAddShare(false)} />}
+      <div className="side-resizer" title="끌어서 폭 조절 · 더블클릭: 기본 폭" onMouseDown={startResize} onDoubleClick={resetWidth} />
+
+      {showAddShare && addShare && <AddShareModal onConfirm={addShare} onClose={() => setShowAddShare(false)} />}
 
       {menu && (
         <ContextMenu
@@ -593,7 +744,7 @@ export function PcTree({ agents, groups, saveGroups, shares, addShare, removeSha
               danger: true,
               onClick: () => {
                 const s = shareMenu.share
-                if (window.confirm(`'${s.name}' 공유 폴더를 목록에서 제거할까요? (실제 파일은 지워지지 않습니다)`)) removeShare(s.id)
+                if (window.confirm(`'${s.name}' 공유 폴더를 목록에서 제거할까요? (실제 파일은 지워지지 않습니다)`)) removeShare?.(s.id)
               },
             },
           ]}

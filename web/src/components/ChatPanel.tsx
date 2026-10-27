@@ -69,6 +69,9 @@ const renderText = (text: string, users: OrgUser[]) => {
 }
 
 /** 채팅: 왼쪽 방 목록(1:1·그룹), 오른쪽 대화. 그룹은 초대(누구나)·강퇴(방장)·나가기 */
+// 방마다 쓰던 글: 사이드바 탭을 바꾸거나 접어(또는 사이드바 ↔ PiP로 옮겨) 패널이 다시 붙어도 남게 패널 밖에 둔다
+const savedDrafts = new Map<string, string>()
+
 export function ChatPanel({ rooms, messages, actions, org, selfUserId, activeRoomId, onActiveRoomChange, visible }: Props) {
   const users = org.users
   const nameOf = (id: string) => users.find((u) => u.id === id)?.name ?? '(삭제된 사용자)'
@@ -109,8 +112,17 @@ export function ChatPanel({ rooms, messages, actions, org, selfUserId, activeRoo
     if (el) el.scrollTop = el.scrollHeight
   }, [list?.length, room?.id])
 
-  // ── 입력 ──
-  const [draft, setDraft] = useState('')
+  // ── 입력 ── (쓰던 글은 방마다)
+  const [drafts, setDrafts] = useState(() => new Map(savedDrafts))
+  const draft = (room && drafts.get(room.id)) ?? ''
+  const setDraftOf = (roomId: string, text: string) => {
+    if (text) savedDrafts.set(roomId, text)
+    else savedDrafts.delete(roomId)
+    setDrafts(new Map(savedDrafts))
+  }
+  const setDraft = (text: string) => {
+    if (room) setDraftOf(room.id, text)
+  }
   const [caret, setCaret] = useState(0)
   const [pick, setPick] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -132,10 +144,11 @@ export function ChatPanel({ rooms, messages, actions, org, selfUserId, activeRoo
     const text = draft.trim()
     if (!text || !room) return
     if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
-    setDraft('')
-    actions.send(room.id, text, findMentions(text, roomUsers)).catch((err) => {
+    const roomId = room.id
+    setDraftOf(roomId, '')
+    actions.send(roomId, text, findMentions(text, roomUsers)).catch((err) => {
       setError(toMessage(err))
-      setDraft(text)
+      setDraftOf(roomId, text)
     })
   }
 

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api, type Agent, type InstallInfo, type Org, type OrgUser, type PcGroups } from '../api'
-import { FEATURES } from '../perms'
+import { FEATURES, useCan } from '../perms'
 import { useLang } from '../i18n/useLang'
 import { AddAgentDialog } from './AddAgentDialog'
 import { EditFolderSection } from './EditFolderSection'
 import { copyText, displayName } from './explorer/pcGroups'
 import { projectAgents } from './remote/remotePcs'
+import { AnalysisDefaultsForm } from './results/AnalysisDefaultsForm'
+import { formKey, useProjectParams } from './results/analysisDefaults'
 
 interface Props {
   org: Org
@@ -33,6 +35,7 @@ const formatLogin = (iso?: string | null) => {
 /** Setting 페이지: (관리자) 인원 권한 · 프로젝트 구성 · 에이전트 서버 주소 · 관리자 비밀번호, (모두) PC 추가 · HTTPS 인증서 · 편집 폴더 */
 export function SettingsPage({ org, agents, pcGroups, selfAgentId, token, projectId, isAdmin, noPerms }: Props) {
   const [addingPc, setAddingPc] = useState(false)
+  const can = useCan()
 
   return (
     <div className="settings-page">
@@ -50,6 +53,7 @@ export function SettingsPage({ org, agents, pcGroups, selfAgentId, token, projec
           <AdminPasswordSection token={token} />
         </>
       )}
+      {(isAdmin || can('results')) && <AnalysisDefaultsSection org={org} projectId={projectId} />}
       {/* PC 추가 */}
       <section className="panel settings-section">
         <div className="settings-section-head">
@@ -71,6 +75,28 @@ export function SettingsPage({ org, agents, pcGroups, selfAgentId, token, projec
         })()}
       />
     </div>
+  )
+}
+
+/** 영상 분석 기준값 (이 프로젝트 공통): 결과 확인 영상 분석의 판정 기준을 장치 사양에 맞게. 길어서 접어 둔다 */
+function AnalysisDefaultsSection({ org, projectId }: { org: Org; projectId: string }) {
+  const [open, setOpen] = useState(false)
+  const project = useProjectParams(projectId)
+  return (
+    <section className="panel settings-section">
+      <div className="settings-section-head">
+        <h2>영상 분석 기준값</h2>
+        <button type="button" onClick={() => setOpen(!open)}>{open ? '접기' : '열기'}</button>
+      </div>
+      <p className="muted small">결과 확인 영상 분석의 깜박임·검은 화면·정지·화면 전환·Cycle 비교 판정 기준 (이 프로젝트 모든 사용자 공통)</p>
+      {open && (
+        <AnalysisDefaultsForm
+          key={formKey(project)}
+          project={project}
+          userName={(id) => (id ? org.users.find((u) => u.id === id)?.name ?? null : null)}
+        />
+      )}
+    </section>
   )
 }
 

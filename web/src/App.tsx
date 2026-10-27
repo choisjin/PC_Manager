@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api, type LoginResult, type OrgUser, type Project, setCurrentUser } from './api'
+import { api, type LoginResult, type OrgUser, type Project, setCurrentProject, setCurrentUser } from './api'
 import { FEATURES, type Feature, PermsContext } from './perms'
 import { clientPlatform, findSelfAgentId } from './selfAgent'
 import { FileExplorer } from './components/FileExplorer'
@@ -10,6 +10,9 @@ import { SettingsPage } from './components/SettingsPage'
 import { StatePage } from './components/StatePage'
 import { TransfersPage } from './components/TransfersPage'
 import { TransfersPip } from './components/TransfersPip'
+import { SideHubContext, useSideHubState } from './components/sideHubState'
+import { NotesPanel } from './components/NotesPanel'
+import { NOTES_TAB } from './components/notesTab'
 import { ResultHost } from './components/results/ResultViewer'
 import { ResultsPage } from './components/results/ResultsPage'
 import { RESULT_TAB_ID } from './components/results/resultTab'
@@ -248,8 +251,11 @@ export default function App() {
   // 전송 기록/PiP 공용 데이터 (한 번만 구독)
   const { transfers, artifactByTransfer } = useTransfers(subscribeTransfers)
 
-  // 전송 요청 헤더에 현재 사용자 id를 실어 "누가 실행했는지" 기록
+  // 전송 요청 헤더에 현재 사용자 id를 실어 "누가 실행했는지" 기록 (프로젝트 id는 프로젝트별 설정 — 영상 분석 기준값 — 에)
   // 공유 폴더는 사용자별이라 사용자가 바뀌면 그 사용자의 목록으로 다시 불러온다
+  // 로그인한 프로젝트: 프로젝트별 설정(영상 분석 기준값)을 읽는 화면이 처음 그릴 때부터 알게 그리는 중에 정한다 (같은 값이면 그대로)
+  const projectId = auth?.project.id ?? null
+  setCurrentProject(projectId)
   useEffect(() => {
     setCurrentUser(userId)
     reloadShares()
@@ -277,6 +283,13 @@ export default function App() {
   }, [])
   const userName = (id: string | null | undefined) => (id ? org.users.find((u) => u.id === id)?.name ?? '(삭제된 사용자)' : null)
 
+  // 채팅·메모·진행상황: PC Manager·Result는 왼쪽 사이드바 탭, 다른 화면·결과 확인 탭은 떠 있는 PiP.
+  // 새 메시지·작업 끝남 알림은 여기 한 곳에서 (로그인 전·원격조작·메모 탭은 알리지 않는다 — 로그인 전에는 내 작업을 몰라 모든 사람의 작업이 온다)
+  const hub = useSideHubState(
+    { transfers, machineName, userName, org, selfUserId: userId, chatRooms, chatMessages, chatActions, subscribeChat, subscribeNotes },
+    !!auth && !REMOTE_TAB_AGENT && NOTES_TAB === null,
+  )
+
   const outdatedAgentCount = updateStatus
     ? agents.filter((a) => a.online && cmpVersion(a.agentVersion, updateStatus.currentVersion) < 0).length
     : 0
@@ -284,7 +297,7 @@ export default function App() {
 
   // 이 PC에 에이전트가 없으면 설치부터 (서버 PC에서 연 경우·Windows/Linux가 아닌 PC·결과/원격조작 탭·?noagent는 제외)
   const platform = clientPlatform()
-  const needsAgent = !import.meta.env.DEV && !skipAgentGate && !RESULT_TAB_ID && !REMOTE_TAB_AGENT
+  const needsAgent = !import.meta.env.DEV && !skipAgentGate && !RESULT_TAB_ID && !REMOTE_TAB_AGENT && NOTES_TAB === null
     && platform !== null && clientIp !== null && findSelfAgentId(agents, selfPc, clientIp, serverHostName) === null
   const showAgentGate = agentsLoaded && needsAgent
   if (showAgentGate !== agentGateShown) {
@@ -328,17 +341,23 @@ export default function App() {
           <PinDialog />
           <ResultHost machineName={machineName} />
           {/* 대시보드와 같은 PiP: 영상 분석·이미지 찾기 진행·완료 알림도 여기에 */}
-          <TransfersPip
-            transfers={transfers}
-            machineName={machineName}
-            userName={userName}
-            org={org}
+          <TransfersPip hub={hub} />
+        </div>
+      </PermsContext.Provider>
+    )
+  }
+
+  // 메모 탭 (?notes=…): 대시보드 대신 메모만 크게 (메모 목록 + 고른 메모)
+  if (NOTES_TAB !== null) {
+    return (
+      <PermsContext.Provider value={perms}>
+        <div className="app notes-page">
+          <NotesPanel
             selfUserId={auth.user.id}
-            chatRooms={chatRooms}
-            chatMessages={chatMessages}
-            chatActions={chatActions}
-            subscribeChat={subscribeChat}
+            nameOf={(id) => userName(id) ?? '(알 수 없음)'}
             subscribeNotes={subscribeNotes}
+            initialNoteId={NOTES_TAB || null}
+            page
           />
         </div>
       </PermsContext.Provider>
@@ -376,6 +395,7 @@ export default function App() {
 
   return (
     <PermsContext.Provider value={perms}>
+    <SideHubContext.Provider value={hub}>
     <div className="app">
       <header className="topbar">
         <div className="brand">
@@ -498,6 +518,14 @@ export default function App() {
           <ResultsPage
             agents={agents}
             pcGroups={pcGroups}
+            saveGroups={saveGroups}
+            removeAgent={removeAgent}
+            setAgentProject={orgActions.setAgentProject}
+            presence={presence}
+            pcStatuses={pcStatuses}
+            setPcStatus={setPcStatus}
+            remoteUsage={remoteUsage}
+            setFolderProject={orgActions.setFolderProject}
             org={org}
             filterProjectId={auth.project.id}
             selfUserId={auth.user.id}
@@ -529,20 +557,10 @@ export default function App() {
       {/* 결과 확인: 경로 지정 창 · 불러온 결과의 전체 화면 · 준비 완료 알림 */}
       <ResultHost machineName={machineName} />
 
-      {/* 어디서든 보이는 전송 진행률·알림 위젯 */}
-      <TransfersPip
-        transfers={transfers}
-        machineName={machineName}
-        userName={userName}
-        org={org}
-        selfUserId={auth.user.id}
-        chatRooms={chatRooms}
-        chatMessages={chatMessages}
-        chatActions={chatActions}
-        subscribeChat={subscribeChat}
-        subscribeNotes={subscribeNotes}
-      />
+      {/* 채팅·메모·진행상황 PiP: 사이드바가 있는 화면(PC Manager·Result)은 사이드바 탭으로 보고, 원격조작 창처럼 사이드바를 가릴 때만 띄운다 */}
+      <TransfersPip hub={hub} overlayOnly={visiblePage === 'files' || visiblePage === 'results'} />
     </div>
+    </SideHubContext.Provider>
     </PermsContext.Provider>
   )
 }

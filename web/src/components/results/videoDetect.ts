@@ -22,10 +22,14 @@ const OFF_EDGE_REL = 0.5
 const LIT_EDGE_S = 1
 /** 제외 구간으로 잘려 남은 검은 화면 조각의 가장 짧은 길이 (초): 더 짧으면 버린다 */
 export const MIN_BLACK_S = 0.3
-// 급격히 꺼짐: 꺼진 첫 프레임보다 (켜져 있던 동안 — 최대 DROP_WIN_S초 — 가장 밝은 값의 25%, 최소 12단계) 넘게 밝았던 마지막 프레임에서
-// DROP_S초 안에 꺼짐. 그 전에 서서히 어두워지던 것은 세지 않는다 (빛 번짐이 줄며 어두워지다 끊기듯 꺼진 것도 급격)
+// 급격히 꺼짐: 떨어지는 구간(꺼지기 직전 RAMP_WIN_S초 ~ 직후에서 가장 크게 떨어진 프레임을 가운데로, 그 RAMP_REL배 넘게 떨어진 프레임이
+// 이어진 곳 — 한 프레임 멈칫한 것은 이어 봄)이 RAMP_S초 안이고 그동안 (켜져 있던 동안 — 최대 DROP_WIN_S초 — 가장 밝은 값의 25%, 최소 12단계)
+// 넘게 떨어짐. 그 전에 서서히 어두워지던 것은 세지 않는다 (빛 번짐이 줄며 어두워지다 끊기듯 꺼진 것도 급격). 고르게 조금씩 어두워진 화면
+// 페이드는 0.2초 남짓이어도 서서히 (시험 영상: 실제 깜박임·꺼짐 18건 모두 0.1초 안, 1:34.6 페이드는 8프레임 0.27초)
 const DROP_WIN_S = 2
-const DROP_S = 0.3
+const RAMP_WIN_S = 0.3
+const RAMP_S = 0.15
+const RAMP_REL = 0.25
 const DROP_REL = 0.25
 const DROP_ABS = 12
 const DROP_TOL = 1               // 되짚을 때 이만큼 어두워진 것은 잡음으로 (밝기 단계)
@@ -34,6 +38,33 @@ const DROP_TOL = 1               // 되짚을 때 이만큼 어두워진 것은 
 const BLINK_MAX_S = 2
 // 첫 깜박임부터 이 간격 안에 이어지는 깜박임은 한 묶음
 const BLINK_GROUP_S = 3
+// 화면 전환: 프레임 차이가 평소 변화의 이 배(최소 이 값) 넘게 튐
+const TRANSITION_X = 8
+const TRANSITION_MIN = 6
+
+/**
+ * 판정 기준값 (프로젝트별로 바꾼다 — analysisDefaults.DetectParams와 같은 이름). 비율은 %.
+ * 위 상수가 기본값이고, 이름이 없는 상수(잡음·여유 등)는 바꾸지 않는다
+ */
+export interface DetectorParams {
+  blinkMaxS: number
+  rampS: number
+  dropPct: number
+  dropAbs: number
+  offAbs: number
+  offOnPct: number
+  edgeOffPct: number
+  satMax: number
+  blinkGroupS: number
+  transitionX: number
+  transitionMin: number
+  transitionMergeS: number
+}
+export const DETECTOR_DEFAULTS: DetectorParams = {
+  blinkMaxS: BLINK_MAX_S, rampS: RAMP_S, dropPct: DROP_REL * 100, dropAbs: DROP_ABS, offAbs: OFF_FLOOR_ABS, offOnPct: OFF_FLOOR_ON * 100,
+  edgeOffPct: OFF_EDGE_REL * 100, satMax: BLANK_SAT_MAX, blinkGroupS: BLINK_GROUP_S, transitionX: TRANSITION_X, transitionMin: TRANSITION_MIN,
+  transitionMergeS: TRANSITION_MERGE_S,
+}
 
 export type SegmentKind = 'black_screen' | 'flicker' | 'static'
 
@@ -72,7 +103,7 @@ export interface Blink {
 /** 검은 화면 근거: 기준 밝기와의 차이나 밝기 · 윤곽이 가장 많은 칸(또는 평균 윤곽)의 중앙값과 꺼짐 기준 */
 export interface BlackInfo {
   type: 'black_screen'
-  /** 급격히 꺼짐 (어두워지기 시작해 DROP_S초 안에 꺼진 수준) */
+  /** 급격히 꺼짐 (떨어지는 구간이 RAMP_S초 안) */
   sudden?: boolean
   /** 기준 밝기와의 차이(중앙값) · 꺼짐 기준 · 기준 밝기 · 켜진 평소 차이 */
   contrast?: { value: number; off: number; floor: number; on: number }
@@ -190,6 +221,8 @@ function flickerInfo(group: Blink[]): FlickerInfo {
  */
 export class Detector {
   readonly staticS: number
+  /** 기준값 (안 준 것은 기본값) */
+  readonly p: DetectorParams
   /** 판단이 끝난 프레임 수 */
   pos = 0
   dt: number | null = null
@@ -206,15 +239,16 @@ export class Detector {
   private off: OffRun | null = null
   // [시작, 끝, 그중 꺼진 프레임 수] 변화 없는 프레임
   private quiet: [number, number, number] | null = null
-  // 아직 안 닫힌 깜박임 묶음 (첫 깜박임부터 BLINK_GROUP_S초 안에 시작한 것들)
+  // 아직 안 닫힌 깜박임 묶음 (첫 깜박임부터 묶음 시간(p.blinkGroupS) 안에 시작한 것들)
   private group: Blink[] = []
   // 깜박임(어두워지기 시작 ~ 마지막 꺼진 프레임): 그 안과 다시 켜진 프레임의 큰 차이는 전환이 아니다
   private flick: [number, number][] = []
   // 이번 조각의 기준: 칸 윤곽 · 기준 밝기 · 완전히 꺼진 칸 윤곽 · 꺼진 수준(1차 밝기) · 2차 윤곽의 완전히 꺼진 기준 (칸 윤곽 또는 평균 윤곽)
   private thr: { g: Float32Array | null; floor: number | null; gOff: number; cOff: number; full: number } = { g: null, floor: null, gOff: 0, cOff: 0, full: 0 }
 
-  constructor(staticS: number) {
+  constructor(staticS: number, params?: Partial<DetectorParams>) {
     this.staticS = staticS
+    this.p = { ...DETECTOR_DEFAULTS, ...params }
   }
 
   private seg(f: FrameArrays, kind: SegmentKind, a: number, b: number, info: DetectedSegment['info']) {
@@ -242,8 +276,8 @@ export class Detector {
     const g0 = this.group.length ? this.group[0].t0 : null
     const keep: number[] = []
     for (const x of this.trPending) {
-      // 아직 판단 못 함: 최근 4초 안(꺼진 구간이 깜박임이 될 수 있는 동안)이거나, 열려 있는 깜박임 묶음에 들 수 있음
-      if (!final && (now - x < 4 || (g0 !== null && x >= g0 - m))) {
+      // 아직 판단 못 함: 최근 (깜박임 최대 길이 + 2)초 안(꺼진 구간이 깜박임이 될 수 있는 동안)이거나, 열려 있는 깜박임 묶음에 들 수 있음
+      if (!final && (now - x < this.p.blinkMaxS + 2 || (g0 !== null && x >= g0 - m))) {
         keep.push(x)
         continue
       }
@@ -257,8 +291,37 @@ export class Detector {
   }
 
   /**
+   * 떨어지는 구간 [from, to] (떨어지기 전 마지막 프레임 ~ 다 떨어진 프레임): 꺼진 첫 프레임 a 앞 RAMP_WIN_S초 ~ 뒤 2프레임에서 가장 크게
+   * 떨어진 프레임을 가운데로, 그 RAMP_REL배(최소 DROP_TOL) 넘게 떨어진 프레임이 이어진 곳 (한 프레임 멈칫한 것은 이어 봄 — 반쯤 꺼졌다 꺼짐).
+   * 앞으로는 켜져 있던 동안의 시작(k)까지, 뒤로는 a 뒤 RAMP_WIN_S초까지. 떨어진 곳이 없으면 null
+   */
+  private ramp(f: FrameArrays, k: number, a: number): { from: number; to: number } | null {
+    const { t, y } = f
+    const fall = (j: number) => y[j - 1] - y[j]
+    let top = -1
+    const hi = Math.min(f.n - 1, a + 2)
+    for (let j = Math.max(k + 1, bisectLeft(t, t[a] - RAMP_WIN_S, a)); j <= hi; j++) if (top < 0 || fall(j) > fall(top)) top = j
+    if (top < 0 || fall(top) < DROP_TOL) return null
+    const thr = Math.max(RAMP_REL * fall(top), DROP_TOL)
+    let first = top
+    for (;;) {
+      if (first - 1 > k && fall(first - 1) >= thr) first--
+      else if (first - 2 > k && fall(first - 2) >= thr) first -= 2
+      else break
+    }
+    let last = top
+    const end = Math.min(f.n - 1, bisectLeft(t, t[a] + RAMP_WIN_S, f.n))
+    for (;;) {
+      if (last + 1 <= end && fall(last + 1) >= thr) last++
+      else if (last + 2 <= end && fall(last + 2) >= thr) last += 2
+      else break
+    }
+    return { from: first - 1, to: last }
+  }
+
+  /**
    * 꺼진 수준에 든 첫 프레임 a의 앞: 켜져 있던 동안(최대 DROP_WIN_S초)을 되짚어 가장 밝은 값(base)을 찾고 급격히 꺼졌는지 본다.
-   * 급격 = 꺼진 첫 프레임보다 (base의 25%, 최소 12) 넘게 밝았던 마지막 프레임에서 DROP_S초 안에 꺼짐 — 그 다음 프레임부터 어두워지기 시작(i0).
+   * 급격 = 떨어지는 구간(ramp)이 RAMP_S초 안이고 그동안 (base의 25%, 최소 12) 넘게 떨어짐 — 떨어지기 시작한 프레임이 i0.
    * 서서히면 base에서 그만큼 어두워지기 시작한 프레임이 i0. 앞에 프레임이 없으면(영상 첫머리부터 꺼져 있음) null
    */
   private onset(f: FrameArrays, a: number): Onset | null {
@@ -275,25 +338,24 @@ export class Detector {
     }
     let base = y[k]
     for (let j = k + 1; j < a; j++) if (y[j] > base) base = y[j]
-    const need = Math.max(DROP_REL * base, DROP_ABS)
-    // 마지막으로 떨어지기 시작한 곳: 꺼진 첫 프레임보다 need 넘게 밝았던 마지막 프레임 (그 전에 서서히 어두워지던 것은 세지 않는다)
-    let s = a - 1
-    while (s >= k && y[s] - y[a] < need) s--
-    if (s >= k && t[a] - t[s] <= DROP_S) return { k, base, i0: s + 1, sudden: true }
+    const need = Math.max((this.p.dropPct / 100) * base, this.p.dropAbs)
+    // 떨어지는 구간만 본다 (그 전에 서서히 어두워지던 것은 세지 않는다). 0.001초는 프레임 시각 반올림 여유
+    const r = this.ramp(f, k, a)
+    if (r && y[r.from] - y[r.to] >= need && t[r.to] - t[r.from] <= this.p.rampS + 0.001) return { k, base, i0: r.from + 1, sudden: true }
     // 서서히: 가장 밝은 값에서 need 넘게 어두워지기 시작한 프레임
     let q = a - 1
     while (q >= k && base - y[q] >= need) q--
     return { k, base, i0: q + 1, sudden: false }
   }
 
-  /** 2차 윤곽 기준: 꺼지기 전(어두워지기 전 최대 LIT_EDGE_S초, 켜져 있던 동안) 윤곽의 OFF_EDGE_REL배 — 완전히 꺼진 기준보다 작으면 그것 */
+  /** 2차 윤곽 기준: 꺼지기 전(어두워지기 전 최대 LIT_EDGE_S초, 켜져 있던 동안) 윤곽의 p.edgeOffPct% — 완전히 꺼진 기준보다 작으면 그것 */
   private edgeRef(f: FrameArrays, on: Onset | null, edges: ArrayLike<number>): { off: number; lit: number | null } {
     const full = this.thr.full
     if (!on) return { off: full, lit: null }
     const from = Math.max(on.k, bisectLeft(f.t, f.t[on.i0] - LIT_EDGE_S, on.i0))
     if (from >= on.i0) return { off: full, lit: null }
     const lit = median(sampled(edges, from, on.i0, 1))
-    return { off: Math.max(full, OFF_EDGE_REL * lit), lit }
+    return { off: Math.max(full, (this.p.edgeOffPct / 100) * lit), lit }
   }
 
   /** 검은 화면 start ~ b: 근거는 꺼진 구간(a ~ b)의 기준 밝기와의 차이(또는 밝기)·윤곽이 가장 많은 칸(또는 평균 윤곽)의 중앙값과 기준 */
@@ -315,7 +377,7 @@ export class Detector {
 
   /**
    * 꺼진 구간이 끝났다 (cut: 다시 켜진 게 아니라 영상이 끝남). 길이는 급격히 꺼진 것이면 어두워지기 시작한 프레임부터 잰다:
-   * BLINK_MAX_S 넘으면 검은 화면 (급격·서서히 모두), 안이면 급격히 꺼졌다 다시 켜진 것만 깜박임 (서서히 꺼졌다 켜짐·끝에서 끊김은 판정하지 않음)
+   * 깜박임 최대 길이(p.blinkMaxS) 넘으면 검은 화면 (급격·서서히 모두), 안이면 급격히 꺼졌다 다시 켜진 것만 깜박임 (서서히 꺼졌다 켜짐·끝에서 끊김은 판정하지 않음)
    */
   private closeOff(f: FrameArrays, level: Float32Array, edges: ArrayLike<number>, cut: boolean) {
     const run = this.off!
@@ -324,7 +386,7 @@ export class Detector {
     const dt = this.dt || 0.1
     const start = on?.sudden ? on.i0 : a
     const dur = f.t[b] - f.t[start] + dt
-    if (dur > BLINK_MAX_S) {
+    if (dur > this.p.blinkMaxS) {
       this.black(f, level, edges, start, run)
       return
     }
@@ -332,7 +394,7 @@ export class Detector {
     let low = f.y[a]
     for (let m = a + 1; m <= b; m++) low = Math.min(low, f.y[m])
     const bl: Blink = { i0: start, i1: b, depth: pyRound(((on.base - low) / Math.max(on.base, 1)) * 100), dur: pyRound(dur, 2), t0: f.t[start] }
-    if (this.group.length && bl.t0 - this.group[0].t0 > BLINK_GROUP_S) this.closeGroup(f)
+    if (this.group.length && bl.t0 - this.group[0].t0 > this.p.blinkGroupS) this.closeGroup(f)
     this.group.push(bl)
     this.flick.push([start, b])
     // 꺼지는 순간의 큰 차이(묶음이 닫힐 때 빠질 전환 후보)에 뒤의 전환이 합쳐져 사라지지 않게
@@ -385,15 +447,15 @@ export class Detector {
     const blankY = 0.5 * py
     const blankE = 0.4 * Math.max(pe, 0.05)
     const gOff = Math.max(OFF_GRID_ABS, OFF_GRID_REL * pg)
-    const cOff = Math.max(OFF_FLOOR_ABS, OFF_FLOOR_REL * (floor ?? 0), OFF_FLOOR_ON * py)
+    const cOff = Math.max(this.p.offAbs, OFF_FLOOR_REL * (floor ?? 0), (this.p.offOnPct / 100) * py)
     // 2차 윤곽에 쓰는 값: 윤곽이 가장 많은 칸 (옛 에이전트면 평균 윤곽)과 그 완전히 꺼진 기준
     const edges = g ?? e
     this.thr = { g, floor, gOff, cOff, full: g ? gOff : blankE }
     const quiet = Math.max(0.3, 2 * nd)
-    const big = Math.max(6, 8 * nd)
+    const big = Math.max(this.p.transitionMin, this.p.transitionX * nd)
     for (let i = this.pos; i < upto; i++) {
       // 1차 밝기: 밝기가 꺼진 수준이고 색이 없음 (어두워도 색이 뚜렷하면 켜진 화면)
-      const dim = (floor !== null ? level[i] <= cOff : y[i] < blankY) && (!sat || i >= sat.length || sat[i] <= BLANK_SAT_MAX)
+      const dim = (floor !== null ? level[i] <= cOff : y[i] < blankY) && (!sat || i >= sat.length || sat[i] <= this.p.satMax)
       // 2차 윤곽: 이어지는 꺼진 구간은 그 기준으로, 새로 꺼지면 꺼지기 전 윤곽과 견줘서
       // (밝기만 꺼진 수준인 어두운 화면은 윤곽이 남아 켜진 화면, 아이콘·글자가 남아도 윤곽이 크게 줄었으면 꺼짐)
       let isOff = false
@@ -423,7 +485,7 @@ export class Detector {
       const m = this.margin()
       if (d[i] > big && !this.flick.some(([f0, f1]) => t[f0] - m <= t[i] && t[i] <= t[f1] + (this.dt || 0.1) + m)) {
         // 직전 "크게 바뀐 프레임"에서 0.5초 안이면 같은 전환의 이어지는 프레임 → 새로 세지 않음 (시작 시각만 남김)
-        if (this.trLast === null || t[i] - this.trLast > TRANSITION_MERGE_S) this.trPending.push(pyRound(t[i], 2))
+        if (this.trLast === null || t[i] - this.trLast > this.p.transitionMergeS) this.trPending.push(pyRound(t[i], 2))
         this.trLast = t[i]
       }
     }
@@ -432,8 +494,8 @@ export class Detector {
       if (this.off) this.closeOff(f, level, edges, true)
       if (this.quiet) this.closeQuiet(f)
     }
-    // 깜박임 묶음은 첫 깜박임부터 BLINK_GROUP_S초 안에 시작한 깜박임이 다 끝날 수 있을 때(+BLINK_MAX_S) 닫는다
-    if (this.group.length && (final || t[upto - 1] - this.group[0].t0 > BLINK_GROUP_S + BLINK_MAX_S)) this.closeGroup(f)
+    // 깜박임 묶음은 첫 깜박임부터 묶음 시간 안에 시작한 깜박임이 다 끝날 수 있을 때(+깜박임 최대 길이) 닫는다
+    if (this.group.length && (final || t[upto - 1] - this.group[0].t0 > this.p.blinkGroupS + this.p.blinkMaxS)) this.closeGroup(f)
     this.flushTransitions(t[upto - 1], final)
     // 지난 깜박임 범위는 버린다 (열린 꺼진 구간과 겹칠 수 있는 것만 남김)
     const keep = this.off ? this.off.a : upto

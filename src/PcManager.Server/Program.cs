@@ -102,6 +102,7 @@ builder.Services.AddSingleton<PcLockStore>();
 builder.Services.AddHostedService<NoteImageJanitor>();
 builder.Services.AddSingleton<ResultSetStore>();
 builder.Services.AddSingleton<ResultProfileStore>();
+builder.Services.AddSingleton<AnalysisDefaultsStore>();
 builder.Services.AddSingleton<ResultJobStore>();
 builder.Services.AddHostedService<ResultJobPoller>();
 builder.Services.AddSingleton<ResultScheduleStore>();
@@ -222,6 +223,7 @@ app.MapLauncherApi();
 app.MapResultSetApi();
 app.MapPcInfoApi();
 app.MapResultProfileApi();
+app.MapAnalysisDefaultsApi();
 app.MapResultJobApi();
 app.MapAgentServerApi();
 

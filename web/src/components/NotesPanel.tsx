@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type Note } from '../api'
 import type { NoteEvent } from '../useDashboard'
+import { openNotesTab, updateNotesTab } from './notesTab'
 
 interface Props {
   selfUserId: string | null
   nameOf: (userId: string) => string
   subscribeNotes: (listener: (event: NoteEvent) => void) => () => void
+  /** 메모 탭: 처음 열 메모 */
+  initialNoteId?: string | null
+  /** 메모 탭(새 브라우저 탭에 크게): 고른 메모를 주소·탭 제목에 적고, 새 탭으로 열기는 뺀다 */
+  page?: boolean
 }
 
 type Scope = Note['scope']
@@ -96,8 +101,11 @@ function insertAtCaret(editor: HTMLElement, node: Node) {
   selection?.addRange(range)
 }
 
-/** PiP '메모' 탭: 왼쪽 목록(공유·개인), 오른쪽 내용. 고치면 잠시 뒤 자동 저장 */
-export function NotesPanel({ selfUserId, nameOf, subscribeNotes }: Props) {
+// 사이드바·PiP에서 마지막으로 열어 둔 메모: 사이드바 탭을 바꾸거나 접어 패널이 다시 붙어도 그 메모를 다시 연다
+let lastOpenNote: string | null = null
+
+/** 사이드바·PiP '메모' 탭과 메모 탭: 왼쪽 목록(공유·개인), 오른쪽 내용. 고치면 잠시 뒤 자동 저장 */
+export function NotesPanel({ selfUserId, nameOf, subscribeNotes, initialNoteId = null, page = false }: Props) {
   const [notes, setNotes] = useState<Note[]>([])
   const [scope, setScope] = useState<Scope>(() => {
     try {
@@ -131,9 +139,18 @@ export function NotesPanel({ selfUserId, nameOf, subscribeNotes }: Props) {
   const active = notes.find((n) => n.id === activeId) ?? null
   const visibleNotes = notes.filter((n) => n.scope === scope)
 
+  // 처음 열 메모: 메모 탭은 주소의 메모, 사이드바·PiP는 마지막으로 열어 둔 메모(못 찾아도 알리지 않음). 서버에서 목록을 받은 뒤 한 번
+  // (목록이 처음 바뀔 때 보면, 그 전에 변경 알림으로 메모 하나만 들어온 목록에서 찾다 못 찾는다)
+  const pendingRef = useRef<{ id: string; quiet: boolean } | null>(
+    initialNoteId ? { id: initialNoteId, quiet: false } : !page && lastOpenNote ? { id: lastOpenNote, quiet: true } : null,
+  )
+  const openPendingRef = useRef<(list: Note[]) => void>(() => {})
   const load = useCallback(() => {
     if (!selfUserId) return
-    api.notes(selfUserId).then(setNotes).catch((err) => setError(toMessage(err)))
+    api.notes(selfUserId).then((list) => {
+      setNotes(list)
+      openPendingRef.current(list)
+    }).catch((err) => setError(toMessage(err)))
   }, [selfUserId])
   useEffect(() => {
     setNotes([])
@@ -248,6 +265,47 @@ export function NotesPanel({ selfUserId, nameOf, subscribeNotes }: Props) {
     }
   }
 
+  openPendingRef.current = (list: Note[]) => {
+    const p = pendingRef.current
+    if (!p) return
+    pendingRef.current = null
+    const note = list.find((n) => n.id === p.id)
+    if (!note) {
+      if (!p.quiet) setError('열 메모를 찾지 못했습니다 (지워졌거나 볼 수 없는 메모입니다).')
+      if (page) updateNotesTab(null)
+      return
+    }
+    if (note.scope !== scope) changeScope(note.scope)
+    setActiveId(note.id)
+    showNote(note)
+  }
+  // 메모 탭: 고른 메모를 주소(F5로 다시 열면 그 메모)·탭 제목에. 사이드바·PiP: 마지막으로 연 메모를 기억 (처음 열 메모를 열기 전에는 그대로)
+  useEffect(() => {
+    if (pendingRef.current) return
+    if (page) updateNotesTab(activeId)
+    else lastOpenNote = activeId
+  }, [page, activeId])
+  // 탭을 닫거나 새로 고칠 때 저장 대기 중이면: 바로 저장을 시작하고 떠날지 묻게 한다 (저장 전에 닫히면 마지막에 고친 내용이 사라진다)
+  useEffect(() => {
+    const onLeave = (e: BeforeUnloadEvent) => {
+      if (!dirtyRef.current && !savingRef.current) return
+      void save()
+      e.preventDefault()
+    }
+    window.addEventListener('beforeunload', onLeave)
+    return () => window.removeEventListener('beforeunload', onLeave)
+  }, [save])
+  const activeTitle = active ? active.title || '빈 메모' : null
+  useEffect(() => {
+    if (page) document.title = `📝 ${activeTitle ?? 'RemoteKit'}`
+  }, [page, activeTitle])
+
+  /** 새 브라우저 탭에서 크게 (고치던 내용은 먼저 저장 — 새 탭은 서버에서 읽는다) */
+  const openInTab = (noteId: string | null) => {
+    void save()
+    if (!openNotesTab(noteId)) setError('새 탭을 열지 못했습니다 (팝업 차단). 이 사이트의 팝업을 허용해 주세요.')
+  }
+
   const create = async () => {
     setError(null)
     try {
@@ -359,7 +417,7 @@ export function NotesPanel({ selfUserId, nameOf, subscribeNotes }: Props) {
     uploading > 0 ? '이미지 올리는 중…' : saveState === 'saving' ? '저장 중…' : saveState === 'dirty' ? '고치는 중' : saveState === 'error' ? '저장 실패' : active ? `${timeText(active.updatedAt)} · ${nameOf(active.updatedBy)}` : ''
 
   return (
-    <div className="chat-panel notes-panel">
+    <div className={`chat-panel notes-panel${page ? ' notes-page-panel' : ''}`}>
       <aside className="chat-rooms">
         <span className="segmented notes-scope" role="radiogroup" aria-label="메모 종류">
           <button type="button" role="radio" aria-checked={scope === 'shared'} className={scope === 'shared' ? 'active' : ''} onClick={() => changeScope('shared')}>
@@ -395,7 +453,15 @@ export function NotesPanel({ selfUserId, nameOf, subscribeNotes }: Props) {
 
       <section className="chat-main">
         {!active ? (
-          <div className="pip-empty muted small">왼쪽에서 메모를 고르거나 ＋ 새 메모를 만드세요</div>
+          <div className="pip-empty muted small">
+            왼쪽에서 메모를 고르거나 ＋ 새 메모를 만드세요
+            {!page && (
+              <>
+                {' · '}
+                <button type="button" className="link small" onClick={() => openInTab(null)}>새 탭에서 크게 보기</button>
+              </>
+            )}
+          </div>
         ) : (
           <div className="chat-main-head">
             <span className="chat-main-title ellipsis">
@@ -406,6 +472,11 @@ export function NotesPanel({ selfUserId, nameOf, subscribeNotes }: Props) {
             <button type="button" className="chat-head-btn" title="이미지 넣기 (붙여넣기·끌어다 놓기도 됩니다)" onClick={() => fileRef.current?.click()}>
               🖼
             </button>
+            {!page && (
+              <button type="button" className="chat-head-btn" title="새 탭으로 열기" aria-label="새 탭으로 열기" onClick={() => openInTab(active.id)}>
+                ↗
+              </button>
+            )}
             <button type="button" className="chat-head-btn danger" title="삭제" onClick={() => void remove()}>
               삭제
             </button>

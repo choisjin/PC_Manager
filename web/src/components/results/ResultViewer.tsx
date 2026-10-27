@@ -29,6 +29,7 @@ import { AnalysisOverlay, ExcludeBar, VideoAnalysisPanel, VideoAnalysisResults }
 import { MARK_COLOR, STATIC_MIN, useVideoAnalysis } from './videoAnalysisState'
 import { compareCycles, CYCLE_COLOR } from './videoCycle'
 import { applyExclusions, type ExclusionDraft, mergeSpans, spansOf } from './videoExclude'
+import { anchorAt, applyMemos, placeMemos } from './videoMemo'
 
 type PutSlot = 'result' | 'video' | 'image' | 'ref'
 type Dialog = null | 'save' | 'trim' | 'schedule'
@@ -736,18 +737,37 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     () => analysis.results.map((r, i) => applyExclusions(r, excludeSpans[i] ?? [], analysis.staticS)),
     [analysis.results, excludeSpans, analysis.staticS],
   )
-  const shownResults = useMemo(() => shown.map((x) => x.result), [shown])
+  const excludedResults = useMemo(() => shown.map((x) => x.result), [shown])
   const removedCount = shown.reduce((n, x) => n + x.removed, 0)
-  // Cycle 비교: 기준 Cycle(기본 첫 Cycle)과 이후 Cycle의 같은 스텝을 견줘 이상 증상 (Cycle이 둘 이상일 때)
-  const cycleCompare = useMemo(() => {
-    if (!vaOpen || !analysis.frames.some((f) => f?.n)) return null
+  // 행의 영상 위치 (영상 차례 · 초): Cycle 비교 · 메모 구간
+  const rowPlace = useMemo(() => {
     const index = new Map(searchVideos.map((v, i) => [v.path, i]))
-    return compareCycles(sortedRows, (row) => {
+    return (row: ResultRow) => {
       const at = stepSource.position(row)
       const video = at ? index.get(at.path) : undefined
       return at && video !== undefined ? { video, seconds: at.seconds } : null
-    }, analysis.frames, shownResults, { diff: analysis.cycleDiff, delayS: analysis.delayS, refCycle: analysis.refCycle }, excludeSpans)
-  }, [vaOpen, analysis.frames, shownResults, analysis.cycleDiff, analysis.delayS, analysis.refCycle, sortedRows, stepSource, searchVideos, excludeSpans])
+    }
+  }, [stepSource, searchVideos])
+  // 메모 구간 → Cycle마다 놓인 자리 (밝기 흐름으로 맞춤) → 고른 Cycle에 있던 것과 같은 검출을 뺀다
+  const memoPlaces = useMemo(
+    () => (vaOpen ? placeMemos(analysis.memos, sortedRows, rowPlace, analysis.frames) : []),
+    [vaOpen, analysis.memos, sortedRows, rowPlace, analysis.frames],
+  )
+  const params = analysis.project.params
+  const memoApplied = useMemo(
+    () => applyMemos(excludedResults, memoPlaces, analysis.staticS, { tolS: params.eventTolS, durAbsS: params.offDurAbsS, durPct: params.offDurPct }),
+    [excludedResults, memoPlaces, analysis.staticS, params],
+  )
+  const shownResults = memoApplied.results
+  // 메모를 다는 자리 (영상 위치 → 스텝과 스텝 위치부터 초)
+  const memoAnchor = useCallback((video: number, seconds: number) => anchorAt(sortedRows, rowPlace, video, seconds), [sortedRows, rowPlace])
+  const memoSpans = useMemo(() => searchVideos.map((_, i) => memoPlaces.filter((p) => p.video === i).map((p): [number, number] => [p.start, p.end])), [searchVideos, memoPlaces])
+  // Cycle 비교: 기준 Cycle(기본 첫 Cycle)과 이후 Cycle의 같은 스텝을 견줘 이상 증상 (Cycle이 둘 이상일 때)
+  const cycleCompare = useMemo(() => {
+    if (!vaOpen || !analysis.frames.some((f) => f?.n)) return null
+    return compareCycles(sortedRows, rowPlace, analysis.frames, shownResults,
+      { ...params, diff: analysis.cycleDiff, delayS: analysis.delayS, refCycle: analysis.refCycle }, excludeSpans, memoSpans)
+  }, [vaOpen, analysis.frames, shownResults, params, analysis.cycleDiff, analysis.delayS, analysis.refCycle, sortedRows, rowPlace, excludeSpans, memoSpans])
   // 제외 구간에 드는 행 (표에 빗금): 둘 다 시각순이라 한 번 훑는다
   const rowsInExclude = useMemo(() => {
     const rowsIn = new Set<number>()
@@ -767,7 +787,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   }, [sortedRows, rowsInExclude])
   // 정지 기준이 가장 작은 값보다 작아지면 (제외 구간을 바꿈 등) 그 값으로 올린다
   useEffect(() => {
-    if (analysis.staticS < staticMin) analysis.changeStatic(staticMin)
+    if (analysis.staticS < staticMin) analysis.changeStatic(staticMin, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [staticMin, analysis.staticS])
   const draftRow = (index: number | null) => (index === null ? null : sortedRows[trim.order.get(index) ?? -1] ?? null)
@@ -983,6 +1003,9 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               results={shownResults}
               excluded={excludeSpans}
               cycle={cycleCompare}
+              memoPlaces={memoPlaces}
+              memoRemoved={memoApplied.removed}
+              anchor={memoAnchor}
               videos={searchVideos}
               steps={stepSource}
               currentPath={current}
@@ -1118,6 +1141,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               state={analysis}
               results={shownResults}
               removed={removedCount}
+              memoRemoved={memoApplied.total}
               cycle={cycleCompare}
               videos={searchVideos}
               steps={stepSource}

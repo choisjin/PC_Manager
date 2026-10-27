@@ -1,28 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTopLayer } from '../useTopLayer'
-import { api, type ChatMessage, type ChatRoom, type Org, type ResultJob, type Transfer } from '../api'
-import { roomTitle } from '../chatRoom'
-import { type ChatActions, ChatPanel } from './ChatPanel'
-import { NotesPanel } from './NotesPanel'
-import type { NoteEvent } from '../useDashboard'
-import { formatBytes, formatDuration } from '../format'
-import { kindLabel } from './explorer/useTransfers'
-import { RESULT_MODE_LABEL } from './results/resultCsv'
-import { JOB_KIND_LABEL, JOB_STATE_LABEL, openJob, resultJobsLoaded, scheduleTimeText, useNow, useResultJobs, useResultSchedules } from './results/resultJobs'
-import { openViewer, removeSession, type ResultSession, sessionTitle, startSession, useResults } from './results/resultSessions'
+import { HubBadges, HubPanel } from './SideHub'
+import { HUB_TABS, type HubTab, type SideHub, useHubReveal, useReportChatShown, useSidebarCovered } from './sideHubState'
 
 interface Props {
-  transfers: Transfer[]
-  machineName: (agentId: string) => string
-  userName: (userId: string | null | undefined) => string | null
-  org: Org
-  selfUserId: string | null
-  chatRooms: ChatRoom[]
-  chatMessages: Record<string, ChatMessage[]>
-  chatActions: ChatActions
-  subscribeChat: (listener: (message: ChatMessage) => void) => () => void
-  subscribeNotes: (listener: (event: NoteEvent) => void) => () => void
+  /** 채팅·메모·진행상황 (App의 useSideHubState) */
+  hub: SideHub
+  /**
+   * 사이드바가 있는 화면(PC Manager·Result): 사이드바 탭으로 보이므로 원격조작 창·전체 화면·결과 확인 전체 화면처럼
+   * 사이드바를 가리는 것이 열려 있을 때만 그 위에 띄운다
+   */
+  overlayOnly?: boolean
 }
 
 const SIZE_KEY = 'pcm.pip.size2'
@@ -40,34 +29,7 @@ function loadSize(): { w: number; h: number } {
   }
 }
 
-/** 짧은 알림음 (사용자 조작 이후에만 소리가 난다) */
-let audioCtx: AudioContext | null = null
-const beep = () => {
-  try {
-    audioCtx ??= new AudioContext()
-    const o = audioCtx.createOscillator()
-    const g = audioCtx.createGain()
-    o.frequency.value = 880
-    g.gain.value = 0.08
-    o.connect(g).connect(audioCtx.destination)
-    o.start()
-    o.stop(audioCtx.currentTime + 0.15)
-  } catch {
-    // 소리 못 내면 무시
-  }
-}
-
-type PipTab = 'transfers' | 'chat' | 'notes'
 const TAB_KEY = 'pcm.pip.tab'
-
-const leafOf = (path: string | null) => path?.split(/[\\/]/).filter(Boolean).pop() ?? ''
-
-/** 어디서 → 어디로 (간략) */
-const flowText = (t: Transfer, machine: string) => {
-  if (t.kind === 'Fetch') return `${machine} → 서버`
-  if (t.kind === 'Push') return `서버 → ${machine}`
-  return `${machine} 내부` // 압축
-}
 
 // 위치: 왼쪽(x)과 화면 아래에서 위젯 아래 모서리까지의 거리(b).
 // 아래 모서리를 고정해 펼치면 위로 늘어나고 접으면 아래로 줄어든다
@@ -99,10 +61,10 @@ function savePos(p: PipPos) {
   }
 }
 
-/** 전송 진행률·알림을 띄우는 떠 있는 위젯 (드래그 이동 + 펴고 접기) */
-export function TransfersPip({ transfers, machineName, userName, org, selfUserId, chatRooms, chatMessages, chatActions, subscribeChat, subscribeNotes }: Props) {
+/** 채팅·메모·진행상황을 띄우는 떠 있는 위젯 (드래그 이동 + 펴고 접기). 내용·알림은 SideHub */
+export function TransfersPip({ hub, overlayOnly = false }: Props) {
   const [pos, setPos] = useState(loadPos)
-  // 위젯 크기 (오른쪽 아래 모서리를 끌어 조절). null이면 기본
+  // 위젯 크기 (위쪽 오른쪽 모서리를 끌어 조절)
   const [size, setSize] = useState<{ w: number; h: number }>(loadSize)
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -142,7 +104,7 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
   }
   const HEAD_H = 30
   const bodyStyle = { height: size.h - HEAD_H, maxHeight: 'none' as const }
-  const [tab, setTab] = useState<PipTab>(() => {
+  const [tab, setTab] = useState<HubTab>(() => {
     try {
       const saved = localStorage.getItem(TAB_KEY)
       return saved === 'chat' || saved === 'notes' ? saved : 'transfers'
@@ -150,106 +112,7 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
       return 'transfers'
     }
   })
-  const titleTimerRef = useRef<number>(0)
-  const baseTitleRef = useRef(document.title)
-  // 지금 보고 있는 채팅방 (사용자별로 기억)
-  const roomKey = `pcm.chat.room.${selfUserId ?? 'anon'}`
-  const [activeRoomId, setActiveRoomId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(roomKey)
-    } catch {
-      return null
-    }
-  })
-  useEffect(() => {
-    try {
-      setActiveRoomId(localStorage.getItem(roomKey))
-    } catch {
-      setActiveRoomId(null)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selfUserId])
-  const changeRoom = (roomId: string | null) => {
-    setActiveRoomId(roomId)
-    try {
-      if (roomId) localStorage.setItem(roomKey, roomId)
-      else localStorage.removeItem(roomKey)
-    } catch {
-      // 무시
-    }
-  }
-
-  // 알림 구독은 한 번만 걸리므로 이름 찾기는 항상 최신 사용자 목록을 쓰도록 ref로
-  const userNameRef = useRef(userName)
-  userNameRef.current = userName
-  const nameOf = (id: string | null | undefined) => (id ? userNameRef.current(id) ?? '(삭제된 사용자)' : '')
-
-  // 창이 뒤에 있거나 그 방을 안 보고 있을 때: 윈도우 알림([방 이름] 보낸 사람: 내용) + 탭 제목 깜빡임 + 알림음
-  const notify = (m: ChatMessage, room: ChatRoom | undefined, mentioned: boolean) => {
-    const title = room ? roomTitle(room, selfUserId, (id) => nameOf(id)) : '채팅'
-    const who = nameOf(m.userId)
-    const body = m.text.length > 120 ? m.text.slice(0, 120) + '…' : m.text
-    if ('Notification' in window && Notification.permission === 'granted') {
-      try {
-        const head = room && room.kind !== 'direct' ? `[${title}] ${who}${mentioned ? '님이 나를 호출했습니다' : ''}` : `${who}${mentioned ? '님이 나를 호출했습니다' : ''}`
-        const n = new Notification(head, { body, tag: `pcm-chat-${m.roomId}`, silent: true })
-        n.onclick = () => {
-          window.focus()
-          switchTab('chat')
-          setCollapsed(false)
-          changeRoom(m.roomId)
-          n.close()
-        }
-      } catch {
-        // 알림 못 띄우면 무시
-      }
-    }
-    beep()
-    if (!titleTimerRef.current) {
-      let on = false
-      titleTimerRef.current = window.setInterval(() => {
-        on = !on
-        document.title = on ? (mentioned ? `📣 ${title}` : `💬 ${title}`) : baseTitleRef.current
-      }, 900)
-    }
-  }
-  /** 작업이 끝남: 윈도우 알림(누르면 결과를 연다) + 알림음 (대시보드·결과 확인 탭이 함께 띄워도 같은 tag라 하나만) */
-  const notifyJob = (j: ResultJob) => {
-    const what = `${JOB_KIND_LABEL[j.kind]} ${JOB_STATE_LABEL[j.state]}`
-    if ('Notification' in window && Notification.permission === 'granted') {
-      try {
-        const n = new Notification(`${what} · ${j.title}`, { body: j.error ?? j.machineName ?? '', tag: `pcm-job-${j.id}`, silent: true })
-        n.onclick = () => {
-          window.focus()
-          openJob(j)
-          n.close()
-        }
-      } catch {
-        // 알림 못 띄우면 무시
-      }
-    }
-    beep()
-  }
-  const stopTitleFlash = () => {
-    if (titleTimerRef.current) {
-      clearInterval(titleTimerRef.current)
-      titleTimerRef.current = 0
-      document.title = baseTitleRef.current
-    }
-  }
-  useEffect(() => {
-    const onFocus = () => stopTitleFlash()
-    window.addEventListener('focus', onFocus)
-    document.addEventListener('visibilitychange', onFocus)
-    return () => {
-      window.removeEventListener('focus', onFocus)
-      document.removeEventListener('visibilitychange', onFocus)
-      stopTitleFlash()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const switchTab = (next: PipTab) => {
+  const switchTab = (next: HubTab) => {
     setTab(next)
     try {
       localStorage.setItem(TAB_KEY, next)
@@ -265,82 +128,19 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
     }
   })
 
-  const activeList = transfers.filter((t) => t.state === 'Pending')
-  const recent = transfers.filter((t) => t.state !== 'Pending').slice(0, 5)
+  // 원격조작 창·전체 화면처럼 브라우저 최상위 층이 열려 있으면 그 안에 그려야 위에 보인다
+  const layer = useTopLayer()
+  // 사이드바가 있는 화면에서 사이드바를 가리는 것이 없으면 띄우지 않는다 (사이드바 탭이 보여 준다)
+  const covered = useSidebarCovered()
+  const hidden = overlayOnly && !covered
 
-  // 결과 확인 불러오기: 진행상황 탭에 함께. 새로 시작하면 탭을 펼쳐 보여 준다
-  const { sessions } = useResults()
-  const loadingCount = sessions.filter((s) => s.state === 'loading').length
-  const freshReady = sessions.filter((s) => s.state === 'ready' && !s.opened).length
-  const sessionCount = useRef(sessions.length)
-  useEffect(() => {
-    if (sessions.length > sessionCount.current) {
-      switchTab('transfers')
-      setCollapsed(false)
-    }
-    sessionCount.current = sessions.length
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions.length])
-
-  // 결과 확인 작업(영상 분석·이미지 찾기): 내가 시작한 것만. 새로 시작하거나 끝나면 탭을 펼치고, 끝나면 윈도우 알림
-  const allJobs = useResultJobs()
-  const jobs = allJobs.filter((j) => !selfUserId || !j.userId || j.userId === selfUserId)
-  const runningJobs = jobs.filter((j) => j.state === 'running').length
-  const freshJobs = jobs.filter((j) => j.state === 'done' && !j.seen).length
-  // 예약 분석: 내가 예약한 것 (대기 중 · 시작 못 함)
-  const schedules = useResultSchedules().filter((s) => s.state !== 'started' && (!selfUserId || !s.userId || s.userId === selfUserId))
-  const jobStatesRef = useRef<Map<string, ResultJob['state']> | null>(null)
-  useEffect(() => {
-    // 서버에서 처음 받은 목록은 알리지 않는다
-    if (!resultJobsLoaded()) return
-    const prev = jobStatesRef.current
-    jobStatesRef.current = new Map(jobs.map((j) => [j.id, j.state]))
-    if (!prev) return
-    const ended = jobs.filter((j) => prev.get(j.id) === 'running' && j.state !== 'running')
-    if (ended.length || jobs.some((j) => !prev.has(j.id))) {
-      switchTab('transfers')
-      setCollapsed(false)
-    }
-    for (const j of ended) notifyJob(j)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allJobs])
-
-  // 안 읽은 메시지 합계 → 채팅 탭 배지·브라우저 탭 제목
-  const unread = chatRooms.reduce((sum, r) => sum + r.unread, 0)
-  useEffect(() => {
-    baseTitleRef.current = unread > 0 ? `(💬${unread}) RemoteKit` : 'RemoteKit'
-    if (!titleTimerRef.current) document.title = baseTitleRef.current
-  }, [unread])
-
-  // 새 메시지 알림: 내 메시지·시스템 안내는 빼고, 창이 뒤에 있거나 그 방을 보고 있지 않으면 알린다
-  const [focused, setFocused] = useState(() => document.hasFocus() && !document.hidden)
-  useEffect(() => {
-    const update = () => setFocused(document.hasFocus() && !document.hidden)
-    window.addEventListener('focus', update)
-    window.addEventListener('blur', update)
-    document.addEventListener('visibilitychange', update)
-    return () => {
-      window.removeEventListener('focus', update)
-      window.removeEventListener('blur', update)
-      document.removeEventListener('visibilitychange', update)
-    }
-  }, [])
-  const chatVisible = tab === 'chat' && !collapsed
-  const stateRef = useRef({ chatRooms, activeRoomId, chatVisible, selfUserId })
-  stateRef.current = { chatRooms, activeRoomId, chatVisible, selfUserId }
-  useEffect(
-    () =>
-      subscribeChat((m) => {
-        const st = stateRef.current
-        if (!m.userId || m.userId === st.selfUserId) return
-        const away = document.hidden || !document.hasFocus()
-        const watching = st.chatVisible && st.activeRoomId === m.roomId
-        const mentioned = !!st.selfUserId && (m.mentions ?? []).includes(st.selfUserId)
-        if (away || !watching) notify(m, st.chatRooms.find((r) => r.id === m.roomId), mentioned)
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [subscribeChat],
-  )
+  // 알림을 누름·결과 확인을 불러옴·분석이 시작하거나 끝남: 그 탭을 펼쳐 보여 준다
+  useHubReveal(hub, (r) => {
+    if (hidden) return
+    switchTab(r.tab)
+    setCollapsed(false)
+  })
+  useReportChatShown(hub, 'pip', !hidden && tab === 'chat' && !collapsed)
 
   const toggleCollapsed = () => {
     setCollapsed((v) => {
@@ -369,9 +169,6 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
     window.addEventListener('mouseup', onUp)
   }
 
-  // 원격조작 창·전체 화면처럼 브라우저 최상위 층이 열려 있으면 그 안에 그려야 위에 보인다
-  const layer = useTopLayer()
-
   // 펼치거나 크기·내용이 바뀌어 화면 밖으로 넘치면 전체가 보이게 위치를 당긴다 (창 크기 변경 포함)
   const rootRef = useRef<HTMLDivElement>(null)
   const fitIntoView = () => {
@@ -393,12 +190,13 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
       return next
     })
   }
-  useLayoutEffect(fitIntoView, [collapsed, tab, size, layer])
+  useLayoutEffect(fitIntoView, [collapsed, tab, size, layer, hidden])
   useEffect(() => {
     window.addEventListener('resize', fitIntoView)
     return () => window.removeEventListener('resize', fitIntoView)
   }, [])
 
+  if (hidden) return null
   return createPortal(
     <div
       ref={rootRef}
@@ -419,18 +217,12 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
         <span className="pip-title">
           <span className="pip-grip" aria-hidden="true">⠿</span>
           <span className="pip-tabs" role="tablist" onMouseDown={(e) => e.stopPropagation()}>
-            <button type="button" role="tab" aria-selected={tab === 'chat'} className={tab === 'chat' ? 'active' : ''} onClick={() => switchTab('chat')}>
-              채팅
-              {unread > 0 && <span className="pip-count chat">{unread}</span>}
-            </button>
-            <button type="button" role="tab" aria-selected={tab === 'notes'} className={tab === 'notes' ? 'active' : ''} onClick={() => switchTab('notes')}>
-              메모
-            </button>
-            <button type="button" role="tab" aria-selected={tab === 'transfers'} className={tab === 'transfers' ? 'active' : ''} onClick={() => switchTab('transfers')}>
-              진행상황
-              {activeList.length + loadingCount + runningJobs > 0 && <span className="pip-count">{activeList.length + loadingCount + runningJobs}</span>}
-              {freshReady + freshJobs > 0 && <span className="pip-count ready" title="열어 볼 수 있는 결과 확인·끝난 분석">{freshReady + freshJobs}</span>}
-            </button>
+            {HUB_TABS.map(([k, label]) => (
+              <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'active' : ''} onClick={() => switchTab(k)}>
+                {label}
+                <HubBadges hub={hub} tab={k} />
+              </button>
+            ))}
           </span>
         </span>
         <button type="button" className="pip-toggle" title={collapsed ? '펼치기 (위로)' : '접기'} onMouseDown={(e) => e.stopPropagation()} onClick={toggleCollapsed}>
@@ -438,198 +230,12 @@ export function TransfersPip({ transfers, machineName, userName, org, selfUserId
         </button>
       </div>
 
-      {!collapsed && tab === 'chat' && (
-        <div className="pip-body pip-chat" style={bodyStyle}>
-          <ChatPanel
-            rooms={chatRooms}
-            messages={chatMessages}
-            actions={chatActions}
-            org={org}
-            selfUserId={selfUserId}
-            activeRoomId={activeRoomId}
-            onActiveRoomChange={changeRoom}
-            visible={chatVisible && focused}
-          />
+      {!collapsed && (
+        <div className={`pip-body${tab === 'transfers' ? '' : ' pip-chat'}`} style={bodyStyle}>
+          <HubPanel hub={hub} tab={tab} shown={!collapsed} />
         </div>
       )}
-
-      {!collapsed && tab === 'notes' && (
-        <div className="pip-body pip-chat" style={bodyStyle}>
-          <NotesPanel selfUserId={selfUserId} nameOf={(id) => userName(id) ?? '(알 수 없음)'} subscribeNotes={subscribeNotes} />
-        </div>
-      )}
-
-      {!collapsed && tab === 'transfers' && (
-        <div className="pip-body" style={bodyStyle}>
-          {activeList.length === 0 && recent.length === 0 && sessions.length === 0 && jobs.length === 0 && schedules.length === 0 && <div className="pip-empty muted small">진행 중인 작업 없음</div>}
-
-          {schedules.length > 0 && (
-            <div className="pip-results">
-              <div className="pip-recent-title muted small">예약 분석</div>
-              {schedules.map((s) => (
-                <div key={s.id} className={`pip-note small${s.state === 'failed' ? ' error' : ''}`} title={s.error ?? s.videos.join(', ')}>
-                  <span className="ellipsis">
-                    ⏰ {scheduleTimeText(s.at)} · {[s.analysis && JOB_KIND_LABEL.analysis, s.search && JOB_KIND_LABEL.search].filter(Boolean).join(' + ')} · {s.title}
-                  </span>
-                  <span className="muted">{s.state === 'failed' ? '실패' : s.machineName ?? ''}</span>
-                  <button type="button" className="icon-mini" title={s.state === 'pending' ? '예약 취소' : '목록에서 빼기'} onClick={() => void api.removeResultSchedule(s.id).catch(() => {})}>
-                    ✕
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {jobs.length > 0 && (
-            <div className="pip-results">
-              <div className="pip-recent-title muted small">영상 분석 · 이미지 찾기</div>
-              {jobs.map((j) => <JobItem key={j.id} job={j} />)}
-            </div>
-          )}
-
-          {sessions.length > 0 && (
-            <div className="pip-results">
-              <div className="pip-recent-title muted small">결과 확인</div>
-              {sessions.map((s) => <ResultItem key={s.id} session={s} />)}
-            </div>
-          )}
-          {(activeList.length > 0 || recent.length > 0) && sessions.length > 0 && <div className="pip-recent-title muted small">파일 전송</div>}
-
-          {activeList.map((t) => {
-            const who = userName(t.startedByUserId)
-            return (
-              <div key={t.id} className="pip-item active" title={t.path ?? undefined}>
-                <div className="pip-item-top">
-                  <span className="pip-flow small ellipsis">{flowText(t, machineName(t.agentId))}</span>
-                  <span className="pip-pct small">{typeof t.percent === 'number' ? `${t.percent}%` : '…'}</span>
-                  <CancelButton transfer={t} />
-                </div>
-                <div className="pip-bar">
-                  <div className={`pip-bar-fill${typeof t.percent !== 'number' ? ' indet' : ''}`} style={{ width: `${typeof t.percent === 'number' ? t.percent : 100}%` }} />
-                </div>
-                <div className="pip-sub small muted ellipsis">
-                  {kindLabel(t.kind)} · {leafOf(t.path)}{who ? ` · ${who}` : ''}
-                </div>
-              </div>
-            )
-          })}
-
-          {recent.length > 0 && (
-            <div className="pip-recent">
-              <div className="pip-recent-title muted small">최근 알림</div>
-              {recent.map((t) => (
-                <div key={t.id} className={`pip-note small${t.state === 'Failed' ? ' error' : ''}`} title={t.error ?? t.path ?? undefined}>
-                  <span className={`pip-dot ${t.state === 'Failed' ? 'fail' : 'ok'}`} />
-                  <span className="ellipsis">
-                    {kindLabel(t.kind)} · {t.path?.split(/[\\/]/).pop()}
-                  </span>
-                  <span className="muted">{t.state === 'Succeeded' ? formatBytes(t.totalBytes) : '실패'}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-</div>,
+    </div>,
     layer,
-  )
-}
-
-/** 진행상황: 결과 확인 불러오기 한 건 (불러오는 중에도 바로 전체 화면으로) */
-function ResultItem({ session: s }: { session: ResultSession }) {
-  const pct = s.total ? Math.round((s.done / s.total) * 100) : 0
-  const title = sessionTitle(s)
-  const ready = s.state === 'ready'
-  const openable = s.state !== 'failed'
-  return (
-    <div className={`pip-item pip-result ${s.state}${ready && !s.opened ? ' fresh' : ''}`} title={s.source.resultPath}>
-      <div className="pip-item-top">
-        <button type="button" className="pip-result-name small ellipsis" disabled={!openable} onClick={() => openViewer(s.id)}>
-          {RESULT_MODE_LABEL[s.source.mode]} · {title}
-        </button>
-        {s.state === 'loading' && <span className="pip-pct small">{s.done}/{s.total}</span>}
-        {openable && <button type="button" className="primary small pip-result-open" onClick={() => openViewer(s.id)}>열기</button>}
-        {s.state === 'failed' && (
-          <button type="button" className="small" title="다시 불러오기" onClick={() => startSession(s.source, s.set, s.id)}>다시</button>
-        )}
-        <button type="button" className="icon-mini" title="목록에서 빼기" onClick={() => removeSession(s.id)}>✕</button>
-      </div>
-      {s.state === 'loading' && (
-        <div className="pip-bar">
-          <div className="pip-bar-fill" style={{ width: `${Math.max(4, pct)}%` }} />
-        </div>
-      )}
-      <div className={`pip-sub small ellipsis${s.state === 'failed' ? ' error' : ' muted'}`} title={s.error ?? s.step}>
-        {s.source.machineName}
-        {s.state === 'loading' ? ` · ${s.step}` : s.state === 'failed' ? ` · ${s.error ?? '실패'}` : ` · 준비 완료 (영상 ${s.videos.length}개${s.videos.some((v) => v.prep === 'failed') ? ', 일부 실패' : ''})`}
-      </div>
-    </div>
-  )
-}
-
-/** 진행상황: 영상 분석·이미지 찾기 한 건 (결과 확인 탭을 닫아도 테스트 PC에서 계속 돈다) */
-function JobItem({ job: j }: { job: ResultJob }) {
-  const running = j.state === 'running'
-  const pct = Math.round(j.progress * 100)
-  // 진행 중이면 경과 시간 (1초마다), 끝났으면 걸린 시간
-  const now = useNow(running)
-  const started = Date.parse(j.started)
-  const took = running ? now - started : j.finished ? Date.parse(j.finished) - started : null
-  const tone = running ? 'loading' : j.state === 'done' ? 'ready' : 'failed'
-  const stop = () => {
-    const call = j.kind === 'analysis' ? api.cancelVideoAnalysis(j.agentId, j.id) : api.cancelImageSearch(j.agentId, j.id)
-    call.catch((err: unknown) => window.alert(`멈추지 못했습니다: ${err instanceof Error ? err.message : String(err)}`))
-  }
-  const remove = () => {
-    if (running && !window.confirm(`진행 중인 ${JOB_KIND_LABEL[j.kind]}을(를) 멈추고 목록에서 뺄까요?`)) return
-    void api.removeResultJob(j.id).catch(() => {})
-  }
-  const open = () => {
-    if (!openJob(j)) window.alert('새 탭을 열지 못했습니다 (팝업 차단). 이 사이트의 팝업을 허용해 주세요.')
-  }
-  return (
-    <div className={`pip-item pip-result ${tone}${j.state === 'done' && !j.seen ? ' fresh' : ''}`} title={j.sourceKey}>
-      <div className="pip-item-top">
-        <button type="button" className="pip-result-name small ellipsis" onClick={open}>
-          {JOB_KIND_LABEL[j.kind]} · {j.title}
-        </button>
-        {running && <span className="pip-pct small">{pct}%</span>}
-        <button type="button" className="primary small pip-result-open" onClick={open}>열기</button>
-        {running && <button type="button" className="small" title="거기까지 잰 결과는 남깁니다" onClick={stop}>멈춤</button>}
-        <button type="button" className="icon-mini" title="목록에서 빼기" onClick={remove}>✕</button>
-      </div>
-      {running && (
-        <div className="pip-bar">
-          <div className="pip-bar-fill" style={{ width: `${Math.max(4, pct)}%` }} />
-        </div>
-      )}
-      <div className={`pip-sub small ellipsis${j.state === 'failed' || j.state === 'lost' ? ' error' : ' muted'}`} title={j.error ?? j.current ?? undefined}>
-        {j.machineName ?? ''}
-        {running ? ` · 경과 ${formatDuration(took ?? 0)} · ${j.current ?? '진행 중'}` : ` · ${JOB_STATE_LABEL[j.state]}${took !== null ? ` · 걸린 시간 ${formatDuration(took)}` : ''}${j.error ? ` (${j.error})` : ''}`}
-      </div>
-    </div>
-  )
-}
-
-/** 진행 중인 전송 취소 (압축·풀기·가져오기·올리기·PC 간 복사·이동) */
-function CancelButton({ transfer }: { transfer: Transfer }) {
-  const [busy, setBusy] = useState(false)
-  return (
-    <button
-      type="button"
-      className="icon-mini pip-cancel"
-      title="취소"
-      disabled={busy}
-      onClick={() => {
-        if (!window.confirm(`'${leafOf(transfer.path) || kindLabel(transfer.kind)}' ${kindLabel(transfer.kind)}을(를) 취소할까요?`)) return
-        setBusy(true)
-        api.cancelTransfer(transfer.id).catch((err) => {
-          setBusy(false)
-          window.alert(`취소하지 못했습니다: ${err instanceof Error ? err.message : String(err)}`)
-        })
-      }}
-    >
-      {busy ? '…' : '✕'}
-    </button>
   )
 }

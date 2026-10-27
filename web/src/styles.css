@@ -1569,13 +1569,10 @@ button.small-btn {
 /* 파일 탐색기 (트리 + 멀티패널) */
 .explorer-shell {
   display: grid;
-  grid-template-columns: var(--pc-list-w) minmax(0, 1fr);
+  /* 사이드바 폭은 사이드바(.pc-tree)가 정한다: 탭마다 · 끌어서 조절 · 접으면 40px */
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 6px;
   min-height: 0;
-}
-
-.explorer-shell.tree-collapsed {
-  grid-template-columns: 40px minmax(0, 1fr);
 }
 
 /* PC 트리 사이드바 */
@@ -5343,6 +5340,16 @@ th.sortable:hover {
 .rv-va-list > li.rv-va-empty, .rv-va-list > li.rv-va-more { display: block; cursor: default; }
 .rv-va-list > li.rv-va-empty:hover, .rv-va-list > li.rv-va-more:hover { background: none; }
 .rv-va-detail { min-width: 0; overflow-wrap: anywhere; }
+/* 검출 줄의 📝 (메모 구간으로): 줄 오른쪽 끝, 대거나 고른 줄에서만 (칸 배치에 끼지 않게 띄움) */
+.rv-va-list > li { position: relative; }
+.rv-va-memo-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); visibility: hidden; background: var(--panel); }
+.rv-va-list > li:hover .rv-va-memo-btn, .rv-va-list > li.picked .rv-va-memo-btn { visibility: visible; }
+/* 메모 구간 줄 (영상 분석 패널 안, 그래프 위) */
+.rv-va-memo { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border: 1px solid rgba(46, 125, 50, 0.45); border-radius: 6px; background: rgba(46, 125, 50, 0.05); }
+.rv-va-memo-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.rv-va-memo-bar .mono { min-width: 64px; }
+.rv-va-memo-text { flex: 1 1 160px; min-width: 120px; }
+.rv-va-memo .rv-va-exclude-list { padding: 2px 0 0; }
 .rv-search-list { margin: 0; padding: 0; list-style: none; max-height: 26vh; overflow: auto; }
 /* 머리글 있는 표: 열 폭은 패널이 정한다(--search-cols). 줄 폭이 모두 같아야 칸이 맞고, 좁으면 --search-min에서 가로로 스크롤 */
 .rv-search-list li { display: grid; grid-template-columns: var(--search-cols); gap: 8px; align-items: baseline; min-width: var(--search-min); padding: 1px 6px; border-radius: 4px; cursor: pointer; }
@@ -5580,6 +5587,26 @@ th.sortable:hover {
 .rv-modal-box { width: min(500px, 94vw); max-height: 90vh; overflow: auto; padding: 14px 16px; }
 .rv-modal-box.wide { width: min(780px, 94vw); }
 .rv-modal-box progress { width: 100%; }
+/* 영상 분석 기준값 (프로젝트): 묶음마다 이름 · 칸+단위 · 기본값 한 줄, 설명은 아래 작게 */
+.va-defaults { display: flex; flex-direction: column; gap: 10px; }
+.va-defaults .hint { margin: 0; }
+.va-defaults-group { margin: 0; padding: 6px 10px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.va-defaults-group legend { padding: 0 4px; font-weight: 600; font-size: 13px; }
+.va-defaults-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) auto 1fr;
+  align-items: center;
+  column-gap: 10px;
+  padding: 3px 0;
+}
+.va-defaults-row + .va-defaults-row { border-top: 1px dashed var(--border); }
+.va-defaults-label { font-size: 13px; }
+.va-defaults-input { display: inline-flex; align-items: center; gap: 4px; }
+.va-defaults-input input { width: 84px; }
+.va-defaults-input input[aria-invalid='true'] { border-color: #c9392f; }
+.va-defaults-base.changed { color: #b7791f; font-weight: 600; }
+.va-defaults-hint { grid-column: 1 / -1; }
+.va-defaults-actions { display: flex; align-items: center; gap: 8px; position: sticky; bottom: -14px; padding: 8px 0; background: var(--panel); }
 /* 예약 분석 창 */
 .rv-schedule { display: flex; flex-direction: column; gap: 8px; }
 .rv-schedule .hint { margin: 0; }
@@ -6011,8 +6038,8 @@ th.sortable:hover {
   font-weight: 600;
 }
 /* ═══ 결과 확인 탭: PC별 결과 폴더 → 날짜 → 실행 ═══ */
-.rp { display: grid; grid-template-columns: var(--pc-list-w) minmax(0, 1fr); gap: 6px; min-height: 0; height: 100%; }
-.rp-pcs, .rp-main { min-height: 0; overflow: hidden; }
+.rp { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px; min-height: 0; height: 100%; }
+.rp-main { min-height: 0; overflow: hidden; }
 .rp-only { display: inline-flex; align-items: center; gap: 4px; }
 .rp-pc-list { flex: 1; min-height: 0; overflow: auto; padding: 4px; }
 .rp-section + .rp-section { margin-top: 6px; }
@@ -6103,3 +6130,141 @@ th.sortable:hover {
 .agent-gate-skip ul { margin: 0; padding-left: 18px; }
 .agent-gate-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .agent-gate-skip-open { align-self: flex-start; }
+
+/* ===== 사이드 메뉴 (PC Manager·Result 왼쪽 사이드바): PC · 채팅 · 메모 · 진행상황 탭, 폭 조절 ===== */
+.pc-tree {
+  position: relative;
+  width: var(--side-w, var(--pc-list-w));
+}
+.pc-tree.collapsed {
+  width: 40px;
+  gap: 4px;
+}
+.side-menu {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.side-menu .tree-collapse {
+  margin-right: 2px;
+}
+.side-menu button[role='tab'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+.side-menu button[role='tab']:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.side-menu button[role='tab'].active {
+  color: var(--text);
+  background: var(--hover);
+  font-weight: 600;
+}
+/* 탭 내용: 사이드바 남은 높이를 채운다 (진행상황은 PiP와 같은 목록) */
+.side-hub {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.side-hub.pip-body {
+  max-height: none;
+  overflow: auto;
+}
+/* 채팅·메모: 방·메모 목록을 조금 좁게 (내용 칸을 넓게) */
+.side-hub .chat-rooms {
+  width: 140px;
+}
+/* 접힌 사이드바: 탭 아이콘 + 배지 */
+.side-menu-icon {
+  position: relative;
+  font-size: 14px;
+}
+.side-menu-icon .pip-count {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  font-size: 9px;
+}
+.side-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 5px;
+  cursor: col-resize;
+}
+.side-resizer:hover {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+/* Result 사이드바: PC 줄 끝의 결과 형식·분석·▶ 최신 */
+.pc-tree.results .tree-agent {
+  cursor: pointer;
+}
+.pc-tree.results .tree-agent .rp-latest {
+  padding: 0 5px;
+  font-size: 10px;
+}
+.pc-tree.results .rp-only {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pc-tree.results .rp-unset {
+  flex: none;
+  font-size: 10px;
+}
+/* Result 사이드바는 결과 표시가 붙어 좁으므로 별칭 옆 PC 이름은 뺀다 (PC Manager에서 본다) */
+.pc-tree.results .tree-host {
+  display: none;
+}
+@media (max-width: 900px) {
+  .pc-tree {
+    width: auto;
+  }
+}
+@media (max-width: 760px) {
+  .rp .pc-tree {
+    width: auto;
+  }
+}
+
+/* 메모 탭 (?notes=…): 메모 목록 + 고른 메모를 창 가득 (.app 세로 칸을 채운다) */
+.notes-page-panel {
+  background: var(--panel);
+}
+.notes-page-panel .chat-rooms {
+  width: 260px;
+  padding: 6px;
+}
+.notes-page-panel .chat-main-head {
+  padding: 6px 10px;
+}
+.notes-page-panel .chat-main-title {
+  font-size: 14px;
+}
+.notes-page-panel .note-editor {
+  padding: 12px 16px;
+  font-size: 14px;
+}
+.notes-page-panel .note-editor img {
+  max-width: min(100%, 640px);
+  max-height: 480px;
+}

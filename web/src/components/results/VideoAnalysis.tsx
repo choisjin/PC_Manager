@@ -11,6 +11,9 @@ import type { VideoAnalysisState, VideoFrames } from './videoAnalysisState'
 import { type AnomalyKind, CYCLE_COLOR, type CycleAnomaly, type CycleCompare, type CycleMap, markKey, type OffEvent, THUMB_H, THUMB_W } from './videoCycle'
 import { bisectLeft, type DetectedSegment, type DetectResult, type SegmentKind } from './videoDetect'
 import { type Exclusion, type ExclusionDraft, spansOf } from './videoExclude'
+import type { DetectParams } from './analysisDefaults'
+import { AnalysisDefaultsDialog } from './AnalysisDefaultsForm'
+import type { MemoPlace, MemoSpan } from './videoMemo'
 
 // 결과 확인 영상 분석 화면 (ReplayKit_FailAnalyzer 영상 페이지의 영상 분석을 옮김):
 // 영상 위 화면 영역 표시(AnalysisOverlay) · 영상 아래 설정·진행·그래프·영상 정보(VideoAnalysisPanel) ·
@@ -21,13 +24,15 @@ type ListTab = SegmentKind | 'transitions' | 'cycle'
 const TABS: [ListTab, string][] = [
   ['black_screen', '검은 화면'], ['flicker', '깜박임'], ['static', '정지 구간'], ['transitions', '화면 전환'], ['cycle', 'Cycle 비교'],
 ]
-// 탭에 대면 보이는 판정 기준
-const RULES: Record<ListTab, string> = {
-  black_screen: '검은 화면: 1차 밝기 — 기준 밝기(영상에서 가장 어두웠던 밝기)에 가깝고(차이가 5 · 기준 밝기의 15% · 켜진 평소 차이의 20% 중 큰 값 이하) 색이 없음, 2차 윤곽 — 윤곽이 가장 많은 칸이 꺼지기 전 1초의 절반 이하(완전히 꺼진 수준이면 늘 통과). 둘 다 맞는 상태가 2초 넘게 이어짐 (2초 안에 다시 켜지면 깜박임)',
-  flicker: '깜박임: 검은 화면과 같은 1차 밝기 · 2차 윤곽 기준으로 꺼졌다가 2초 안에 다시 켜짐. 꺼지기 전 밝기의 25%(최소 12) 넘게 떨어지기 시작해 0.3초 안에 꺼져야 함 (서서히 어두워진 것 · 밝게 번쩍이는 것은 뺌, 돌아온 밝기는 안 따짐, 첫 깜박임부터 3초 안에 이어지면 한 묶음)',
-  static: '정지 구간: 화면 영역의 프레임 간 차이가 잡음 수준으로 정지 기준 이상 이어짐 (통째로 꺼진 구간은 뺌)',
-  transitions: '화면 전환: 프레임 차이가 평소의 8배(최소 6) 넘게 튄 시점 (0.5초 안에 이어지면 한 건, 깜박임은 뺌)',
-  cycle: 'Cycle 비교: 기준 Cycle(정상 동작을 확인한 Cycle, 기본 첫 Cycle)과 이후 Cycle의 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지)을 스텝 시작부터 지난 시간으로 맞춰 견줌. 꺼짐 — 깜박임·검은 화면이 같은 자리(±1초)에 없으면 추가, 기준에만 있으면 빠짐, 길이가 0.5초와 30% 넘게 다르면 길어짐·짧아짐. 지연 — 화면 전환이 지연 기준보다 늦음. 반응 없음 — 기준엔 있던 화면 전환이 없음. 멈춤 — 정지 구간인데 기준은 그동안 화면이 바뀜. 화면 다름 — 0.2초마다 밝기 차이(평균 색은 1.5배)가 기준을 넘거나 16×9 칸 절반 넘게 다름. 화면 깨짐 — 칸 일부(3칸 이상)만 다름. 화면은 0.6초 넘게 이어진 곳만 (앞뒤 0.6초 어긋남은 봐 줌, 스텝 시작·끝 0.4초와 꺼짐 동안은 뺌)',
+// 탭에 대면 보이는 판정 기준 (숫자는 프로젝트 기준값)
+function rulesOf(p: DetectParams): Record<ListTab, string> {
+  return {
+    black_screen: `검은 화면: 1차 밝기 — 기준 밝기(영상에서 가장 어두웠던 밝기)에 가깝고(차이가 ${p.offAbs} · 기준 밝기의 15% · 켜진 평소 차이의 ${p.offOnPct}% 중 큰 값 이하) 색이 없음(채도 ${p.satMax} 이하), 2차 윤곽 — 윤곽이 가장 많은 칸이 꺼지기 전 1초의 ${p.edgeOffPct}% 이하(완전히 꺼진 수준이면 늘 통과). 둘 다 맞는 상태가 ${p.blinkMaxS}초 넘게 이어짐 (${p.blinkMaxS}초 안에 다시 켜지면 깜박임)`,
+    flicker: `깜박임: 검은 화면과 같은 1차 밝기 · 2차 윤곽 기준으로 꺼졌다가 ${p.blinkMaxS}초 안에 다시 켜짐. 꺼지기 전 밝기의 ${p.dropPct}%(최소 ${p.dropAbs}) 넘게 ${p.rampS}초 안에 떨어져 꺼져야 함 (그보다 오래 고르게 어두워지는 화면 페이드 · 밝게 번쩍이는 것은 뺌, 돌아온 밝기는 안 따짐, 첫 깜박임부터 ${p.blinkGroupS}초 안에 이어지면 한 묶음)`,
+    static: '정지 구간: 화면 영역의 프레임 간 차이가 잡음 수준으로 정지 기준 이상 이어짐 (통째로 꺼진 구간은 뺌)',
+    transitions: `화면 전환: 프레임 차이가 평소의 ${p.transitionX}배(최소 ${p.transitionMin}) 넘게 튄 시점 (${p.transitionMergeS}초 안에 이어지면 한 건, 깜박임은 뺌)`,
+    cycle: `Cycle 비교: 기준 Cycle(정상 동작을 확인한 Cycle, 기본 첫 Cycle)과 이후 Cycle의 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지)을 스텝 시작부터 지난 시간으로 맞춰 견줌. 꺼짐 — 깜박임·검은 화면이 같은 자리(±${p.eventTolS}초)에 없으면 추가, 기준에만 있으면 빠짐, 길이가 ${p.offDurAbsS}초와 ${p.offDurPct}% 넘게 다르면 길어짐·짧아짐. 지연 — 화면 전환이 지연 기준보다 늦음. 반응 없음 — 기준엔 있던 화면 전환이 없음(${p.lateS}초 넘게 늦은 것도). 멈춤 — 정지 구간인데 기준은 그동안 화면이 바뀜. 화면 다름 — 0.2초마다 밝기 차이(평균 색은 1.5배)가 기준을 넘거나 16×9 칸 절반 넘게 다름. 화면 깨짐 — 칸 일부(${p.corruptCells}칸 이상)만 다름. 화면은 ${p.screenMinS}초 넘게 이어진 곳만 (앞뒤 0.6초 어긋남은 봐 줌, 스텝 시작·끝 0.4초와 꺼짐 동안은 뺌)`,
+  }
 }
 /** Cycle 비교 종류 묶음 (목록 거르기) */
 type KindGroup = 'off' | 'response' | 'screen'
@@ -59,24 +64,31 @@ const STRIP_H = 10
 const LIST_PAGE = 500
 // 검출 항목을 누르면 이만큼 앞부터 재생 (그 순간을 보게)
 const LEAD_S = 1.5
+// 검출 목록의 📝: 그 검출 앞뒤로 이만큼(초)을 메모 구간으로
+const MEMO_PAD_S = 0.5
 // 그래프에 겹칠 Cycle 짝이 없을 때 (매번 새 배열을 만들지 않게)
 const NO_MAPS: CycleMap[] = []
 // 정지 기준 칸 (초)
 const STATIC_MAX = 86400
 
 /** 그래프에 그리는 것: 범례를 눌러 켜고 끈다 (끈 것은 이 브라우저에 기억) */
-type Series = 'bright' | 'floor' | 'rgb' | SegmentKind | 'transitions' | 'refBright' | 'cycle' | 'exclude' | 'steps' | 'fail'
+type Series = 'bright' | 'floor' | 'rgb' | SegmentKind | 'transitions' | 'refBright' | 'cycle' | 'exclude' | 'memo' | 'steps' | 'fail'
 const SERIES: [Series, string][] = [
   ['bright', '화면 밝기'], ['floor', '기준 밝기'], ['rgb', '화면 평균 색 (아래 띠)'], ['black_screen', '검은 화면'], ['flicker', '깜박임'],
   ['static', '정지'], ['transitions', '화면 전환'], ['refBright', '기준 Cycle 밝기'], ['cycle', 'Cycle 차이'],
-  ['exclude', '제외 구간'], ['steps', '스텝'], ['fail', '실패 스텝'],
+  ['exclude', '제외 구간'], ['memo', '메모 구간'], ['steps', '스텝'], ['fail', '실패 스텝'],
 ]
 // 첫 Cycle 밝기 (같은 스텝 자리에 겹쳐 그림) · Cycle 차이 음영
 const REF_COLOR = '#e08a1e'
 const CYCLE_SHADE = 'rgba(15, 154, 168, 0.3)'
+// 메모 구간 (초록 띠 + 위 줄 + 메모) · 고르는 중인 구간 (파랑)
+const MEMO_SHADE = 'rgba(46, 125, 50, 0.07)'
+const MEMO_COLOR = '#2e7d32'
+const DRAFT_SHADE = 'rgba(33, 150, 243, 0.2)'
+const DRAFT_COLOR = '#1e88e5'
 const SWATCH: Partial<Record<Series, string>> = {
   bright: BRIGHT_COLOR, floor: FLOOR_COLOR, ...SEG_COLOR, transitions: TRANSITION_COLOR, refBright: REF_COLOR, cycle: CYCLE_SHADE,
-  steps: STEP_COLOR, fail: FAIL_COLOR,
+  memo: MEMO_SHADE, steps: STEP_COLOR, fail: FAIL_COLOR,
 }
 const HIDDEN_KEY = 'results.va.hidden'
 function readHidden(): Set<Series> {
@@ -156,7 +168,7 @@ export function AnalysisOverlay({ state, videoRef, currentPath }: {
 
 interface ChartView { t0: number; t1: number }
 
-function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomalies, duration, steps, now, onSeek }: {
+function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomalies, memos, draft, onSelect, duration, steps, now, onSeek }: {
   frames: VideoFrames | undefined
   /** 모든 영상의 프레임 (첫 Cycle 밝기를 겹쳐 그릴 때) */
   allFrames: VideoFrames[]
@@ -167,6 +179,11 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
   /** Cycle 비교: 이 영상 구간 ↔ 첫 Cycle 같은 스텝 · 이 영상의 특이점 */
   cycleMaps: CycleMap[]
   anomalies: CycleAnomaly[]
+  /** 이 영상의 메모 구간 자리 · 고르는 중인 구간 (영상 안 초) */
+  memos: MemoPlace[]
+  draft: [number, number] | null
+  /** 메모 구간을 고르는 중이면: 끌면 구간을 고른다 (좌우 이동 대신) */
+  onSelect: ((start: number, end: number) => void) | null
   /** 영상 길이 (모르면 받은 프레임 끝까지) */
   duration: number | null
   /** 스텝 시작 (영상 안 초) · 실패 스텝 */
@@ -177,7 +194,9 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
 }) {
   const boxRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const dragRef = useRef<{ x: number; view: ChartView; moved: boolean } | null>(null)
+  const dragRef = useRef<{ x: number; t: number; view: ChartView; moved: boolean } | null>(null)
+  // 끌어서 고르는 중인 구간 (메모 구간 고르기)
+  const [sel, setSel] = useState<[number, number] | null>(null)
   // 그리는 칸 크기 (패널 아래까지 채운다)
   const [size, setSize] = useState({ w: 0, h: 0 })
   // 보는 범위 (null = 영상 전체)
@@ -271,6 +290,39 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
         // 끝이 없는 구간(Infinity)은 보이는 끝까지 (fillRect는 무한 값이면 그리지 않는다)
         ctx.fillRect(x, 0, Math.max(1, xOf(Math.min(b, v.t1)) - x), plotH)
       }
+    }
+    // 메모 구간: 띠 + 위 줄 + 메모 (띠 안에 잘라서)
+    if (on('memo')) {
+      for (const m of memos) {
+        if (m.end < v.t0 || m.start > v.t1) continue
+        const x = xOf(m.start)
+        const w = Math.max(1, xOf(m.end) - x)
+        ctx.fillStyle = MEMO_SHADE
+        ctx.fillRect(x, 0, w, plotH)
+        ctx.fillStyle = MEMO_COLOR
+        ctx.fillRect(x, 0, w, 2)
+        if (w > 24) {
+          ctx.save()
+          ctx.beginPath()
+          ctx.rect(x, 0, w, plotH)
+          ctx.clip()
+          ctx.font = '10px sans-serif'
+          ctx.fillText(`📝 ${m.memo}`, Math.max(x, 0) + 3, 13)
+          ctx.restore()
+        }
+      }
+    }
+    const pick = sel ?? draft
+    if (pick) {
+      const a = Math.min(pick[0], pick[1])
+      const b = Math.max(pick[0], pick[1])
+      const x = xOf(a)
+      const w = Math.max(1, xOf(b) - x)
+      ctx.fillStyle = DRAFT_SHADE
+      ctx.fillRect(x, 0, w, plotH)
+      ctx.fillStyle = DRAFT_COLOR
+      ctx.fillRect(Math.floor(x), 0, 1, plotH)
+      ctx.fillRect(Math.floor(x + w), 0, 1, plotH)
     }
     // 검출 구간 음영
     for (const s of result?.segments ?? []) {
@@ -411,7 +463,7 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
     ctx.fillStyle = 'rgba(128, 128, 128, 0.9)'
     ctx.font = '10px sans-serif'
     ctx.fillText(String(top), 2, 10)
-  }, [frames, allFrames, n, measured, result, excluded, cycleMaps, anomalies, floor, hidden, steps, width, height, v.t0, v.t1, span])
+  }, [frames, allFrames, n, measured, result, excluded, cycleMaps, anomalies, memos, sel, draft, floor, hidden, steps, width, height, v.t0, v.t1, span])
 
   // 휠: 커서 위치 기준 시간축 확대·축소, Shift+휠·가로 휠은 좌우 이동 (페이지가 스크롤되지 않게 passive 아님)
   useEffect(() => {
@@ -439,7 +491,7 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
   const timeAt = (clientX: number, r: DOMRect) => v.t0 + ((clientX - r.left) / r.width) * span
   const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return
-    dragRef.current = { x: e.clientX, view: v, moved: false }
+    dragRef.current = { x: e.clientX, t: timeAt(e.clientX, e.currentTarget.getBoundingClientRect()), view: v, moved: false }
     e.currentTarget.setPointerCapture(e.pointerId)
   }
   const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -450,6 +502,10 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
     const dx = e.clientX - d.x
     if (Math.abs(dx) > 3) d.moved = true
     if (!d.moved) return
+    if (onSelect) {
+      setSel([d.t, Math.max(0, Math.min(end, timeAt(e.clientX, r)))])
+      return
+    }
     const s = d.view.t1 - d.view.t0
     if (s >= end) return
     const t0 = Math.max(0, Math.min(end - s, d.view.t0 - (dx / r.width) * s))
@@ -458,13 +514,20 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
   const onUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = dragRef.current
     dragRef.current = null
-    if (d && !d.moved) onSeek(Math.max(0, Math.min(end, timeAt(e.clientX, e.currentTarget.getBoundingClientRect()))))
+    const t = Math.max(0, Math.min(end, timeAt(e.clientX, e.currentTarget.getBoundingClientRect())))
+    if (d && !d.moved) onSeek(t)
+    else if (d && onSelect) {
+      setSel(null)
+      onSelect(Math.min(d.t, t), Math.max(d.t, t))
+    }
   }
 
-  // 커서 위치의 값 (가장 가까운 프레임): 밝기 (기준 밝기와의 차이)
+  // 커서 위치의 값 (가장 가까운 프레임): 밝기 (기준 밝기와의 차이) · 메모 구간
   const at = hover !== null && frames && n ? Math.min(n - 1, bisectLeft(frames.t, hover, n)) : -1
+  const hoverMemo = hover !== null ? memos.find((m) => m.start <= hover && hover <= m.end) ?? null : null
   // 스텝이 없으면 스텝 범례, 지금 영상에 제외 구간이 없으면 제외 구간 범례는 감춘다
   const series = SERIES.filter(([k]) => ((k !== 'steps' && k !== 'fail') || steps.length > 0) && (k !== 'exclude' || excluded.length > 0)
+    && (k !== 'memo' || memos.length > 0)
     && ((k !== 'refBright' && k !== 'cycle') || cycleMaps.length > 0))
   return (
     <div className="rv-va-chart">
@@ -494,7 +557,7 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
         <span className="rv-spacer" />
         <span className="mono muted" title="휠 = 시간축 확대·축소 · 드래그 = 좌우 이동 · 클릭 = 그 시점으로 이동 · 더블클릭 = 전체 보기">
           {at >= 0
-            ? `${formatFrameTime(frames!.t[at])} · ${frames!.y[at].toFixed(1)}${floor !== null ? ` (+${frames!.c[at].toFixed(1)})` : ''}`
+            ? `${formatFrameTime(frames!.t[at])} · ${frames!.y[at].toFixed(1)}${floor !== null ? ` (+${frames!.c[at].toFixed(1)})` : ''}${hoverMemo ? ` · 📝 ${hoverMemo.memo}` : ''}`
             : `${formatFrameTime(v.t0)} ~ ${formatFrameTime(v.t1)}`}
         </span>
       </div>
@@ -504,7 +567,10 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
         onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={onUp}
-        onPointerCancel={() => { dragRef.current = null }}
+        onPointerCancel={() => {
+          dragRef.current = null
+          setSel(null)
+        }}
         onPointerLeave={() => setHover(null)}
         onDoubleClick={() => setView(null)}
       >
@@ -576,7 +642,7 @@ function NumberField({ value, min, max, onCommit }: { value: number; min: number
 
 // ─────────────────────────────── 패널 (영상 아래): 설정·진행·그래프·영상 정보
 
-export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle, videos, steps, currentPath, grab, escape, nowSeconds, onSeek }: {
+export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle, memoPlaces, memoRemoved, anchor, videos, steps, currentPath, grab, escape, nowSeconds, onSeek }: {
   state: VideoAnalysisState
   /** 정지 기준의 가장 작은 값 (초): 제외 구간 밖 스텝의 가장 짧은 DURATION */
   staticMin: number
@@ -586,6 +652,11 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
   excluded: [number, number][][]
   /** 첫 Cycle 기준 비교 (Cycle이 하나면 null) */
   cycle: CycleCompare | null
+  /** 메모 구간이 놓인 자리 (모든 영상) · 메모 구간마다 뺀 검출 수 */
+  memoPlaces: MemoPlace[]
+  memoRemoved: Map<string, number>
+  /** 영상(차례) 위치 → 메모를 다는 스텝과 스텝 위치부터 초 (스텝 밖이면 null) */
+  anchor: (video: number, seconds: number) => { row: ResultRow; offset: number } | null
   videos: SearchVideo[]
   /** 그래프에 스텝 경계를 그리는 Result 표 */
   steps: StepSource
@@ -600,25 +671,29 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
   onSeek: (path: string, seconds: number) => void
 }) {
   const [grabError, setGrabError] = useState<string | null>(null)
+  // 프로젝트 기준값 창
+  const [showDefaults, setShowDefaults] = useState(false)
   const openPicker = () => {
     const frame = grab()
     setGrabError(frame ? null : '영상 프레임을 아직 읽지 못했습니다. 영상이 보이면 다시 누르세요')
     if (frame) state.setPicking(frame)
   }
 
-  // Esc: 영역 고르기 창 → 제외 구간 고르기 → 패널 닫기 순 (결과 확인 창이 닫히지 않게 먼저 받는다)
+  // Esc: 기준값 창 → 영역 고르기 창 → 제외 구간 고르기 → 패널 닫기 순 (결과 확인 창이 닫히지 않게 먼저 받는다)
   useEffect(() => {
     if (!escape) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       e.stopPropagation()
-      if (state.picking) state.setPicking(null)
+      if (showDefaults) setShowDefaults(false)
+      else if (state.picking) state.setPicking(null)
+      else if (state.memoDraft) state.setMemoDraft(null)
       else if (state.excludeEdit) state.setExcludeEdit(false)
       else state.close()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [state, escape])
+  }, [state, escape, showDefaults])
 
   // 그래프의 스텝 경계 (지금 영상)
   const chartSteps = useMemo(() => steps.rows.flatMap((r) => {
@@ -633,6 +708,12 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
   const multi = videos.length > 1
   const nameOf = (path: string) => videos.find((v) => v.path === path)?.name ?? path
   const curAnomalies = useMemo(() => (cycle?.anomalies ?? []).filter((a) => a.video === current), [cycle, current])
+  const curMemos = useMemo(() => memoPlaces.filter((p) => p.video === current), [memoPlaces, current])
+  const md = state.memoDraft
+  const draftSpan = useMemo<[number, number] | null>(
+    () => (md && md.video === current && md.start !== null && md.end !== null ? [md.start, md.end] : null),
+    [md, current],
+  )
 
   const frame = state.picking
   /** 고른 꼭짓점 (프레임 픽셀) → 비율 꼭짓점 넷 */
@@ -683,6 +764,22 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
           ⛔ 제외 구간
           {state.excludes.length > 0 && <span className="rv-va-count on">{state.excludes.length}</span>}
         </button>
+        <button
+          type="button"
+          className={state.memoDraft ? 'active' : ''}
+          onClick={() => state.setMemoDraft(state.memoDraft ? null : { video: current, start: null, end: null, memo: '', everyCycle: true, editing: null })}
+          title="고른 Cycle(보통 정상 동작을 확인한 첫 Cycle)의 구간에 메모를 남기면, 모든 Cycle의 같은 자리에서 그 Cycle에 있던 것과 같은 검출을 뺍니다 (예: 켜질 때 웰컴 애니메이션 = 부팅 로드 중). 새로 생긴 깜박임 등은 그대로 둡니다"
+        >
+          📝 메모 구간
+          {state.memos.length > 0 && <span className="rv-va-count on">{state.memos.length}</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowDefaults(true)}
+          title="깜박임·검은 화면·정지·화면 전환·Cycle 비교의 판정 기준 — 프로젝트마다 장치 사양에 맞게 바꿉니다"
+        >
+          ⚙ 기준값
+        </button>
         <span className="rv-search-go">
           {state.running
             ? <button type="button" onClick={state.stop} title="거기까지 잰 결과는 남깁니다">멈춤</button>
@@ -700,6 +797,19 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
           <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc)" onClick={state.close}>✕</button>
         </span>
       </div>
+      {state.memoDraft && (
+        <MemoBar
+          state={state}
+          current={current}
+          now={nowSeconds}
+          places={memoPlaces}
+          removed={memoRemoved}
+          anchor={anchor}
+          rows={steps.rows}
+          nameOf={multi ? (i) => videos[i]?.name ?? '' : null}
+          onSeek={(video, t) => videos[video] && onSeek(videos[video].path, t)}
+        />
+      )}
       {state.running && (
         <div className="small muted">
           <progress max={1} value={status?.progress ?? 0} />{' '}
@@ -728,6 +838,11 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
           excluded={current >= 0 ? excluded[current] ?? [] : []}
           cycleMaps={(current >= 0 && cycle?.maps[current]) || NO_MAPS}
           anomalies={curAnomalies}
+          memos={curMemos}
+          draft={draftSpan}
+          onSelect={state.memoDraft && current >= 0
+            ? (a, b) => state.setMemoDraft({ ...state.memoDraft!, video: current, start: Math.round(a * 100) / 100, end: Math.round(b * 100) / 100 })
+            : null}
           duration={current >= 0 ? videos[current].duration : null}
           steps={chartSteps}
           now={nowSeconds}
@@ -765,6 +880,7 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
           {!state.running && status?.state === 'canceled' && <span className="rv-search-warn">{`멈춤 — 거기까지 잰 결과입니다${state.elapsed !== null ? ` (${formatDuration(state.elapsed * 1000)})` : ''}`}</span>}
         </div>
       )}
+      {showDefaults && <AnalysisDefaultsDialog project={state.project} onClose={() => setShowDefaults(false)} />}
       {frame && (
         <QuadPickerDialog
           frame={frame}
@@ -792,12 +908,13 @@ interface Item {
   mark: 'normal' | 'ref' | null
 }
 
-export function VideoAnalysisResults({ state, results, removed, cycle, videos, steps, wallOf, onSeek }: {
+export function VideoAnalysisResults({ state, results, removed, memoRemoved, cycle, videos, steps, wallOf, onSeek }: {
   state: VideoAnalysisState
-  /** 영상마다 제외 구간을 뺀 검출 */
+  /** 영상마다 제외 구간·메모 구간에서 뺄 것을 뺀 검출 */
   results: DetectResult[]
-  /** 제외 구간으로 뺀 검출 수 */
+  /** 제외 구간으로 뺀 검출 수 · 메모 구간으로 뺀 검출 수 */
   removed: number
+  memoRemoved: number
   /** 첫 Cycle 기준 비교 (Cycle이 하나면 null) */
   cycle: CycleCompare | null
   videos: SearchVideo[]
@@ -824,6 +941,7 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
   }
   const [kindFilter, setKindFilter] = useState<KindGroup | 'all'>('all')
   const hideNormal = onlyAbnormal && cycle !== null
+  const rules = useMemo(() => rulesOf(state.project.params), [state.project.params])
 
   // 검출 시점의 스텝: 그때 하던 스텝 (영상 시작 시각을 몰라 벽시계를 모르면 없음, 테스트가 끝난 뒤면 없음)
   const timedRows = useMemo(() => steps.rows.filter((r) => r.time !== null).sort((a, b) => a.time! - b.time! || a.index - b.index), [steps.rows])
@@ -869,6 +987,16 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
     // 그 순간을 보게 조금 앞부터 재생 (전환은 바뀐 직후까지)
     onSeek(item.path, Math.max(0, item.start - (item.seg ? LEAD_S : 0.5)), true)
   }
+  // 이 검출 자리(앞뒤 MEMO_PAD_S초)를 메모 구간으로 고른다 (영상 분석 패널의 메모 줄이 열린다)
+  const memoAt = (item: Item) => {
+    const end = item.seg ? item.seg.end : item.start
+    state.setMemoDraft({
+      video: item.video, start: Math.max(0, Math.round((item.start - MEMO_PAD_S) * 100) / 100), end: Math.round((end + MEMO_PAD_S) * 100) / 100,
+      memo: state.memoDraft?.memo ?? '', everyCycle: state.memoDraft?.everyCycle ?? true, editing: null,
+    })
+    state.setPicked(item.key)
+    onSeek(item.path, Math.max(0, item.start - MEMO_PAD_S))
+  }
   const listRef = useRef<HTMLOListElement>(null)
   useEffect(() => {
     if (!state.picked) return
@@ -884,7 +1012,7 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
             key={k}
             type="button"
             className={`small-btn${tab === k ? ' active' : ''}`}
-            title={RULES[k]}
+            title={rules[k]}
             onClick={() => {
               setTab(k)
               setLimit(LIST_PAGE)
@@ -929,6 +1057,11 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
         {removed > 0 && tab !== 'cycle' && (
           <span className="small muted" title="제외 구간에 걸친 검출은 목록·그래프에서 뺍니다 (검은 화면·정지 구간은 구간 밖으로 남는 부분만 남김)">
             {`제외 구간으로 뺀 검출 ${removed}개`}
+          </span>
+        )}
+        {memoRemoved > 0 && tab !== 'cycle' && (
+          <span className="small muted" title="메모 구간에서 고른 Cycle에 있던 것과 같은 검출은 목록·그래프에서 뺍니다 (새로 생긴 검출은 남김)">
+            {`메모 구간으로 뺀 검출 ${memoRemoved}개`}
           </span>
         )}
       </div>
@@ -992,6 +1125,17 @@ export function VideoAnalysisResults({ state, results, removed, cycle, videos, s
               <span className="small ellipsis" title={step ? `#${step.row.index + 1} ${step.row.name}` : undefined}>
                 {step ? <>{`#${step.row.index + 1} ${step.row.name} `}<span className="muted">{`(+${step.offset.toFixed(2)}s)`}</span></> : <span className="muted">-</span>}
               </span>
+              <button
+                type="button"
+                className="icon-mini rv-va-memo-btn"
+                title={`이 자리(앞뒤 ${MEMO_PAD_S}초)를 메모 구간으로 — 메모를 남기면 모든 Cycle의 같은 자리에서 이와 같은 검출을 뺍니다`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  memoAt(item)
+                }}
+              >
+                📝
+              </button>
               {item.seg && (
                 <span className="small rv-va-detail">
                   {item.mark && (
@@ -1112,6 +1256,131 @@ function CycleItem({ a, picked, path, refPath, nameOf, wallOf, onPick }: {
         </button>
       </span>
     </li>
+  )
+}
+
+// ─────────────────────────────── 메모 구간 (영상 분석 패널 안): 그래프를 끌거나 지금 위치로 구간 → 메모 → 모든 Cycle
+
+/** 스텝 자리 글: #12 POWER ON +74.2s */
+const stepText = (row: ResultRow | undefined, offset: number) => (row ? `#${row.index + 1} ${row.name} +${offset.toFixed(1)}s` : '?')
+
+function MemoBar({ state, current, now, places, removed, anchor, rows, nameOf, onSeek }: {
+  state: VideoAnalysisState
+  /** 지금 영상 차례 */
+  current: number
+  /** 지금 영상 위치 (초) */
+  now: number
+  places: MemoPlace[]
+  removed: Map<string, number>
+  anchor: (video: number, seconds: number) => { row: ResultRow; offset: number } | null
+  rows: ResultRow[]
+  /** 영상이 여럿이면 영상 이름 */
+  nameOf: ((video: number) => string) | null
+  onSeek: (video: number, seconds: number) => void
+}) {
+  const draft = state.memoDraft!
+  const cycles = useMemo(() => new Set(rows.map((r) => r.cycle).filter(Boolean)).size, [rows])
+  const byIndex = useMemo(() => new Map(rows.map((r) => [r.index, r])), [rows])
+  // 지금 위치를 시작·끝으로 (다른 영상이면 반대쪽은 다시 고른다)
+  const setNow = (which: 'start' | 'end') => {
+    if (current < 0) return
+    const t = Math.round(now * 100) / 100
+    const keep = draft.video === current
+    state.setMemoDraft(which === 'start'
+      ? { ...draft, video: current, start: t, end: keep ? draft.end : null }
+      : { ...draft, video: current, end: t, start: keep ? draft.start : null })
+  }
+  const a = draft.start !== null && draft.end !== null ? Math.min(draft.start, draft.end) : null
+  const b = draft.start !== null && draft.end !== null ? Math.max(draft.start, draft.end) : null
+  // 스텝 자리는 행을 다 훑으므로 구간이 바뀔 때만 (재생 중에는 그대로)
+  const sa = useMemo(() => (a !== null ? anchor(draft.video, a) : null), [anchor, draft.video, a])
+  const sb = useMemo(() => (b !== null ? anchor(draft.video, b) : null), [anchor, draft.video, b])
+  const problem = a === null || b === null ? '그래프를 끌거나 [시작]·[끝], 검출 목록의 📝로 구간을 고르세요'
+    : b - a < 0.1 ? '구간이 너무 짧습니다'
+      : !sa || !sb ? 'Result 스텝이 없는 곳입니다 (스텝이 시작한 뒤만 고를 수 있습니다)'
+        : !draft.memo.trim() ? '메모를 적으세요' : null
+  const editing = state.memos.some((m) => m.id === draft.editing) ? draft.editing : null
+  const add = () => {
+    if (problem || !sa || !sb) return
+    const m: MemoSpan = {
+      id: editing ?? newId(), memo: draft.memo.trim(), start: sa.row.index, from: sa.offset, end: sb.row.index, to: sb.offset,
+      everyCycle: draft.everyCycle && cycles > 1,
+    }
+    state.setMemos(editing ? state.memos.map((x) => (x.id === editing ? m : x)) : [...state.memos, m])
+    state.setMemoDraft({ ...draft, start: null, end: null, memo: '', editing: null })
+  }
+  const edit = (m: MemoSpan) => {
+    const src = places.find((p) => p.id === m.id && p.source)
+    if (editing === m.id) return state.setMemoDraft({ ...draft, start: null, end: null, memo: '', editing: null })
+    state.setMemoDraft({ video: src?.video ?? draft.video, start: src?.start ?? null, end: src?.end ?? null, memo: m.memo, everyCycle: m.everyCycle, editing: m.id })
+    if (src) onSeek(src.video, src.start)
+  }
+  const remove = (id: string) => {
+    state.setMemos(state.memos.filter((m) => m.id !== id))
+    if (editing === id) state.setMemoDraft({ ...draft, start: null, end: null, memo: '', editing: null })
+  }
+  return (
+    <div className="rv-va-memo">
+      <div className="rv-va-memo-bar">
+        <strong className="small">📝 메모 구간</strong>
+        <button type="button" onClick={() => setNow('start')} title="지금 영상 위치를 구간 시작으로">시작 ◂ 지금</button>
+        <span className="mono small">{draft.video === current && draft.start !== null ? formatFrameTime(draft.start) : '-'}</span>
+        <button type="button" onClick={() => setNow('end')} title="지금 영상 위치를 구간 끝으로">끝 ◂ 지금</button>
+        <span className="mono small">{draft.video === current && draft.end !== null ? formatFrameTime(draft.end) : '-'}</span>
+        {a !== null && b !== null && <span className="small muted">{`${(b - a).toFixed(1)}초`}</span>}
+        <input
+          className="rv-va-memo-text"
+          placeholder="메모 (예: 부팅 로드 중)"
+          value={draft.memo}
+          maxLength={80}
+          onChange={(e) => state.setMemoDraft({ ...draft, memo: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') add()
+          }}
+        />
+        {cycles > 1 && (
+          <label className="small" title="모든 Cycle의 같은 자리(같은 스텝 · 같은 오프셋에서 밝기 흐름으로 ±5초 맞춤)에서 이 Cycle에 있던 것과 같은 검출을 뺍니다">
+            <input type="checkbox" checked={draft.everyCycle} onChange={(e) => state.setMemoDraft({ ...draft, everyCycle: e.target.checked })} />
+            모든 Cycle
+          </label>
+        )}
+        <button type="button" className="primary" disabled={!!problem} title={problem ?? undefined} onClick={add}>{editing ? '바꾸기' : '추가'}</button>
+        {editing && <button type="button" onClick={() => state.setMemoDraft({ ...draft, start: null, end: null, memo: '', editing: null })}>취소</button>}
+        <span className="rv-spacer" />
+        <button type="button" onClick={() => state.setMemoDraft(null)} title="닫기 (Esc) — 추가한 메모 구간은 그대로 둡니다">닫기</button>
+      </div>
+      <div className="small muted">
+        <span translate="no">
+          {sa && sb ? `${stepText(sa.row, sa.offset)} ~ ${stepText(sb.row, sb.offset)}${sa.row.cycle ? ` · Cycle ${sa.row.cycle}` : ''}` : ''}
+        </span>
+        {!(sa && sb) && problem && <span>{problem}</span>}
+        {' · '}
+        <span>고른 Cycle에 있던 것과 같은 검출(같은 종류·같은 자리 ±1초)만 모든 Cycle에서 빼고, 새로 생긴 것은 남깁니다</span>
+      </div>
+      {state.memos.length > 0 && (
+        <ul className="rv-va-exclude-list small">
+          {state.memos.map((m) => {
+            const own = places.filter((p) => p.id === m.id)
+            const src = own.find((p) => p.source)
+            const s0 = byIndex.get(m.start)
+            const e0 = byIndex.get(m.end)
+            const where = m.start === m.end ? `${stepText(s0, m.from)} ~ +${m.to.toFixed(1)}s` : `${stepText(s0, m.from)} ~ ${stepText(e0, m.to)}`
+            return (
+              <li key={m.id} className={editing === m.id ? 'editing' : undefined}>
+                <button type="button" className="link ellipsis" title="고른 Cycle의 이 구간으로 이동" onClick={() => src && onSeek(src.video, src.start)}>
+                  <span translate="no">{`📝 ${m.memo}`}</span>
+                </button>
+                <span className="ellipsis muted" translate="no" title={nameOf && src ? nameOf(src.video) : undefined}>{where}</span>
+                <span className="muted">{m.everyCycle ? `Cycle ${own.length}곳` : '이 Cycle만'}</span>
+                <span className="muted">{`뺀 검출 ${removed.get(m.id) ?? 0}개`}</span>
+                <button type="button" className="icon" aria-label="고치기" aria-pressed={editing === m.id} title={editing === m.id ? '고치기 그만두기' : '이 메모 구간 고치기 — 구간·메모를 바꾸고 [바꾸기]'} onClick={() => edit(m)}>✎</button>
+                <button type="button" className="icon" aria-label="빼기" title="이 메모 구간 지우기" onClick={() => remove(m.id)}>✕</button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
   )
 }
 
