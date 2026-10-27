@@ -23,8 +23,8 @@ const TABS: [ListTab, string][] = [
 ]
 // 탭에 대면 보이는 판정 기준
 const RULES: Record<ListTab, string> = {
-  black_screen: '검은 화면: 꺼진 수준 — 밝기가 기준 밝기(영상에서 가장 어두웠던 밝기)에 가깝고(차이가 5 · 기준 밝기의 15% · 켜진 평소 차이의 20% 중 큰 값 이하) 색이 없음 — 이 0.3초 넘게 이어진 곳. 윤곽이 가장 많은 칸까지 비어 있거나(완전히 꺼짐), 급격히 꺼져 2초 넘게 꺼져 있으면(아이콘·글자가 남아도). 2초 안에 다시 켜지면 깜박임',
-  flicker: '깜박임: 꺼지기 전 밝기보다 25%(최소 12) 넘게 어두워지기 시작해 0.3초 안에 꺼진 수준(검은 화면과 같은 기준)까지 내려갔다가 2초 안에 다시 켜짐 (돌아온 밝기는 안 따짐, 서서히 어두워지거나 밝게 번쩍이는 것은 뺌, 첫 깜박임부터 3초 안에 이어지면 한 묶음)',
+  black_screen: '검은 화면: 1차 밝기 — 기준 밝기(영상에서 가장 어두웠던 밝기)에 가깝고(차이가 5 · 기준 밝기의 15% · 켜진 평소 차이의 20% 중 큰 값 이하) 색이 없음, 2차 윤곽 — 윤곽이 가장 많은 칸이 꺼지기 전 1초의 절반 이하(완전히 꺼진 수준이면 늘 통과). 둘 다 맞는 상태가 2초 넘게 이어짐 (2초 안에 다시 켜지면 깜박임)',
+  flicker: '깜박임: 검은 화면과 같은 1차 밝기 · 2차 윤곽 기준으로 꺼졌다가 2초 안에 다시 켜짐. 꺼지기 전 밝기의 25%(최소 12) 넘게 떨어지기 시작해 0.3초 안에 꺼져야 함 (서서히 어두워진 것 · 밝게 번쩍이는 것은 뺌, 돌아온 밝기는 안 따짐, 첫 깜박임부터 3초 안에 이어지면 한 묶음)',
   static: '정지 구간: 화면 영역의 프레임 간 차이가 잡음 수준으로 정지 기준 이상 이어짐 (통째로 꺼진 구간은 뺌)',
   transitions: '화면 전환: 프레임 차이가 평소의 8배(최소 6) 넘게 튄 시점 (0.5초 안에 이어지면 한 건, 깜박임은 뺌)',
   cycle: 'Cycle 비교: 첫 Cycle을 기준으로 이후 Cycle의 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지) 동안 화면 밝기·평균 색을 스텝 시작부터 0.2초마다 견줘, 밝기 차이(평균 색은 1.5배)가 기준을 넘는 것이 0.6초 넘게 이어진 곳 (앞뒤 0.6초 어긋남은 봐 줌, 스텝 시작·끝 0.4초는 뺌)',
@@ -504,14 +504,20 @@ function AnalysisChart({ frames, allFrames, result, excluded, cycleMaps, anomali
 function SegmentDetail({ seg }: { seg: DetectedSegment }) {
   const info = seg.info
   if (info.type === 'black_screen') {
-    // 완전히 꺼지지 않고 아이콘·글자 윤곽이 남은 채 급격히 꺼진 것 (칸 윤곽이 꺼짐 기준 위)
-    const icons = info.sudden && ((info.grid && info.grid.value > info.grid.off) || (info.edge && info.edge.value >= 0.4 * Math.max(info.edge.ref, 0.05)))
-    const parts: string[] = [`${seg.dur.toFixed(2)}초 동안 꺼짐${info.sudden ? ` (급격히 꺼짐${icons ? ', 아이콘·글자 윤곽 남음' : ''})` : ''}`]
+    // 아이콘·글자 윤곽이 남음: 완전히 꺼진 기준보다 윤곽이 많다 (꺼지기 전보다 크게 줄어 꺼짐으로 봄)
+    const icons = (info.grid && info.grid.value > info.grid.full) || (info.edge && info.edge.value > info.edge.full)
+    const tags = [info.sudden ? '급격히 꺼짐' : '', icons ? '아이콘·글자 윤곽 남음' : ''].filter(Boolean)
+    const parts: string[] = [`${seg.dur.toFixed(2)}초 동안 꺼짐${tags.length ? ` (${tags.join(', ')})` : ''}`]
     if (info.contrast) {
       parts.push(`기준 밝기와 차이 ${info.contrast.value.toFixed(0)} (꺼짐 기준 ≤${info.contrast.off.toFixed(0)} · 기준 밝기 ${info.contrast.floor.toFixed(0)}, 켜진 평소 차이 ${info.contrast.on.toFixed(0)})`)
     }
     if (info.bright) parts.push(`밝기 ${info.bright.value.toFixed(0)}/평소 ${info.bright.ref.toFixed(0)}`)
-    if (info.grid) parts.push(`윤곽이 가장 많은 칸 ${info.grid.value.toFixed(1)} (꺼짐 기준 ≤${info.grid.off.toFixed(1)})`)
+    if (info.grid) {
+      const { value, off, lit } = info.grid
+      parts.push(lit !== undefined
+        ? `윤곽이 가장 많은 칸 ${value.toFixed(1)} (꺼짐 기준 ≤${off.toFixed(1)} · 꺼지기 전 ${lit.toFixed(1)})`
+        : `윤곽이 가장 많은 칸 ${value.toFixed(1)} (꺼짐 기준 ≤${off.toFixed(1)})`)
+    }
     if (info.edge) parts.push(`윤곽 ${info.edge.value.toFixed(2)}/평소 ${info.edge.ref.toFixed(2)}`)
     return <>{parts.map((p, i) => <span key={i}>{i > 0 && ', '}<span>{p}</span></span>)}</>
   }
