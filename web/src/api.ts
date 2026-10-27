@@ -502,6 +502,8 @@ export interface ImageSearchRequest {
   templateWidth: number
   templateHeight: number
   template: string
+  /** 크롭한 이미지 R·G·B 픽셀 base64 (없으면 에이전트가 회색조 밝기로만 견준다) */
+  templateRgb?: string
   searchX: number
   searchY: number
   searchWidth: number

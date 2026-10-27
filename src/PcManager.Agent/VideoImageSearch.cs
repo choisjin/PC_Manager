@@ -7,8 +7,10 @@ using PcManager.Shared;
 namespace PcManager.Agent;
 
 /// <summary>
-/// 결과 확인 도구의 이미지 찾기: ffmpeg로 영상의 모든 프레임을 검색 영역만 잘라 회색조 raw로 읽으며
-/// 템플릿(크롭한 이미지)과의 정규화 상관(NCC) 최댓값을 프레임별 유사도로 기록한다. 영상은 이 PC에서 처리해 옮기지 않는다.
+/// 결과 확인 도구의 이미지 찾기: ffmpeg로 영상의 모든 프레임을 검색 영역만 잘라 yuv420p raw로 읽으며
+/// 템플릿(크롭한 이미지)과의 유사도 최댓값을 프레임별로 기록한다. 영상은 이 PC에서 처리해 옮기지 않는다.
+/// 유사도 = 밝기 SSIM(평균 밝기 · 대비 · 무늬) × 색(평균 색의 색도가 다르면 0 쪽으로). 밝기·대비를 정규화한 상관(NCC)만 쓰던 때는
+/// 무늬가 거의 없는 작은 크롭(주황 덩어리)이 밝기 흐름만 비슷한 곳(초록 화면)에서도 70~97%가 나왔다.
 /// 검색 영역이 넓으면 줄여서 훑고 후보만 원래 크기로 다시 맞춘다 (Matcher).
 /// 웹이 유사도 기준으로 구간을 나누므로 기준을 바꿔도 다시 찾지 않는다
 /// </summary>
@@ -157,13 +159,21 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
             throw new InvalidOperationException("크롭한 이미지가 너무 작거나 잘못되었습니다.");
         if (r.FrameWidth < tw || r.FrameHeight < th)
             throw new InvalidOperationException("영상 크기를 알 수 없습니다.");
-        // 검색 영역: 화면 안으로, 템플릿보다 작으면 템플릿 크기로
+        // 검색 영역: 화면 안으로, 템플릿보다 작으면 템플릿 크기로. 4:2:0 영상은 ffmpeg crop이 좌표·크기를 짝수로 내려 자르므로
+        // (홀수면 읽는 프레임 크기가 어긋나 유사도가 엉터리였다) 짝수로 넓혀 자른다 (화면 크기가 홀수면 끝은 그대로, crop exact)
         var sx = Math.Clamp(r.SearchX, 0, r.FrameWidth - tw);
         var sy = Math.Clamp(r.SearchY, 0, r.FrameHeight - th);
         var sw = Math.Clamp(r.SearchWidth, tw, r.FrameWidth - sx);
         var sh = Math.Clamp(r.SearchHeight, th, r.FrameHeight - sy);
+        var right = Math.Min(r.FrameWidth, (sx + sw + 1) & ~1);
+        var bottom = Math.Min(r.FrameHeight, (sy + sh + 1) & ~1);
+        sx &= ~1;
+        sy &= ~1;
+        sw = right - sx;
+        sh = bottom - sy;
 
-        var matcher = new Matcher(new Template(r.Template, tw, th), sw, sh);
+        var rgb = r.TemplateRgb is { } bytes && bytes.Length == tw * th * 3 ? bytes : null;
+        var matcher = new Matcher(r.Template, rgb, tw, th, sw, sh);
         lock (job)
             job.Scale = matcher.Scale;
 
@@ -177,8 +187,9 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         var total = Math.Max(1, seconds.Sum());
         double before = 0;
 
-        logger.LogInformation("이미지 찾기: 영상 {Count}개 ({Ranges}), 템플릿 {Tw}x{Th}, 영역 {Sw}x{Sh}+{Sx}+{Sy}, 배율 1/{K}, 전체 검색 {Step}프레임마다",
-            r.Paths.Count, r.Ranges is null ? "전체" : $"구간 {plans.Sum(p => p?.Count ?? 0)}개 · {total:0}초", tw, th, sw, sh, sx, sy, matcher.Scale, matcher.Step);
+        logger.LogInformation("이미지 찾기: 영상 {Count}개 ({Ranges}), 템플릿 {Tw}x{Th}{Color}, 영역 {Sw}x{Sh}+{Sx}+{Sy}, 배율 1/{K}, 전체 검색 {Step}프레임마다",
+            r.Paths.Count, r.Ranges is null ? "전체" : $"구간 {plans.Sum(p => p?.Count ?? 0)}개 · {total:0}초", tw, th, rgb is null ? " (색 없음: 밝기만)" : "",
+            sw, sh, sx, sy, matcher.Scale, matcher.Step);
         foreach (var (path, index) in r.Paths.Select((p, i) => (p, i)))
         {
             job.Cancel.Token.ThrowIfCancellationRequested();
@@ -201,12 +212,15 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
                 continue;
             }
 
-            // fps 필터: 가변 프레임 영상도 프레임 i = i/fps초가 되게 고정 간격으로. 크기가 다른 영상은 크롭한 영상 크기로 맞춘다
+            // fps 필터: 가변 프레임 영상도 프레임 i = i/fps초가 되게 고정 간격으로. 크기가 다른 영상은 크롭한 영상 크기로 맞춘다.
+            // 밝기(Y)와 색(U·V, 반 크기)을 함께 받는다 — 영상의 범위·색 행렬 그대로 (평균 색을 RGB로 바꿀 때 VideoColor로)
+            var videoColor = VideoColor.Of(probe);
+            matcher.Use(videoColor);
             var filter = new List<string> { "fps=" + fps.ToString("0.###", CultureInfo.InvariantCulture) };
             if (probe.Width != r.FrameWidth || probe.Height != r.FrameHeight)
                 filter.Add($"scale={r.FrameWidth}:{r.FrameHeight}");
-            filter.Add($"crop={sw}:{sh}:{sx}:{sy}");
-            filter.Add("format=gray");
+            filter.Add($"crop={sw}:{sh}:{sx}:{sy}:exact=1");
+            filter.Add("format=" + videoColor.PixelFormat);
 
             var span = seconds[index];
             var start = before;
@@ -309,7 +323,7 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         args.AddRange([.. decode, "-i", path, "-an", "-sn", "-dn", "-vf", filter]);
         if (count >= 0)
             args.AddRange(["-frames:v", count.ToString(CultureInfo.InvariantCulture)]);
-        args.AddRange(["-f", "rawvideo", "-pix_fmt", "gray", "-"]);
+        args.AddRange(["-f", "rawvideo", "-pix_fmt", matcher.Color.PixelFormat, "-"]);
         foreach (var arg in args)
             info.ArgumentList.Add(arg);
 
@@ -326,7 +340,7 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         {
             for (var i = first; count < 0 || i < first + count; i++)
             {
-                var frame = ring[i % matcher.Step] ??= new byte[matcher.Width * matcher.Height];
+                var frame = ring[i % matcher.Step] ??= new byte[matcher.FrameBytes];
                 var read = await stdout.ReadAtLeastAsync(frame, frame.Length, throwOnEndOfStream: false, job.Cancel.Token);
                 if (read < frame.Length)
                     break;
@@ -382,31 +396,104 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
 
     private static byte ToByte(double score) => (byte)Math.Round(Math.Clamp(score, 0, 1) * 200);
 
-    /// <summary>회색조 템플릿 + NCC에 쓰는 합·분산</summary>
+    // SSIM 상수 (0.01·255)² · (0.03·255)²: 거의 한 색인 템플릿·창은 이 값이 받쳐 평균 밝기·대비로 견준다 (잡음을 무늬로 키우지 않는다)
+    private const double C1 = 6.5025;
+    private const double C2 = 58.5225;
+    // 색도 (R+K, G+K, B+K)/합: 같은 색이 어두워져도(노출) 그대로, 어두운 곳의 잡음은 K로 누른다
+    private const double ChromaDamp = 16;
+
+    /// <summary>평균 색(0~255) → 색도 (세 값의 합 1)</summary>
+    private static (double R, double G, double B) Chromaticity(double r, double g, double b)
+    {
+        var sum = r + g + b + 3 * ChromaDamp;
+        return ((r + ChromaDamp) / sum, (g + ChromaDamp) / sum, (b + ChromaDamp) / sum);
+    }
+
+    /// <summary>
+    /// 영상의 YUV 해석: 받을 raw 형식 · 범위(제한 16~235 / 전체 0~255) · 색 행렬(Kr, Kb). ffmpeg -i의 "yuv420p(tv, bt709, …)"에서 읽고,
+    /// 행렬을 모르면 HD(720줄 이상)는 BT.709, 아니면 BT.601. RGB 영상은 ffmpeg가 BT.601 제한 범위로 바꿔 준다
+    /// </summary>
+    private sealed record VideoColor(string PixelFormat, bool FullRange, double Kr, double Kb)
+    {
+        public static readonly VideoColor Default = new("yuv420p", false, 0.2126, 0.0722);
+
+        public static VideoColor Of(VideoTrimmer.Probe probe)
+        {
+            var format = probe.PixelFormat ?? "";
+            var info = (probe.ColorInfo ?? "").Split([',', '/'], StringSplitOptions.TrimEntries);
+            if (format.Contains("rgb") || format.Contains("bgr") || format.StartsWith("gbr"))
+                return new("yuv420p", false, 0.299, 0.114);
+            var jpeg = format.StartsWith("yuvj");
+            var (kr, kb) = info.Contains("bt709") ? (0.2126, 0.0722)
+                : info.Any(s => s.StartsWith("bt2020")) ? (0.2627, 0.0593)
+                : info.Contains("bt470bg") || info.Contains("smpte170m") ? (0.299, 0.114)
+                : probe.Height >= 720 ? (0.2126, 0.0722) : (0.299, 0.114);
+            return new(jpeg ? "yuvj420p" : "yuv420p", jpeg || info.Contains("pc"), kr, kb);
+        }
+
+        /// <summary>Y 한 단계 = 0~255 밝기 몇 단계</summary>
+        public double LumaScale => FullRange ? 1 : 255.0 / 219;
+
+        /// <summary>Y → 0~255 밝기 (템플릿과 같은 눈금)</summary>
+        public double Luma(double y) => FullRange ? y : (y - 16) * LumaScale;
+
+        /// <summary>평균 Y·U·V → R·G·B (0~255)</summary>
+        public (double R, double G, double B) Rgb(double y, double u, double v)
+        {
+            var (luma, cb, cr) = FullRange ? (y / 255, (u - 128) / 255, (v - 128) / 255) : ((y - 16) / 219, (u - 128) / 224, (v - 128) / 224);
+            var r = luma + 2 * (1 - Kr) * cr;
+            var b = luma + 2 * (1 - Kb) * cb;
+            var g = (luma - Kr * r - Kb * b) / (1 - Kr - Kb);
+            return (Math.Clamp(r, 0, 1) * 255, Math.Clamp(g, 0, 1) * 255, Math.Clamp(b, 0, 1) * 255);
+        }
+    }
+
+    /// <summary>템플릿 밝기(0~255)와 평균·분산 · 평균 색의 색도 (모르면 null: 색은 견주지 않음)</summary>
     private sealed class Template
     {
+        /// <summary>
+        /// 웹이 보낸 R·G·B 픽셀에서: 밝기는 영상의 색 행렬로 (영상의 Y와 같은 식 — 웹의 회색조는 BT.601이라 BT.709 영상에서는
+        /// 주황과 초록처럼 색이 섞인 크롭의 밝기 관계가 달라져 진짜도 유사도가 낮아진다) · 평균 색의 색도
+        /// </summary>
+        public static Template FromRgb(byte[] rgb, int width, int height, VideoColor color)
+        {
+            var n = width * height;
+            var luma = new byte[n];
+            var kg = 1 - color.Kr - color.Kb;
+            double sr = 0, sg = 0, sb = 0;
+            for (var i = 0; i < n; i++)
+            {
+                int r = rgb[i * 3], g = rgb[i * 3 + 1], b = rgb[i * 3 + 2];
+                luma[i] = (byte)Math.Round(color.Kr * r + kg * g + color.Kb * b);
+                sr += r;
+                sg += g;
+                sb += b;
+            }
+            return new Template(luma, width, height, Chromaticity(sr / n, sg / n, sb / n));
+        }
+
         public readonly int Width;
         public readonly int Height;
         public readonly byte[] Pixels;
-        public readonly long Sum;
-        // Σ(T − 평균)²
-        public readonly double Norm2;
-        // 거의 한 색(표준편차 2 미만)이면 상관을 못 재므로 밝기 차이로 비교
-        public readonly bool Flat;
+        public readonly double Mean;
+        // 분산 (픽셀 수로 나눔)
+        public readonly double Variance;
+        public readonly (double R, double G, double B)? Chroma;
 
-        public Template(byte[] pixels, int width, int height)
+        public Template(byte[] pixels, int width, int height, (double R, double G, double B)? chroma)
         {
             Width = width;
             Height = height;
             Pixels = pixels;
-            long sum2 = 0;
+            Chroma = chroma;
+            long sum = 0, sum2 = 0;
             foreach (var p in pixels)
             {
-                Sum += p;
+                sum += p;
                 sum2 += p * p;
             }
-            Norm2 = sum2 - (double)Sum * Sum / pixels.Length;
-            Flat = Norm2 / pixels.Length < 4;
+            Mean = (double)sum / pixels.Length;
+            Variance = Math.Max(0, (double)sum2 / pixels.Length - Mean * Mean);
         }
 
         /// <summary>k배 줄이기 (k×k 칸 평균)</summary>
@@ -424,27 +511,34 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
                             sum += Pixels[(y * k + dy) * Width + x * k + dx];
                     small[y * w + x] = (byte)((sum + k * k / 2) / (k * k));
                 }
-            return new Template(small, w, h);
+            return new Template(small, w, h, Chroma);
         }
     }
 
     /// <summary>
-    /// 프레임(검색 영역) 한 장. 위치를 많이 대 볼 때만 합·제곱합 적분 영상을 만들어 창마다 분산을 바로 구하고,
-    /// 몇 군데만 볼 때는(크롭 위치 그대로·직전 위치 둘레) 내적과 함께 바로 더한다 (1080p 전체 적분은 프레임마다 하기엔 무겁다)
+    /// 프레임(검색 영역) 한 장: Y(밝기) 뒤에 U·V(가로세로 반 크기)가 붙은 yuv420p. 위치를 많이 대 볼 때만 합·제곱합 적분 영상을 만들어
+    /// 창마다 평균·분산을 바로 구하고, 몇 군데만 볼 때는(크롭 위치 그대로·직전 위치 둘레) 내적과 함께 바로 더한다
+    /// (1080p 전체 적분은 프레임마다 하기엔 무겁다). 줄인 프레임(Matcher의 1/Scale 훑기)은 Y만 쓴다
     /// </summary>
     private sealed class Plane(int width, int height)
     {
         public readonly int Width = width;
         public readonly int Height = height;
+        public readonly int ChromaWidth = (width + 1) / 2;
+        public readonly int ChromaHeight = (height + 1) / 2;
         public byte[] Pixels = new byte[width * height];
         private long[]? _sum;
         private long[]? _sum2;
+        private long[]? _sumU;
+        private long[]? _sumV;
         private bool _integrated;
+        private bool _chromaIntegrated;
 
-        public void Load(byte[] pixels)
+        public void Load(byte[] frame)
         {
-            Pixels = pixels;
+            Pixels = frame;
             _integrated = false;
+            _chromaIntegrated = false;
         }
 
         public void Integrate()
@@ -467,7 +561,31 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
             _integrated = true;
         }
 
-        /// <summary>source를 k배 줄여 담는다 (k×k 칸 평균)</summary>
+        /// <summary>U·V 합 적분 영상 (색을 많은 위치에서 볼 때)</summary>
+        public void IntegrateChroma()
+        {
+            if (_chromaIntegrated)
+                return;
+            var stride = ChromaWidth + 1;
+            _sumU ??= new long[stride * (ChromaHeight + 1)];
+            _sumV ??= new long[stride * (ChromaHeight + 1)];
+            var u = Width * Height;
+            var v = u + ChromaWidth * ChromaHeight;
+            for (var y = 0; y < ChromaHeight; y++)
+            {
+                long rowU = 0, rowV = 0;
+                for (var x = 0; x < ChromaWidth; x++)
+                {
+                    rowU += Pixels[u + y * ChromaWidth + x];
+                    rowV += Pixels[v + y * ChromaWidth + x];
+                    _sumU[(y + 1) * stride + x + 1] = _sumU[y * stride + x + 1] + rowU;
+                    _sumV[(y + 1) * stride + x + 1] = _sumV[y * stride + x + 1] + rowV;
+                }
+            }
+            _chromaIntegrated = true;
+        }
+
+        /// <summary>source의 Y를 k배 줄여 담는다 (k×k 칸 평균)</summary>
         public void Shrink(Plane source, int k)
         {
             for (var y = 0; y < Height; y++)
@@ -485,41 +603,64 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
             Integrate();
         }
 
-        /// <summary>(x, y)에 템플릿을 대 본 유사도 (NCC, 한 색 템플릿이면 밝기 차이) −1~1</summary>
-        public double Score(Template t, int px, int py)
+        /// <summary>
+        /// (x, y)에 템플릿을 대 본 밝기 SSIM (평균 밝기 × 대비·무늬, −1~1)과 창의 평균 Y.
+        /// 영상의 Y는 color로 0~255 밝기 눈금으로 바꿔 템플릿과 견준다
+        /// </summary>
+        public (double Ssim, double MeanY) Ssim(Template t, int px, int py, VideoColor color)
         {
             var n = t.Pixels.Length;
-            if (t.Flat)
-            {
-                long diff = 0;
-                for (var y = 0; y < t.Height; y++)
-                {
-                    var f = Pixels.AsSpan((py + y) * Width + px, t.Width);
-                    var o = t.Pixels.AsSpan(y * t.Width, t.Width);
-                    for (var x = 0; x < o.Length; x++)
-                        diff += Math.Abs(f[x] - o[x]);
-                }
-                return 1 - diff / (255.0 * n);
-            }
             long dot = 0, sum = 0, sum2 = 0;
             for (var y = 0; y < t.Height; y++)
                 Accumulate(t.Pixels.AsSpan(y * t.Width, t.Width), Pixels.AsSpan((py + y) * Width + px, t.Width),
                     ref dot, ref sum, ref sum2, !_integrated);
             if (_integrated)
             {
-                var stride = Width + 1;
-                long R(long[] s) => s[(py + t.Height) * stride + px + t.Width] - s[py * stride + px + t.Width]
-                    - s[(py + t.Height) * stride + px] + s[py * stride + px];
-                sum = R(_sum!);
-                sum2 = R(_sum2!);
+                sum = Box(_sum!, Width + 1, px, py, px + t.Width, py + t.Height);
+                sum2 = Box(_sum2!, Width + 1, px, py, px + t.Width, py + t.Height);
             }
-            var variance = sum2 - (double)sum * sum / n;
-            // 거의 한 색인 곳에는 무늬 있는 템플릿이 없다
-            if (variance < 4.0 * n)
-                return 0;
-            // Σ(T − T평균)·W = ΣT·W − T평균·ΣW
-            return (dot - (double)t.Sum * sum / n) / Math.Sqrt(t.Norm2 * variance);
+            var mean = (double)sum / n;
+            var variance = Math.Max(0, (double)sum2 / n - mean * mean);
+            // Σ(T − T평균)(W − W평균)/n = ΣT·W/n − T평균·W평균
+            var covariance = (double)dot / n - t.Mean * mean;
+            var a = color.LumaScale;
+            var luma = color.Luma(mean);
+            var l = (2 * t.Mean * luma + C1) / (t.Mean * t.Mean + luma * luma + C1);
+            var cs = (2 * a * covariance + C2) / (t.Variance + a * a * variance + C2);
+            return (l * cs, mean);
         }
+
+        /// <summary>창 (x, y, w, h)의 평균 U·V (반 크기 칸으로 덮이는 만큼)</summary>
+        public (double U, double V) ChromaMean(int x, int y, int w, int h)
+        {
+            var x0 = x >> 1;
+            var y0 = y >> 1;
+            var x1 = Math.Min(ChromaWidth, ((x + w - 1) >> 1) + 1);
+            var y1 = Math.Min(ChromaHeight, ((y + h - 1) >> 1) + 1);
+            long su = 0, sv = 0;
+            if (_chromaIntegrated)
+            {
+                su = Box(_sumU!, ChromaWidth + 1, x0, y0, x1, y1);
+                sv = Box(_sumV!, ChromaWidth + 1, x0, y0, x1, y1);
+            }
+            else
+            {
+                var u = Width * Height;
+                var v = u + ChromaWidth * ChromaHeight;
+                for (var cy = y0; cy < y1; cy++)
+                    for (var cx = x0; cx < x1; cx++)
+                    {
+                        su += Pixels[u + cy * ChromaWidth + cx];
+                        sv += Pixels[v + cy * ChromaWidth + cx];
+                    }
+            }
+            var count = (double)(x1 - x0) * (y1 - y0);
+            return (su / count, sv / count);
+        }
+
+        /// <summary>적분 영상 s의 [x0, x1)×[y0, y1) 합</summary>
+        private static long Box(long[] s, int stride, int x0, int y0, int x1, int y1) =>
+            s[y1 * stride + x1] - s[y0 * stride + x1] - s[y1 * stride + x0] + s[y0 * stride + x0];
 
         /// <summary>한 줄의 ΣT·W (sums면 ΣW·ΣW²도). 정수 SIMD: 바이트 곱은 ushort에 들어간다 (255² &lt; 65536)</summary>
         private static void Accumulate(ReadOnlySpan<byte> t, ReadOnlySpan<byte> w, ref long dot, ref long sum, ref long sum2, bool sums)
@@ -562,8 +703,8 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
     }
 
     /// <summary>
-    /// 검색 영역에서 템플릿 찾기. 영역이 넓으면 1/Scale로 줄여 모든 위치를 훑은 뒤 상위 후보를 원래 크기에서 다시 맞춘다.
-    /// 그래도 계산이 많으면 Step 프레임마다만 전체 검색하고, 그 사이 프레임은 직전 위치 둘레만 본다 (아이콘은 보통 제자리)
+    /// 검색 영역에서 템플릿 찾기. 위치마다 유사도 = 밝기 SSIM × 색 (Score). 영역이 넓으면 1/Scale로 줄여 모든 위치를 훑은 뒤
+    /// 상위 후보를 원래 크기에서 다시 맞춘다. 그래도 계산이 많으면 Step 프레임마다만 전체 검색하고, 그 사이 프레임은 직전 위치 둘레만 본다 (아이콘은 보통 제자리)
     /// </summary>
     private sealed class Matcher
     {
@@ -573,33 +714,55 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         private const int MaxStep = 15;
         private const int Candidates = 3;
         private const int TrackRadius = 2;
+        // 색도 거리 이만큼에서 색 점수 절반: 노출·화이트밸런스·색 행렬 차이(0.01~0.04)는 거의 그대로, 주황↔초록·회색(약 0.4)은 0에 가깝게
+        private const double HueHalf = 0.1;
 
         public readonly int Width;
         public readonly int Height;
         public readonly int Scale;
         public readonly int Step;
-        private readonly Template _template;
-        private readonly Template? _coarse;
+        // 웹이 보낸 R·G·B (없으면 회색조 템플릿만: 색은 견주지 않음) — 영상마다 그 색 행렬로 템플릿을 다시 만든다 (Use)
+        private readonly byte[]? _rgb;
+        private Template _template;
+        private Template? _coarse;
         private readonly Plane? _small;
 
-        public Matcher(Template template, int width, int height)
+        public Matcher(byte[] gray, byte[]? rgb, int templateWidth, int templateHeight, int width, int height)
         {
-            _template = template;
+            _rgb = rgb;
+            _template = new Template(gray, templateWidth, templateHeight, null);
             Width = width;
             Height = height;
-            long Cost(int s) => (long)(width / s - template.Width / s + 1) * (height / s - template.Height / s + 1)
-                * (template.Width / s) * (template.Height / s);
+            long Cost(int s) => (long)(width / s - templateWidth / s + 1) * (height / s - templateHeight / s + 1)
+                * (templateWidth / s) * (templateHeight / s);
             var k = 1;
-            while (Cost(k) > Budget && Math.Min(template.Width, template.Height) / (k + 1) >= MinCoarseSide)
+            while (Cost(k) > Budget && Math.Min(templateWidth, templateHeight) / (k + 1) >= MinCoarseSide)
                 k++;
             Scale = k;
             Step = (int)Math.Clamp((Cost(k) + Budget - 1) / Budget, 1, MaxStep);
             if (k > 1)
             {
-                _coarse = template.Shrink(k);
+                _coarse = _template.Shrink(k);
                 _small = new Plane(width / k, height / k);
             }
         }
+
+        /// <summary>지금 훑는 영상의 YUV 해석 (Use로 영상마다 바꾼다)</summary>
+        public VideoColor Color { get; private set; } = VideoColor.Default;
+
+        /// <summary>이 영상을 훑기 전에: YUV 해석을 바꾸고, R·G·B가 있으면 템플릿 밝기를 이 영상의 색 행렬로 다시 만든다</summary>
+        public void Use(VideoColor color)
+        {
+            Color = color;
+            if (_rgb is null)
+                return;
+            _template = Template.FromRgb(_rgb, _template.Width, _template.Height, color);
+            if (Scale > 1)
+                _coarse = _template.Shrink(Scale);
+        }
+
+        /// <summary>ffmpeg가 보내는 프레임 한 장의 바이트 수 (yuv420p: Y + 반 크기 U·V)</summary>
+        public int FrameBytes => Width * Height + 2 * ((Width + 1) / 2) * ((Height + 1) / 2);
 
         public Plane NewPlane() => new(Width, Height);
 
@@ -607,15 +770,23 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
         public (double Score, (int X, int Y) At) Full(Plane plane)
         {
             if (_coarse is null || _small is null)
-                return Exhaustive(plane, _template);
+                return Exhaustive(plane);
             _small.Shrink(plane, Scale);
+            if (_template.Chroma is not null)
+                plane.IntegrateChroma();
             var cols = _small.Width - _coarse.Width + 1;
             var rows = _small.Height - _coarse.Height + 1;
             var map = new double[cols * rows];
+            var (small, coarse) = (_small, _coarse);
             Parallel.For(0, rows, y =>
             {
                 for (var x = 0; x < cols; x++)
-                    map[y * cols + x] = _small.Score(_coarse, x, y);
+                {
+                    // 색은 원래 크기의 그 자리에서 (줄인 칸 (x, y) ≈ 원래 (x·Scale, y·Scale)), 평균 Y는 줄인 창으로
+                    var (ssim, meanY) = small.Ssim(coarse, x, y, Color);
+                    map[y * cols + x] = ssim <= 0 ? ssim
+                        : ssim * Hue(plane, Math.Min(x * Scale, Width - _template.Width), Math.Min(y * Scale, Height - _template.Height), meanY);
+                }
             });
             // 상위 후보 (서로 템플릿 반 크기 이상 떨어진 것)를 원래 크기에서 다시 맞춘다.
             // 줄인 칸 (cx, cy)는 원래 위치 cx·Scale ± Scale/2 쯤 (줄일 때 칸 경계가 어긋난 만큼)
@@ -654,7 +825,7 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
                 var best = (Score: double.MinValue, X: x0);
                 for (var x = x0; x <= x1; x++)
                 {
-                    var s = plane.Score(_template, x, y);
+                    var s = Score(plane, x, y, best.Score);
                     if (s > best.Score)
                         best = (s, x);
                 }
@@ -673,20 +844,47 @@ public class VideoImageSearch(VideoTrimmer trimmer, ILogger<VideoImageSearch> lo
             return (rowBest[row].Score, (rowBest[row].X, y0 + row));
         }
 
-        private static (double Score, (int X, int Y) At) Exhaustive(Plane plane, Template t)
+        /// <summary>
+        /// (x, y)의 유사도 = 밝기 SSIM × 색. 색 점수는 1을 넘지 않으므로 SSIM이 floor(그 줄에서 지금까지 가장 높은 값) 이하면
+        /// 색은 보지 않고 SSIM을 돌려준다 (어차피 최댓값이 못 된다)
+        /// </summary>
+        private double Score(Plane plane, int x, int y, double floor)
         {
-            var cols = plane.Width - t.Width + 1;
-            var rows = plane.Height - t.Height + 1;
+            var (ssim, meanY) = plane.Ssim(_template, x, y, Color);
+            return ssim <= floor || ssim <= 0 ? ssim : ssim * Hue(plane, x, y, meanY);
+        }
+
+        /// <summary>
+        /// 색 점수 0~1: 창 (x, y)의 평균 색과 템플릿 평균 색의 색도 거리 d → 1/(1+(d/HueHalf)⁴).
+        /// 밝기는 SSIM이 보므로 여기서는 색만 (같은 색이 어두워진 것은 1에 가깝다). 템플릿 색을 모르면 1
+        /// </summary>
+        private double Hue(Plane plane, int x, int y, double meanY)
+        {
+            if (_template.Chroma is not { } t)
+                return 1;
+            var (u, v) = plane.ChromaMean(x, y, _template.Width, _template.Height);
+            var (r, g, b) = Color.Rgb(meanY, u, v);
+            var c = Chromaticity(r, g, b);
+            var d2 = ((c.R - t.R) * (c.R - t.R) + (c.G - t.G) * (c.G - t.G) + (c.B - t.B) * (c.B - t.B)) / (HueHalf * HueHalf);
+            return 1 / (1 + d2 * d2);
+        }
+
+        private (double Score, (int X, int Y) At) Exhaustive(Plane plane)
+        {
+            var cols = plane.Width - _template.Width + 1;
+            var rows = plane.Height - _template.Height + 1;
             if (cols * rows == 1)
-                return (plane.Score(t, 0, 0), (0, 0));
+                return (Score(plane, 0, 0, double.MinValue), (0, 0));
             plane.Integrate();
+            if (_template.Chroma is not null)
+                plane.IntegrateChroma();
             var rowBest = new (double Score, int X)[rows];
             Parallel.For(0, rows, y =>
             {
                 var best = (Score: double.MinValue, X: 0);
                 for (var x = 0; x < cols; x++)
                 {
-                    var s = plane.Score(t, x, y);
+                    var s = Score(plane, x, y, best.Score);
                     if (s > best.Score)
                         best = (s, x);
                 }

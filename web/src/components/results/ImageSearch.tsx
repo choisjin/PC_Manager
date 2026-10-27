@@ -11,24 +11,21 @@ import { rowAtTime } from './sync'
 import { copyTable, downloadXlsx } from './tableExport'
 import {
   type AreaMode, areaOf, type CropTarget, type FrameShot, type ImageSearchState, type Rect, RESULT_COLUMNS, type ResultColumn, type SearchScope,
-  type SearchVideo, type Segment, type StepSource, stepWindows,
+  type SearchVideo, type Segment, type StepSource, stepWindows, templatePixels,
 } from './imageSearchState'
 
 // 결과 확인 이미지 찾기 화면: 영상 위 크롭·영역 표시(CropOverlay) · 크롭 창(CropDialog) · 설정·진행·찾은 구간(ImageSearchPanel).
 // 상태·찾기 작업은 imageSearchState
 
-/** 프레임의 rect 부분을 회색조로 (BT.601 밝기) */
-function captureTemplate(source: CanvasImageSource, rect: Rect): { gray: Uint8Array; preview: string } {
+/** 프레임의 rect 부분: 회색조(BT.601 밝기) · R·G·B · 미리보기 PNG */
+function captureTemplate(source: CanvasImageSource, rect: Rect): { gray: Uint8Array; rgb: Uint8Array; preview: string } {
   const canvas = document.createElement('canvas')
   canvas.width = rect.w
   canvas.height = rect.h
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) throw new Error('캔버스를 만들지 못했습니다')
   context.drawImage(source, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h)
-  const data = context.getImageData(0, 0, rect.w, rect.h).data
-  const gray = new Uint8Array(rect.w * rect.h)
-  for (let i = 0; i < gray.length; i++) gray[i] = Math.round(data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114)
-  return { gray, preview: canvas.toDataURL('image/png') }
+  return { ...templatePixels(context.getImageData(0, 0, rect.w, rect.h).data, rect.w * rect.h), preview: canvas.toDataURL('image/png') }
 }
 
 // ─────────────────────────────── 영상 위 크롭·영역 표시 (VideoTransport의 영상 칸 안, 고르기는 크롭 창에서)
@@ -78,8 +75,8 @@ function CropDialog({ state, crop }: { state: ImageSearchState; crop: CropTarget
     if (sel.w < MIN_CROP || sel.h < MIN_CROP) return null
     if (kind === 'template') {
       try {
-        const { gray, preview } = captureTemplate(frame.canvas, sel)
-        state.setTemplate({ rect: sel, frameWidth: frame.width, frameHeight: frame.height, gray, preview, path: frame.path, time: frame.time })
+        const { gray, rgb, preview } = captureTemplate(frame.canvas, sel)
+        state.setTemplate({ rect: sel, frameWidth: frame.width, frameHeight: frame.height, gray, rgb, preview, path: frame.path, time: frame.time })
       } catch (err) {
         return `이미지를 떼어 내지 못했습니다: ${toMessage(err)}`
       }

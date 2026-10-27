@@ -5191,8 +5191,9 @@ th.sortable:hover {
 .rv-seek-marks > span { position: absolute; top: 0; bottom: 0; background: #f5a623; }
 .rv-crop { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
 .rv-crop-rect, .rv-crop-area { position: absolute; box-sizing: border-box; pointer-events: none; }
-.rv-crop-rect { border: 2px solid #f5a623; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6); }
-.rv-crop-area { border: 2px dashed #4fc3f7; background: rgba(79, 195, 247, 0.08); }
+/* 테두리는 바깥에 그려 크롭·영역 안의 영상을 가리지 않는다 (안쪽에 그리면 작은 크롭은 테두리가 다 덮어 크롭한 그림이 프레임마다 붙어 있는 것처럼 보였다) */
+.rv-crop-rect { box-shadow: 0 0 0 2px #f5a623, 0 0 0 3px rgba(0, 0, 0, 0.6); }
+.rv-crop-area { outline: 2px dashed #4fc3f7; }
 /* 크롭 창: 지금 프레임을 확대해 픽셀 단위로 고른다 */
 .rv-cropper { width: min(1280px, calc(100vw - 32px)); height: min(860px, calc(100vh - 48px)); }
 .rv-cropper[open] { display: flex; flex-direction: column; }

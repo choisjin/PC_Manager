@@ -180,11 +180,15 @@ public record VideoPrepareProgress(string Stage, double Fraction, long Bytes, lo
 /// Template: TemplateWidth×TemplateHeight 회색조(0~255) 픽셀, 한 줄씩
 /// </summary>
 /// <param name="Ranges">이 구간들만 훑는다 (고른 스텝 앞뒤 몇 초). null이면 영상 전체. 구간이 없는 영상은 훑지 않는다</param>
+/// <param name="TemplateRgb">
+/// 크롭한 이미지 R·G·B 픽셀 (TemplateWidth×TemplateHeight×3, 한 줄씩). 있으면 밝기를 영상의 색 행렬로 다시 구하고(Template은 BT.601)
+/// 평균 색이 다른 곳은 유사도를 낮춘다. 옛 웹·예약은 null → 회색조 밝기만
+/// </param>
 public record ImageSearchRequest(
     IReadOnlyList<string> Paths, int FrameWidth, int FrameHeight,
     int TemplateWidth, int TemplateHeight, byte[] Template,
     int SearchX, int SearchY, int SearchWidth, int SearchHeight,
-    IReadOnlyList<ImageSearchRange>? Ranges = null);
+    IReadOnlyList<ImageSearchRange>? Ranges = null, byte[]? TemplateRgb = null);
 
 /// <summary>이미지 찾기로 훑을 구간: Paths의 Video번째 영상 Start~End초</summary>
 public record ImageSearchRange(int Video, double Start, double End);

@@ -92,6 +92,8 @@ export interface Template {
   frameWidth: number
   frameHeight: number
   gray: Uint8Array
+  /** R·G·B 픽셀: 에이전트가 영상의 색 행렬로 밝기를 다시 구하고 평균 색도 견준다 (서버에는 적지 않고, 다시 열면 미리보기 PNG에서 되살림) */
+  rgb?: Uint8Array
   preview: string
   /** 크롭한 영상과 위치 (안내용) */
   path: string
@@ -119,6 +121,8 @@ interface Part {
 
 // 에이전트가 잠깐 다시 연결하는 동안 묻기 실패를 견디는 횟수 (1초 간격 → 약 30초, 작업은 에이전트에 그대로 있다)
 const MAX_FAILURES = 30
+// 크롭 R·G·B를 함께 보내는 최대 크기 (100만 픽셀): 더 크면 요청이 너무 커져 회색조로만 견준다
+const MAX_RGB_BYTES = 3_000_000
 
 /** 다시 열 때 되살리는 이미지 찾기 설정 (서버 작업 목록에 함께 적는다). 크롭 이미지는 base64 */
 interface SearchParams {
@@ -192,7 +196,7 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
   }, [agentId])
 
   const params = (): SearchParams | null => template && {
-    template: { ...template, gray: toBase64(template.gray) },
+    template: { ...template, gray: toBase64(template.gray), rgb: undefined },
     areaMode, customArea, threshold, gap, scope, stepColumn, stepValues, before, after, searched,
   }
 
@@ -207,6 +211,10 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
       const p = (await api.resultJobParams(job.id).catch(() => null)) as SearchParams | null
       if (!p || jobRef.current) return
       setTemplate({ ...p.template, gray: fromBase64(p.template.gray) })
+      // R·G·B는 미리보기 PNG(크롭 크기 그대로)에서 — 못 읽으면 다시 찾을 때 회색조로만 견준다
+      void rgbFromPreview(p.template.preview, p.template.rect.w, p.template.rect.h).then((rgb) => {
+        if (rgb) setTemplate((t) => (t && t.preview === p.template.preview ? { ...t, rgb } : t))
+      })
       setAreaMode(p.areaMode)
       setCustomArea(p.customArea)
       setThreshold(p.threshold)
@@ -260,6 +268,7 @@ export function useImageSearch(ctx: JobContext, videos: SearchVideo[]) {
     templateWidth: t.rect.w,
     templateHeight: t.rect.h,
     template: toBase64(t.gray),
+    templateRgb: t.rgb && t.rgb.length <= MAX_RGB_BYTES ? toBase64(t.rgb) : undefined,
     searchX: area.x,
     searchY: area.y,
     searchWidth: area.w,
@@ -455,6 +464,41 @@ export function areaOf(state: ImageSearchState): Rect | null {
   if (state.areaMode === 'full') return { x: 0, y: 0, w: t.frameWidth, h: t.frameHeight }
   if (state.areaMode === 'custom' && state.customArea) return state.customArea
   return t.rect
+}
+
+/** 캔버스 픽셀(RGBA) count개 → 회색조(BT.601 밝기) · R·G·B */
+export function templatePixels(data: Uint8ClampedArray, count: number): { gray: Uint8Array; rgb: Uint8Array } {
+  const gray = new Uint8Array(count)
+  const rgb = new Uint8Array(count * 3)
+  for (let i = 0; i < count; i++) {
+    const r = data[i * 4]
+    const g = data[i * 4 + 1]
+    const b = data[i * 4 + 2]
+    gray[i] = Math.round(r * 0.299 + g * 0.587 + b * 0.114)
+    rgb[i * 3] = r
+    rgb[i * 3 + 1] = g
+    rgb[i * 3 + 2] = b
+  }
+  return { gray, rgb }
+}
+
+/** 크롭 미리보기 PNG(w×h, 손실 없음) → R·G·B. 크기가 다르거나 못 읽으면 null */
+async function rgbFromPreview(preview: string, w: number, h: number): Promise<Uint8Array | null> {
+  try {
+    const image = new Image()
+    image.src = preview
+    await image.decode()
+    if (image.naturalWidth !== w || image.naturalHeight !== h) return null
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) return null
+    context.drawImage(image, 0, 0)
+    return templatePixels(context.getImageData(0, 0, w, h).data, w * h).rgb
+  } catch {
+    return null
+  }
 }
 
 function toBase64(bytes: Uint8Array): string {

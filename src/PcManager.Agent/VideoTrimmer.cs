@@ -79,7 +79,10 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
 
     private string CacheDirectory => Path.Combine(options.Value.DataDirectory, "video-cache");
 
-    internal sealed record Probe(string Format, string? Codec, double? Duration, double? Fps, bool HasAudio, string? AudioCodec, int Width, int Height);
+    /// <param name="PixelFormat">yuv420p · yuvj420p · bgr24 등 (모르면 null)</param>
+    /// <param name="ColorInfo">픽셀 형식 뒤 괄호 안 (예: "tv, bt709, progressive" — 범위·색 행렬, 없으면 null)</param>
+    internal sealed record Probe(string Format, string? Codec, double? Duration, double? Fps, bool HasAudio, string? AudioCodec, int Width, int Height,
+        string? PixelFormat = null, string? ColorInfo = null);
 
     public async Task<VideoPrepareResult> PrepareAsync(string path, bool convert)
     {
@@ -453,6 +456,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         var video = Regex.Match(text, @"Stream #0:\d+.*?: Video: (\w+)(.*)");
         double? fps = null;
         int width = 0, height = 0;
+        string? pixelFormat = null, colorInfo = null;
         if (video.Success)
         {
             var size = Regex.Match(video.Groups[2].Value, @", (\d{2,5})x(\d{2,5})");
@@ -460,6 +464,13 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
             {
                 width = int.Parse(size.Groups[1].Value);
                 height = int.Parse(size.Groups[2].Value);
+            }
+            // ", yuv420p(tv, bt709, progressive), 1920x1080" — 크기 바로 앞이 픽셀 형식
+            var pixel = Regex.Match(video.Groups[2].Value, @", ([a-z][a-z0-9_]*)(?:\(([^)]*)\))?, \d{2,5}x\d{2,5}");
+            if (pixel.Success)
+            {
+                pixelFormat = pixel.Groups[1].Value;
+                colorInfo = pixel.Groups[2].Success ? pixel.Groups[2].Value : null;
             }
             var f = Regex.Match(video.Groups[2].Value, @", (\d+(?:\.\d+)?) fps");
             if (!f.Success)
@@ -469,7 +480,7 @@ public class VideoTrimmer(IOptions<AgentOptions> options, AgentSettingsStore set
         }
         var audio = Regex.Match(text, @"Stream #0:\d+.*?: Audio: (\w+)");
         return new Probe(format, video.Success ? video.Groups[1].Value : null, duration is > 0 ? duration : null, fps,
-            audio.Success, audio.Success ? audio.Groups[1].Value : null, width, height);
+            audio.Success, audio.Success ? audio.Groups[1].Value : null, width, height, pixelFormat, colorInfo);
     }
 
     /// <summary>
