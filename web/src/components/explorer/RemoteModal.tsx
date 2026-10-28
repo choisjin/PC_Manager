@@ -348,6 +348,19 @@ export function RemoteModal({ agentId: initialAgentId, machineName: initialName,
     return () => observer.disconnect()
   }, [])
 
+  // 원격 화면 위 휠은 원격 PC로만: React onWheel(아래 onWheel)은 passive라 기본 동작을 막지 못해 Ctrl+휠(터치패드 확대 포함)이
+  // 이 대시보드까지 확대·축소했다 → 브라우저 기본 동작을 막는다. 전체 화면 도구·PC 목록·텍스트 입력 위는 스크롤되게 두고 Ctrl+휠만 막는다
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const onWheel = (e: WheelEvent) => {
+      const overlay = e.target instanceof Element && e.target.closest('.remote-pip, .remote-pclist, .remote-fs-status, .remote-text')
+      if (e.ctrlKey || !overlay) e.preventDefault()
+    }
+    stage.addEventListener('wheel', onWheel, { passive: false })
+    return () => stage.removeEventListener('wheel', onWheel)
+  }, [])
+
   const changeMatchResolution = (value: boolean) => {
     matchRef.current = value
     setMatchResolution(value)
