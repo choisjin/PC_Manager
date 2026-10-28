@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { type Agent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type RemoteUsage, type StateLayout, type Transfer } from '../api'
+import { useFolderAccess } from '../perms'
 import { buildTree, displayName, type FolderNode } from './explorer/pcGroups'
 import { kindLabel } from './explorer/useTransfers'
 import { tr as translate } from '../i18n/engine'
@@ -110,7 +111,19 @@ const leaf = (p: string | null) => p?.split(/[\\/]/).filter(Boolean).pop() ?? ''
 
 
 /** State: 격자 위에 서버·그룹(PC)·사용자를 빛이 흐르는 선으로 잇고 상태·동작을 실시간으로. 노드는 끌어서 옮긴다 */
-export function StatePage({ agents, pcGroups, pcStatuses, remoteUsage, presence, transfers, org, serverHostName, selfUserId, onlineUsers, layout: shared, saveLayout, connected }: Props) {
+export function StatePage({ agents: allAgents, pcGroups, pcStatuses, remoteUsage: allRemoteUsage, presence, transfers: allTransfers, org, serverHostName, selfUserId, onlineUsers, layout: shared, saveLayout, connected }: Props) {
+  // PC 목록 폴더 권한이 걸린 사람: 볼 수 있는 폴더의 PC와 그 PC의 작업·원격조작만
+  const folders = useFolderAccess()
+  const agents = useMemo(() => allAgents.filter((a) => folders.showsAgent(a.id)), [allAgents, folders])
+  const remoteUsage = useMemo(
+    () => (folders.limited ? Object.fromEntries(Object.entries(allRemoteUsage).filter(([id]) => folders.showsAgent(id))) : allRemoteUsage),
+    [allRemoteUsage, folders],
+  )
+  const transfers = useMemo(() => {
+    if (!folders.limited) return allTransfers
+    const hidden = new Set(allAgents.filter((a) => !folders.showsAgent(a.id)).map((a) => a.id))
+    return allTransfers.filter((t) => !hidden.has(t.agentId))
+  }, [allTransfers, allAgents, folders])
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [size, setSize] = useState({ w: 800, h: 600 })

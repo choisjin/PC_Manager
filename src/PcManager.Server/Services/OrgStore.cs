@@ -9,10 +9,16 @@ namespace PcManager.Server.Services;
 /// - LG 계정으로 로그인한 사람은 사용자 목록에 저장. 그 프로젝트에 처음 로그인하면 전체 기능,
 ///   관리자가 Setting › 인원 권한에서 조정하면 PermReviewed 에 기록 (조정 전 = 미분류)
 /// - 멤버(ProjectUsers) = 관리자 + 그 프로젝트 기능이 하나라도 있는 사용자
+/// - PC 목록 폴더 권한(ProjectFolderPerms): 기본은 모든 폴더, 관리자가 고르면 그 폴더의 PC만 (화면에서만 숨긴다)
 /// </summary>
 public class OrgStore(AppPaths paths)
 {
     public const int CurrentSchema = 2;
+
+    /// <summary>폴더 권한에서 미분류 PC(폴더에 넣지 않은 PC)를 가리키는 id (web/src/perms.ts 의 UNGROUPED_FOLDER 와 같게)</summary>
+    public const string UngroupedFolder = "ungrouped";
+
+    private const int MaxFolderPerms = 600;
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
@@ -58,6 +64,7 @@ public class OrgStore(AppPaths paths)
             m.ProjectUsers.Clear();
             m.ProjectPerms.Clear();
             m.PermReviewed.Clear();
+            m.ProjectFolderPerms.Clear();
             foreach (var p in m.Projects)
                 EnsureAdmin(m, p.Id);
             m.Schema = CurrentSchema;
@@ -127,6 +134,7 @@ public class OrgStore(AppPaths paths)
         m.ProjectUsers.Remove(id);
         m.ProjectPerms.Remove(id);
         m.PermReviewed.Remove(id);
+        m.ProjectFolderPerms.Remove(id);
         foreach (var agentId in m.AgentProjects.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList())
             m.AgentProjects.Remove(agentId);
         foreach (var folderId in m.FolderProjects.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList())
@@ -184,10 +192,7 @@ public class OrgStore(AppPaths paths)
         if (!m.Users.Any(u => u.Id == userId && u.Role != OrgUser.AdminRole))
             throw new KeyNotFoundException("사용자를 찾을 수 없습니다.");
         PermsOfProject(m, projectId)[userId] = Features.Clean(features).ToList();
-        if (!m.PermReviewed.TryGetValue(projectId, out var reviewed))
-            m.PermReviewed[projectId] = reviewed = [];
-        if (!reviewed.Contains(userId))
-            reviewed.Add(userId);
+        MarkReviewed(m, projectId, userId);
         SyncMembers(m, projectId);
     });
 
@@ -197,6 +202,67 @@ public class OrgStore(AppPaths paths)
         if (user.Role == OrgUser.AdminRole)
             return user.ProjectId == projectId ? Features.All : [];
         return view.ProjectPerms?.GetValueOrDefault(projectId)?.GetValueOrDefault(user.Id) is { } list ? Features.Clean(list) : [];
+    }
+
+    /// <summary>사용자 1명이 이 프로젝트에서 볼 수 있는 PC 목록 폴더 저장 (null = 모든 폴더, 빈 목록 = 볼 수 있는 PC 없음)</summary>
+    public OrgView SetUserFolders(string projectId, string userId, IReadOnlyList<string>? folders) => Mutate(m =>
+    {
+        if (!m.Projects.Any(p => p.Id == projectId))
+            throw new KeyNotFoundException("프로젝트를 찾을 수 없습니다.");
+        if (!m.Users.Any(u => u.Id == userId && u.Role != OrgUser.AdminRole))
+            throw new KeyNotFoundException("사용자를 찾을 수 없습니다.");
+        if (folders is null)
+        {
+            if (m.ProjectFolderPerms.TryGetValue(projectId, out var users) && users.Remove(userId) && users.Count == 0)
+                m.ProjectFolderPerms.Remove(projectId);
+        }
+        else
+        {
+            if (!m.ProjectFolderPerms.TryGetValue(projectId, out var users))
+                m.ProjectFolderPerms[projectId] = users = [];
+            users[userId] = folders
+                .Select(f => (f ?? "").Trim())
+                .Where(f => f.Length is > 0 and <= 64)
+                .Distinct()
+                .Take(MaxFolderPerms)
+                .ToList();
+        }
+        MarkReviewed(m, projectId, userId);
+    });
+
+    /// <summary>사용자가 이 프로젝트에서 볼 수 있는 PC 목록 폴더 (null = 모든 폴더, 관리자는 늘 모두)</summary>
+    public static IReadOnlyList<string>? FoldersOf(OrgView view, OrgUser user, string projectId) =>
+        user.Role == OrgUser.AdminRole ? null : view.ProjectFolderPerms?.GetValueOrDefault(projectId)?.GetValueOrDefault(user.Id);
+
+    /// <summary>
+    /// PC 목록에 새로 생긴 폴더: 폴더 권한이 걸린 사람도 상위 폴더를 볼 수 있으면 함께 보게 하고,
+    /// 만든 사람(creatorId)은 자기가 만든 폴더를 늘 본다. 바뀐 것이 없으면 null
+    /// </summary>
+    public OrgView? InheritFolders(IReadOnlyList<PcGroupFolder> added, string? creatorId)
+    {
+        if (added.Count == 0 || Load().ProjectFolderPerms is not { Count: > 0 })
+            return null;
+        var changed = false;
+        var view = Mutate(m =>
+        {
+            foreach (var users in m.ProjectFolderPerms.Values)
+                foreach (var (userId, folders) in users)
+                {
+                    // 새 폴더 아래에 또 새 폴더가 있을 수 있어 더 늘지 않을 때까지
+                    bool grew;
+                    do
+                    {
+                        grew = false;
+                        foreach (var f in added)
+                            if (!folders.Contains(f.Id) && (userId == creatorId || (f.ParentId is { } parent && folders.Contains(parent))))
+                            {
+                                folders.Add(f.Id);
+                                grew = changed = true;
+                            }
+                    } while (grew);
+                }
+        });
+        return changed ? view : null;
     }
 
     // ── PC · 폴더 배정 ──
@@ -234,6 +300,15 @@ public class OrgStore(AppPaths paths)
         return perms;
     }
 
+    /// <summary>관리자가 권한(기능·폴더)을 조정한 사람 → 인원 권한의 '권한 설정됨'</summary>
+    private static void MarkReviewed(Model m, string projectId, string userId)
+    {
+        if (!m.PermReviewed.TryGetValue(projectId, out var reviewed))
+            m.PermReviewed[projectId] = reviewed = [];
+        if (!reviewed.Contains(userId))
+            reviewed.Add(userId);
+    }
+
     private static void SyncMembers(Model m, string projectId)
     {
         var perms = m.ProjectPerms.GetValueOrDefault(projectId) ?? [];
@@ -257,6 +332,7 @@ public class OrgStore(AppPaths paths)
         public required Dictionary<string, string> FolderProjects { get; init; }
         public required Dictionary<string, Dictionary<string, List<string>>> ProjectPerms { get; init; }
         public required Dictionary<string, List<string>> PermReviewed { get; init; }
+        public required Dictionary<string, Dictionary<string, List<string>>> ProjectFolderPerms { get; init; }
         public int Schema { get; set; }
 
         public static Model From(OrgView v) => new()
@@ -273,6 +349,8 @@ public class OrgStore(AppPaths paths)
                 .ToDictionary(kv => kv.Key, kv => kv.Value.ToDictionary(p => p.Key, p => p.Value.ToList())),
             PermReviewed = (v.PermReviewed ?? new Dictionary<string, IReadOnlyList<string>>())
                 .ToDictionary(kv => kv.Key, kv => kv.Value.ToList()),
+            ProjectFolderPerms = (v.ProjectFolderPerms ?? new Dictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>())
+                .ToDictionary(kv => kv.Key, kv => kv.Value.ToDictionary(p => p.Key, p => p.Value.ToList())),
             Schema = v.Schema,
         };
 
@@ -286,6 +364,9 @@ public class OrgStore(AppPaths paths)
                 kv => kv.Key,
                 kv => (IReadOnlyDictionary<string, IReadOnlyList<string>>)kv.Value.ToDictionary(p => p.Key, p => (IReadOnlyList<string>)p.Value)),
             PermReviewed.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value),
-            Schema);
+            Schema,
+            ProjectFolderPerms.ToDictionary(
+                kv => kv.Key,
+                kv => (IReadOnlyDictionary<string, IReadOnlyList<string>>)kv.Value.ToDictionary(p => p.Key, p => (IReadOnlyList<string>)p.Value)));
     }
 }

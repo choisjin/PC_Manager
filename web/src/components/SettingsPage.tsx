@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api, type Agent, type InstallInfo, type Org, type OrgUser, type PcGroups } from '../api'
 import { FEATURES, useCan } from '../perms'
 import { useLang } from '../i18n/useLang'
 import { AddAgentDialog } from './AddAgentDialog'
 import { EditFolderSection } from './EditFolderSection'
+import { FolderPermDialog } from './FolderPermDialog'
+import { folderPermLabel, projectFolderTree } from './folderPermTree'
 import { copyText, displayName } from './explorer/pcGroups'
 import { projectAgents } from './remote/remotePcs'
 import { AnalysisDefaultsForm } from './results/AnalysisDefaultsForm'
@@ -47,7 +49,7 @@ export function SettingsPage({ org, agents, pcGroups, selfAgentId, token, projec
       )}
       {isAdmin && (
         <>
-          <PermissionSection org={org} token={token} projectId={projectId} />
+          <PermissionSection org={org} agents={agents} pcGroups={pcGroups} token={token} projectId={projectId} />
           <ProjectSection org={org} agents={agents} pcGroups={pcGroups} projectId={projectId} />
           <AgentServerSection org={org} agents={agents} pcGroups={pcGroups} token={token} projectId={projectId} />
           <AdminPasswordSection token={token} />
@@ -127,11 +129,15 @@ function GeneralSection() {
 /**
  * 인원 권한 (APMS 방식): LG 계정으로 로그인한 사람 × 기능 체크박스. 체크하면 바로 저장.
  * 이 프로젝트에 처음 로그인하면 전체 기능이고 '미분류'로 보인다 → 관리자가 조정하면 '권한 설정됨'.
+ * PC 폴더: 볼 수 있는 PC 목록 폴더 (기본 모든 폴더, 누르면 고르는 창)
  */
-function PermissionSection({ org, token, projectId }: { org: Org; token: string; projectId: string }) {
+function PermissionSection({ org, agents, pcGroups, token, projectId }: { org: Org; agents: Agent[]; pcGroups: PcGroups; token: string; projectId: string }) {
   const [filter, setFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [folderUser, setFolderUser] = useState<OrgUser | null>(null)
   const perms = org.projectPerms?.[projectId] ?? {}
+  const folderPerms = org.projectFolderPerms?.[projectId] ?? {}
+  const tree = useMemo(() => projectFolderTree(org, agents, pcGroups, projectId), [org, agents, pcGroups, projectId])
   const reviewed = new Set(org.permReviewed?.[projectId] ?? [])
   const q = filter.trim().toLowerCase()
   const users = org.users
@@ -173,6 +179,7 @@ function PermissionSection({ org, token, projectId }: { org: Org; token: string;
                     {f.label}
                   </th>
                 ))}
+                <th title="볼 수 있는 PC 목록 폴더 (기본 모든 폴더)">PC 폴더</th>
               </tr>
             </thead>
             {groups
@@ -180,13 +187,14 @@ function PermissionSection({ org, token, projectId }: { org: Org; token: string;
               .map((g) => (
                 <tbody key={g.title}>
                   <tr className="perm-group">
-                    <td colSpan={5 + FEATURES.length}>
+                    <td colSpan={6 + FEATURES.length}>
                       {g.title} ({g.users.length})
                     </td>
                   </tr>
                   {g.users.map((u) => {
                     const mine = perms[u.id] ?? []
                     const all = FEATURES.every((f) => mine.includes(f.id))
+                    const folders = folderPermLabel(folderPerms[u.id], tree)
                     return (
                       <tr key={u.id}>
                         <td className="perm-name" translate="no" title={u.ldapId ?? undefined}>
@@ -210,6 +218,17 @@ function PermissionSection({ org, token, projectId }: { org: Org; token: string;
                             />
                           </td>
                         ))}
+                        <td>
+                          <button
+                            type="button"
+                            className={`small-btn perm-folder-btn${folderPerms[u.id] ? ' limited' : ''}`}
+                            title={folders.title}
+                            aria-label={`${u.name} PC 폴더`}
+                            onClick={() => setFolderUser(u)}
+                          >
+                            {folders.text}
+                          </button>
+                        </td>
                       </tr>
                     )
                   })}
@@ -220,7 +239,18 @@ function PermissionSection({ org, token, projectId }: { org: Org; token: string;
       )}
       <p className="muted small">
         LG 계정으로 이 프로젝트에 처음 로그인하면 모든 기능을 받습니다. 체크를 바꾸면 바로 저장되고, 그 사람 화면에도 곧바로 반영됩니다. 모두 끄면 그 사람은 로그인해도 쓸 수 있는 기능이 없습니다.
+        PC 폴더는 처음에 모든 폴더이고, 누르면 그 사람이 볼 수 있는 PC 목록 폴더를 고릅니다.
       </p>
+      {folderUser && (
+        <FolderPermDialog
+          key={folderUser.id}
+          user={folderUser}
+          current={folderPerms[folderUser.id] ?? null}
+          tree={tree}
+          token={token}
+          onClose={() => setFolderUser(null)}
+        />
+      )}
     </section>
   )
 }

@@ -3015,6 +3015,92 @@ tr.video {
   text-align: left;
 }
 
+/* 인원 권한 › PC 폴더: 고른 폴더만이면 강조 */
+.perm-folder-btn {
+  min-width: 44px;
+}
+
+.perm-folder-btn.limited {
+  color: var(--accent);
+  border-color: var(--apms-brand-line);
+  background: var(--accent-soft);
+}
+
+.folder-perm-dialog {
+  width: min(480px, calc(100vw - 32px));
+}
+
+.fp-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.dialog-body .fp-mode label,
+.dialog-body .fp-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.fp-mode input[type='radio'] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  accent-color: var(--accent);
+}
+
+.folder-perm-dialog .dialog-actions {
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.fp-quick {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.fp-tree {
+  display: flex;
+  flex-direction: column;
+  max-height: min(50vh, 420px);
+  padding: 3px 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.fp-tree.off {
+  opacity: 0.55;
+}
+
+.dialog-body .fp-row {
+  min-height: 24px;
+  padding-right: 6px;
+  cursor: pointer;
+}
+
+.fp-row:hover {
+  background: var(--hover);
+}
+
+.fp-row .ellipsis {
+  min-width: 0;
+}
+
+.fp-count {
+  flex: none;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .settings-page > .settings-section {
   flex: none;
 }

@@ -1,7 +1,7 @@
 import { type CSSProperties, type ReactNode, useEffect, useMemo, useState } from 'react'
 import { api, type Agent, isLinuxAgent, type Org, PC_STATUS_LABEL, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type SharedFolder } from '../../api'
 import { ensureUnlocked, pcLockStore, usePcLocks } from '../../pcLocks'
-import { useCan } from '../../perms'
+import { UNGROUPED_FOLDER, useCan, useFolderAccess } from '../../perms'
 import { askPin } from '../../pinPrompt'
 import { HubBadges, HubPanel } from '../SideHub'
 import { HUB_ICON, HUB_TABS, type HubTab, useHubReveal, useReportChatShown, useSideHub, useSidebarCovered } from '../sideHubState'
@@ -96,6 +96,10 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
   const can = useCan()
   // PC 관리 권한: 상태·별칭·PIN·PC 목록 폴더·프로젝트 배정·목록에서 삭제
   const manage = can('pcManage')
+  // PC 목록 폴더 권한: 볼 수 있는 폴더만 고치고 PC를 넣는다 (상위 폴더는 길로만 보임). 지우기는 아래 폴더까지 모두 볼 수 있을 때만
+  const folders = useFolderAccess()
+  const editable = (folderId: string) => manage && folders.opens(folderId)
+  const deletable = (node: FolderNode): boolean => editable(node.folder.id) && node.children.every(deletable)
   const [editing, setEditing] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null) // folderId 또는 'root'
   // 끌기가 어디서 끝나든 놓기 표시를 끈다
@@ -109,7 +113,7 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
     }
   }, [])
   const [menu, setMenu] = useState<{ x: number; y: number; agent: Agent } | null>(null)
-  const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; folderId: string; name: string } | null>(null)
+  const [folderMenu, setFolderMenu] = useState<{ x: number; y: number; folderId: string; name: string; deletable: boolean } | null>(null)
   const [shareMenu, setShareMenu] = useState<{ x: number; y: number; share: SharedFolder } | null>(null)
   // 공유 폴더 순서 바꾸기 (끌어서 놓기)
   const [shareDrag, setShareDrag] = useState<string | null>(null)
@@ -133,6 +137,7 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
 
   // 폴더에 프로젝트가 배정돼 있으면 그 프로젝트 사용자(또는 그 프로젝트로 들어온 사람)에게만 보인다
   const folderVisible = (folderId: string) => {
+    if (!folders.shows(folderId)) return false
     const pid = org.folderProjects?.[folderId]
     if (!pid) return true
     if (filterProjectId) return pid === filterProjectId
@@ -191,14 +196,14 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
   const handleDropAgent = (e: React.DragEvent, folderId: string | null) => {
     const agentId = e.dataTransfer.getData(AGENT_MIME)
     setDropTarget(null)
-    if (agentId && manage) {
+    if (agentId && editable(folderId ?? UNGROUPED_FOLDER)) {
       e.preventDefault()
       saveGroups(assignAgent(groups, agentId, folderId))
     }
   }
 
   const allowAgentDrop = (e: React.DragEvent, key: string) => {
-    if (manage && e.dataTransfer.types.includes(AGENT_MIME)) {
+    if (editable(key === 'root' ? UNGROUPED_FOLDER : key) && e.dataTransfer.types.includes(AGENT_MIME)) {
       e.preventDefault()
       setDropTarget(key)
     }
@@ -370,7 +375,7 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
           }}
           onContextMenu={(e) => {
             e.preventDefault()
-            if (manage) setFolderMenu({ x: e.clientX, y: e.clientY, folderId: node.folder.id, name: node.folder.name })
+            if (editable(node.folder.id)) setFolderMenu({ x: e.clientX, y: e.clientY, folderId: node.folder.id, name: node.folder.name, deletable: deletable(node) })
           }}
           onDragOver={(e) => allowAgentDrop(e, node.folder.id)}
           onDragLeave={() => setDropTarget((t) => (t === node.folder.id ? null : t))}
@@ -397,12 +402,17 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
               }}
             />
           ) : (
-            <span className="tree-folder-name ellipsis" translate="no" onDoubleClick={() => manage && setEditing(node.folder.id)}>
+            <span
+              className={`tree-folder-name ellipsis${folders.opens(node.folder.id) ? '' : ' muted'}`}
+              translate="no"
+              title={folders.opens(node.folder.id) ? undefined : '이 폴더의 PC는 볼 권한이 없습니다 (아래 폴더만)'}
+              onDoubleClick={() => editable(node.folder.id) && setEditing(node.folder.id)}
+            >
               {node.folder.name}
             </span>
           )}
           {folderProjName && !filterProjectId && <span className="proj-badge">{folderProjName}</span>}
-          {manage && (
+          {editable(node.folder.id) && (
           <span className="tree-folder-actions">
             <button type="button" className="icon-mini" title="하위 폴더" onClick={() => createFolder(node.folder.id)}>
               ＋
@@ -413,7 +423,8 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
             <button
               type="button"
               className="icon-mini"
-              title="폴더 삭제 (PC는 미분류로)"
+              title={deletable(node) ? '폴더 삭제 (PC는 미분류로)' : '볼 권한이 없는 하위 폴더가 있어 지울 수 없습니다'}
+              disabled={!deletable(node)}
               onClick={() => saveGroups(deleteFolder(groups, node.folder.id))}
             >
               ✕
@@ -572,6 +583,7 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
       <ul className="tree-root">
         {roots.map((node) => renderFolder(node, 0))}
 
+        {folders.opens(UNGROUPED_FOLDER) && (
         <li>
           <div
             className={`tree-folder ungrouped${dropTarget === 'root' ? ' drop-active' : ''}`}
@@ -585,8 +597,9 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
           </div>
           <ul className="tree-children">{ungrouped.map((agent) => renderAgent(agent, 1))}</ul>
         </li>
+        )}
 
-        {agents.length === 0 && <li className="placeholder small">{emptyText ?? '등록된 PC가 없습니다'}</li>}
+        {agents.length === 0 && <li className="placeholder small">{emptyText ?? (folders.limited ? '볼 수 있는 PC가 없습니다 (PC 폴더 권한)' : '등록된 PC가 없습니다')}</li>}
       </ul>
 
       {infoPanel}
@@ -770,7 +783,12 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
                 : [{ label: '프로젝트 없음 (설정에서 추가)', disabled: true, onClick: () => {} }]),
               ...(currentPid ? [{ label: '프로젝트 해제 (모두에게 보임)', onClick: () => void setFolderProject(folderMenu.folderId, null) }] : []),
               { separator: true },
-              { label: '폴더 삭제 (PC는 미분류로)', danger: true, onClick: () => saveGroups(deleteFolder(groups, folderMenu.folderId)) },
+              {
+                label: folderMenu.deletable ? '폴더 삭제 (PC는 미분류로)' : '폴더 삭제 (볼 권한이 없는 하위 폴더가 있음)',
+                danger: true,
+                disabled: !folderMenu.deletable,
+                onClick: () => saveGroups(deleteFolder(groups, folderMenu.folderId)),
+              },
             ]
           })()}
         />

@@ -337,15 +337,18 @@ export interface Org {
   projectPerms?: Record<string, Record<string, string[]>>
   /** projectId → 관리자가 권한을 조정한 userId (조정 전 = 미분류) */
   permReviewed?: Record<string, string[]>
+  /** projectId → (userId → 볼 수 있는 PC 목록 폴더 id, 'ungrouped' = 미분류 PC). 없는 사용자는 모든 폴더 */
+  projectFolderPerms?: Record<string, Record<string, string[]>>
 }
 
-/** 로그인 결과 (remember: 자동 로그인 토큰, 체크했을 때만) */
+/** 로그인 결과 (remember: 자동 로그인 토큰, 체크했을 때만 · folders: 볼 수 있는 PC 목록 폴더, null = 모두) */
 export interface LoginResult {
   token: string
   user: OrgUser
   project: Project
   perms: string[]
   remember?: string | null
+  folders?: string[] | null
 }
 
 /** 사용자가 수동으로 지정하는 PC 상태 */
@@ -1046,6 +1049,13 @@ export const api = {
       method: 'PUT',
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ perms }),
+    }),
+  /** 인원 권한: 그 사람이 볼 수 있는 PC 목록 폴더 (null = 모든 폴더) */
+  setUserFolders: (token: string, userId: string, folders: string[] | null) =>
+    request<Org>(`/api/auth/folder-perms/${encodeURIComponent(userId)}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ folders }),
     }),
   /** 로그인 화면 [관리]: 등록은 이름만, 이름 수정·삭제는 그 프로젝트 관리자 비밀번호 */
   createProject: (name: string) => request<Org>('/api/auth/projects', { method: 'POST', body: JSON.stringify({ name }) }),

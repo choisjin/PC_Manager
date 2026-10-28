@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Agent, Org, PcGroups, PcStatus, RemoteUsage } from '../../api'
+import { useFolderAccess } from '../../perms'
 import { displayName } from '../explorer/pcGroups'
 import { RemoteModal } from '../explorer/RemoteModal'
 import { RemoteContext, type RemoteContextValue } from './RemoteContext'
@@ -41,9 +42,11 @@ export function RemoteTabHost({ initialAgentId, agents, pcGroups, org, filterPro
   )
   useEffect(() => updateRemoteTab(agentId), [agentId])
 
-  // 빠른 전환 목록: 대시보드 Remote 모드와 같은 PC들
+  // 빠른 전환 목록: 대시보드 Remote 모드와 같은 PC들 (PC 목록 폴더 권한도 같게)
+  const folders = useFolderAccess()
   const remoteContext = useMemo<RemoteContextValue>(() => {
-    const candidates = remoteCandidates(projectAgents(agents, org, filterProjectId), serverHostName, selfPc, clientIp)
+    const visible = projectAgents(agents, org, filterProjectId).filter((a) => folders.showsAgent(a.id))
+    const candidates = remoteCandidates(visible, serverHostName, selfPc, clientIp)
     const { allSections } = remoteSections(pcGroups, candidates, org, filterProjectId, selfUserId, null)
     return {
       pcs: remotePcList(allSections, pcGroups, pcStatuses, remoteUsage),
@@ -51,13 +54,15 @@ export function RemoteTabHost({ initialAgentId, agents, pcGroups, org, filterPro
       userName: (id) => org.users.find((u) => u.id === id)?.name ?? '다른 사용자',
       selfAgentId,
     }
-  }, [agents, pcGroups, org, filterProjectId, selfUserId, pcStatuses, remoteUsage, serverHostName, clientIp, selfPc, selfAgentId])
+  }, [agents, pcGroups, org, filterProjectId, folders, selfUserId, pcStatuses, remoteUsage, serverHostName, clientIp, selfPc, selfAgentId])
 
   const agent = agents.find((a) => a.id === agentId)
   const name = agent ? displayName(agent, pcGroups) : agentId.slice(0, 8)
   useEffect(() => {
     document.title = `${name} · 원격조작`
   }, [name])
+
+  if (agent && !folders.showsAgent(agent.id)) return <div className="gate muted">이 PC가 들어 있는 폴더를 볼 권한이 없습니다.</div>
 
   if (closed) {
     return (

@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react'
+import type { PcGroups } from './api'
 
 /** 사람별로 켜고 끄는 기능 (서버 Services/Features.cs 와 같게). 프로젝트 관리자는 전부 */
 export const FEATURES = [
@@ -22,3 +23,48 @@ export function useCan() {
   const perms = useContext(PermsContext)
   return (feature: Feature) => perms.has(feature)
 }
+
+/** 폴더 권한에서 미분류 PC(폴더에 넣지 않은 PC)를 가리키는 id (서버 OrgStore.UngroupedFolder 와 같게) */
+export const UNGROUPED_FOLDER = 'ungrouped'
+
+/**
+ * PC 목록 폴더 권한 (관리자가 Setting › 인원 권한에서 사람마다 고름, 기본 모든 폴더).
+ * 고른 폴더의 PC만 보이고, 고른 폴더의 상위 폴더는 길(이름)로만 보인다. 화면에서만 숨긴다
+ */
+export interface FolderAccess {
+  /** 고른 폴더만 보는 사람 */
+  limited: boolean
+  /** 그 폴더 안의 PC를 볼 수 있는지 (UNGROUPED_FOLDER = 미분류 PC) */
+  opens: (folderId: string) => boolean
+  /** 폴더 줄을 그릴지: 볼 수 있는 폴더와, 그 아래에 볼 수 있는 폴더가 있는 상위 폴더 */
+  shows: (folderId: string) => boolean
+  /** 그 PC가 보이는지: 들어 있는 폴더(없으면 미분류)를 볼 수 있는지 */
+  showsAgent: (agentId: string) => boolean
+}
+
+export const ALL_FOLDERS: FolderAccess = { limited: false, opens: () => true, shows: () => true, showsAgent: () => true }
+
+/** allowed: 볼 수 있는 폴더 id (null·undefined = 모든 폴더) */
+export function folderAccess(groups: PcGroups, allowed: readonly string[] | null | undefined): FolderAccess {
+  if (!allowed) return ALL_FOLDERS
+  const open = new Set(allowed)
+  const byId = new Map(groups.folders.map((f) => [f.id, f]))
+  const shown = new Set<string>()
+  for (const id of open) {
+    for (let f = byId.get(id); f && !shown.has(f.id); f = f.parentId ? byId.get(f.parentId) : undefined) shown.add(f.id)
+  }
+  const folderOf = (agentId: string) => {
+    const id = groups.assignments[agentId]
+    return id && byId.has(id) ? id : UNGROUPED_FOLDER
+  }
+  return {
+    limited: true,
+    opens: (id) => open.has(id),
+    shows: (id) => shown.has(id),
+    showsAgent: (agentId) => open.has(folderOf(agentId)),
+  }
+}
+
+export const FolderAccessContext = createContext<FolderAccess>(ALL_FOLDERS)
+
+export const useFolderAccess = () => useContext(FolderAccessContext)

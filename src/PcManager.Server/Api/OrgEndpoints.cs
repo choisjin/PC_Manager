@@ -11,7 +11,7 @@ using PcManager.Server.Services;
 namespace PcManager.Server.Api;
 
 /// <summary>
-/// 로그인(APMS 방식) · 프로젝트 · 인원 권한 · PC/폴더 배정.
+/// 로그인(APMS 방식) · 프로젝트 · 인원 권한(기능 · PC 목록 폴더) · PC/폴더 배정.
 /// 'admin' = 그 프로젝트 관리자 (기본 비밀번호 admin), 그 외 ID = LG 계정(LDAP).
 /// 권한은 화면에서만 적용한다 (다른 API는 로그인을 검사하지 않음).
 /// </summary>
@@ -155,7 +155,7 @@ public static partial class OrgEndpoints
             var (view, user, project) = Current(context, store, auth);
             if (user is null || project is null)
                 return Error(401, "로그인이 필요합니다.");
-            return Results.Ok(new MeResult(user, project, OrgStore.PermsOf(view, user, project.Id)));
+            return Results.Ok(new MeResult(user, project, OrgStore.PermsOf(view, user, project.Id), OrgStore.FoldersOf(view, user, project.Id)));
         });
 
         // 지금 프로젝트 관리자 비밀번호 변경 (관리자 로그인 상태)
@@ -190,6 +190,15 @@ public static partial class OrgEndpoints
             if (req.Perms is null)
                 return Error(400, "perms 형식이 올바르지 않습니다.");
             return await Run(hub, () => store.SetUserPerms(project.Id, userId, req.Perms));
+        });
+
+        // 인원 권한: 사용자 1명이 지금 프로젝트에서 볼 수 있는 PC 목록 폴더 (관리자, folders null = 모든 폴더)
+        api.MapPut("/auth/folder-perms/{userId}", async (HttpContext context, string userId, SetFolderPermsRequest req, OrgStore store, AuthStore auth, IHubContext<DashboardHub, IDashboardClient> hub) =>
+        {
+            var (_, user, project) = Current(context, store, auth);
+            if (user?.Role != OrgUser.AdminRole || project is null)
+                return Error(403, "관리자 권한이 필요합니다.");
+            return await Run(hub, () => store.SetUserFolders(project.Id, userId, req.Folders));
         });
 
         // --- 로그인 화면 [관리]: 프로젝트 등록은 이름만, 이름 수정·삭제는 그 프로젝트 관리자 비밀번호로 ---
@@ -275,7 +284,8 @@ public static partial class OrgEndpoints
         user,
         project,
         OrgStore.PermsOf(view, user, project.Id),
-        remember ? auth.IssueRemember(user.Id, project.Id) : null);
+        remember ? auth.IssueRemember(user.Id, project.Id) : null,
+        OrgStore.FoldersOf(view, user, project.Id));
 
     internal static (OrgView View, OrgUser? User, Project? Project) Current(HttpContext context, OrgStore store, AuthStore auth)
     {

@@ -1,7 +1,7 @@
 import { findSelfAgentId } from '../selfAgent'
 import { ensureUnlocked } from '../pcLocks'
 import { useEffect, useMemo, useState } from 'react'
-import { useCan } from '../perms'
+import { useCan, useFolderAccess } from '../perms'
 import type { Agent, FileFavorite, Org, PcFavorites, PcGroups, PcStatus, PcStatusValue, RemoteUsage, SharedFolder, Thumbnail } from '../api'
 import { RemoteGrid } from './RemoteGrid'
 import { RemoteContext, type RemoteContextValue } from './remote/RemoteContext'
@@ -78,7 +78,12 @@ const PANES_KEY = 'pcm.explorer.panes'
 export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgentFavorites, shares, addShare, removeShare, renameShare, removeAgent, reorderShares, org, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, thumbnails, watchThumbnails, serverHostName, clientIp, selfPc, filterProjectId, selfUserId, announcePresence, subscribeTransfers, watchRun, fileFavorites, saveFileFavorites }: Props) {
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents])
   // 선택한 프로젝트의 에이전트 + 아직 미배정 에이전트를 노출 (다른 프로젝트 전용은 숨김). 전체 보기면 모두.
-  const visibleAgents = useMemo(() => projectAgents(agents, org, filterProjectId), [agents, org, filterProjectId])
+  // PC 목록 폴더 권한이 걸린 사람은 볼 수 있는 폴더의 PC만
+  const folders = useFolderAccess()
+  const visibleAgents = useMemo(
+    () => projectAgents(agents, org, filterProjectId).filter((a) => folders.showsAgent(a.id)),
+    [agents, org, filterProjectId, folders],
+  )
   // Remote 모드에서는 서버 PC와, 지금 대시보드를 보고 있는 이 PC를 숨긴다 (자기 화면을 원격하면 화면이 무한히 겹친다).
   // Browser·파일 작업에는 그대로 둔다
   // 대시보드를 연 PC의 에이전트 ('내 PC 프로그램으로 열기'에 쓴다):
@@ -144,12 +149,14 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
     [allSections, agents, pcGroups, pcStatuses, remoteUsage, org.users, selfOnline, selfAgentId],
   )
   const [panes, setPanes] = useState<Pane[]>(() => loadLocal<Pane[]>(PANES_KEY, []))
+  // 폴더 권한이 없어진 PC의 창은 그리지 않는다 (저장한 창 목록은 그대로 — 권한이 돌아오면 다시 보인다)
+  const shownPanes = panes.filter((p) => !agentById.has(p.agentId) || folders.showsAgent(p.agentId))
   const [clipboard, setClipboard] = useState<FileClipboard | null>(null)
 
   // 지금 열어둔 PC를 서버에 알린다(실시간 프레즌스). 이름을 고른 사용자만.
-  const openAgentKey = panes.map((p) => p.agentId).join(',')
+  const openAgentKey = shownPanes.map((p) => p.agentId).join(',')
   useEffect(() => {
-    if (selfUserId) announcePresence(selfUserId, [...new Set(panes.map((p) => p.agentId))])
+    if (selfUserId) announcePresence(selfUserId, [...new Set(shownPanes.map((p) => p.agentId))])
     // openAgentKey/selfUserId가 바뀔 때만
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openAgentKey, selfUserId, announcePresence])
@@ -213,7 +220,7 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
   }
 
   // PC 정보 패널: 활성 창의 PC (아직 누른 창이 없으면 마지막에 연 창). 공유 서버 창이면 없음
-  const infoPane = panes.find((p) => p.paneId === activePaneId) ?? panes[panes.length - 1]
+  const infoPane = shownPanes.find((p) => p.paneId === activePaneId) ?? shownPanes[shownPanes.length - 1]
   const infoAgent = infoPane ? agentById.get(infoPane.agentId) ?? null : null
 
   const resizePane = (paneId: string, w: number, h: number) =>
@@ -311,14 +318,14 @@ export function FileExplorer({ agents, pcGroups, saveGroups, favorites, setAgent
             }
           }}
         >
-          {panes.length === 0 && (
+          {shownPanes.length === 0 && (
             <div className="workspace-empty">
               왼쪽에서 PC를 드래그하거나 ＋를 눌러 이 영역에 파일 탐색기를 엽니다.
               <br />
               여러 PC를 나란히 열어 비교하거나 파일을 주고받을 수 있어요.
             </div>
           )}
-          {panes.map((pane) => {
+          {shownPanes.map((pane) => {
             return (
               <ExplorerPane
                 key={pane.paneId}

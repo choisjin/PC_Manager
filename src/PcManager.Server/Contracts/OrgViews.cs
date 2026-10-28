@@ -37,7 +37,12 @@ public record OrgView(
     /// <summary>projectId → 관리자가 권한을 조정한 userId (조정 전 = 미분류)</summary>
     IReadOnlyDictionary<string, IReadOnlyList<string>>? PermReviewed = null,
     /// <summary>저장 형식 버전 (2 = LG 계정 로그인)</summary>
-    int Schema = 0);
+    int Schema = 0,
+    /// <summary>
+    /// projectId → (userId → 볼 수 있는 PC 목록 폴더 id, "ungrouped" = 미분류 PC). 없는 사용자는 모든 폴더.
+    /// 고른 폴더 아래에 새로 만든 폴더와 자기가 만든 폴더는 저절로 들어간다
+    /// </summary>
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>>? ProjectFolderPerms = null);
 
 public record NameRequest(string? Name);
 
@@ -60,7 +65,13 @@ public record ProjectPasswordRequest(string? Name, string? Password);
 
 public record SetPermsRequest(IReadOnlyList<string>? Perms);
 
-/// <summary>로그인 결과: 세션 토큰 · 사용자 · 프로젝트 · 쓸 수 있는 기능 (자동 로그인이면 remember 토큰)</summary>
-public record LoginResult(string Token, OrgUser User, Project Project, IReadOnlyList<string> Perms, string? Remember = null);
+/// <summary>PC 목록 폴더 권한: null = 모든 폴더, 목록 = 그 폴더의 PC만</summary>
+public record SetFolderPermsRequest(IReadOnlyList<string>? Folders);
 
-public record MeResult(OrgUser User, Project Project, IReadOnlyList<string> Perms);
+/// <summary>
+/// 로그인 결과: 세션 토큰 · 사용자 · 프로젝트 · 쓸 수 있는 기능 · 볼 수 있는 PC 목록 폴더(null = 모두)
+/// (자동 로그인이면 remember 토큰)
+/// </summary>
+public record LoginResult(string Token, OrgUser User, Project Project, IReadOnlyList<string> Perms, string? Remember = null, IReadOnlyList<string>? Folders = null);
+
+public record MeResult(OrgUser User, Project Project, IReadOnlyList<string> Perms, IReadOnlyList<string>? Folders = null);

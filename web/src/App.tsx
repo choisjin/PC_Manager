@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, type LoginResult, type OrgUser, type Project, setCurrentProject, setCurrentUser } from './api'
-import { FEATURES, type Feature, PermsContext } from './perms'
+import { ALL_FOLDERS, FEATURES, type Feature, folderAccess, FolderAccessContext, PermsContext } from './perms'
 import { clientPlatform, findSelfAgentId } from './selfAgent'
 import { FileExplorer } from './components/FileExplorer'
 import { useTransfers } from './components/explorer/useTransfers'
@@ -45,6 +45,7 @@ interface Auth {
   user: OrgUser
   project: Project
   perms: string[]
+  folders?: string[] | null
 }
 
 const readKey = (key: string) => {
@@ -232,6 +233,12 @@ export default function App() {
     if (isAdmin) return new Set(FEATURES.map((f) => f.id))
     return new Set(org.projectPerms?.[auth.project.id]?.[auth.user.id] ?? auth.perms)
   }, [auth, isAdmin, org.projectPerms])
+  // 볼 수 있는 PC 목록 폴더: 관리자가 인원 권한에서 바꾸면 org 방송으로 바로 반영 (org를 받기 전에는 로그인 결과)
+  const folders = useMemo(() => {
+    if (!auth || isAdmin) return ALL_FOLDERS
+    const orgLoaded = org.users.some((u) => u.id === auth.user.id)
+    return folderAccess(pcGroups, orgLoaded ? org.projectFolderPerms?.[auth.project.id]?.[auth.user.id] : auth.folders)
+  }, [auth, isAdmin, org.users, org.projectFolderPerms, pcGroups])
   const pageAllowed = (p: Page) => {
     const feature = PAGE_FEATURE[p]
     return feature === null || perms.has(feature)
@@ -368,6 +375,7 @@ export default function App() {
   if (REMOTE_TAB_AGENT) {
     return (
       <PermsContext.Provider value={perms}>
+      <FolderAccessContext.Provider value={folders}>
         <div className="app">
           <PinDialog />
           {perms.has('remote') ? (
@@ -389,12 +397,14 @@ export default function App() {
             <div className="gate muted">원격조작 권한이 없습니다.</div>
           )}
         </div>
+      </FolderAccessContext.Provider>
       </PermsContext.Provider>
     )
   }
 
   return (
     <PermsContext.Provider value={perms}>
+    <FolderAccessContext.Provider value={folders}>
     <SideHubContext.Provider value={hub}>
     <div className="app">
       <header className="topbar">
@@ -561,6 +571,7 @@ export default function App() {
       <TransfersPip hub={hub} overlayOnly={visiblePage === 'files' || visiblePage === 'results'} />
     </div>
     </SideHubContext.Provider>
+    </FolderAccessContext.Provider>
     </PermsContext.Provider>
   )
 }

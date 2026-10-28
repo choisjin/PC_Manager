@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type Agent, type FileFavorite, type FileFavoriteAccess, type PcGroups, type SharedFolder } from '../../api'
 import { loadBackupSetting } from '../../fileTypes'
-import { useCan } from '../../perms'
+import { useCan, useFolderAccess } from '../../perms'
 import { ensureUnlocked } from '../../pcLocks'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { Icon } from './Icon'
@@ -31,6 +31,7 @@ interface Props {
  */
 export function FileFavorites({ items, onSave, agents, shares, pcGroups, selfAgentId }: Props) {
   const can = useCan()
+  const folders = useFolderAccess()
   const [access, setAccess] = useState<Record<string, FileFavoriteAccess>>({})
   const [checked, setChecked] = useState(false)
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
@@ -76,6 +77,7 @@ export function FileFavorites({ items, onSave, agents, shares, pcGroups, selfAge
     } else {
       const agent = agents.find((a) => a.id === fav.sourceId)
       if (!agent) return 'PC가 목록에서 지워졌습니다.'
+      if (!folders.showsAgent(agent.id)) return '이 PC가 들어 있는 폴더를 볼 권한이 없습니다.'
       if (!agent.online) return 'PC가 연결되어 있지 않습니다.'
       if (!can('download')) return '파일을 받을 권한이 없어 열 수 없습니다.'
     }

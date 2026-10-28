@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Agent, type FileEntry, type Org, type PcGroups, type PcStatus, type PcStatusValue, type RemoteUsage, type ResultPreset, type ResultProfile } from '../../api'
 import { formatBytes } from '../../format'
+import { useFolderAccess } from '../../perms'
 import { PcInfoPanel } from '../explorer/PcInfoPanel'
 import { PcTree } from '../explorer/PcTree'
 import { useSideCollapse } from '../explorer/sideCollapse'
@@ -73,17 +74,19 @@ type BuildState = { path: string; loading: boolean; error: string | null; found:
  */
 export function ResultsPage({ agents, pcGroups, saveGroups, removeAgent, setAgentProject, presence, pcStatuses, setPcStatus, remoteUsage, setFolderProject, org, filterProjectId, selfUserId, profiles, saveProfile, presets, savePreset, userName }: Props) {
   const [onlySet, setOnlySet] = useState(() => readKey(ONLY_SET_KEY) === '1')
-  // 사이드바 PC: 이 프로젝트의 PC (결과 폴더를 정한 PC만 보기면 그것만). 폴더 구조는 PC Manager와 같다
+  // 사이드바 PC: 이 프로젝트의 PC (결과 폴더를 정한 PC만 보기면 그것만). 폴더 구조·폴더 권한은 PC Manager와 같다
+  const folders = useFolderAccess()
   const treeAgents = useMemo(
-    () => projectAgents(agents, org, filterProjectId).filter((a) => !onlySet || profiles[a.id]),
-    [agents, org, filterProjectId, onlySet, profiles],
+    () => projectAgents(agents, org, filterProjectId).filter((a) => folders.showsAgent(a.id) && (!onlySet || profiles[a.id])),
+    [agents, org, filterProjectId, folders, onlySet, profiles],
   )
   const [collapsed, toggleCollapse] = useSideCollapse()
   const [selectedId, setSelectedId] = useState<string | null>(() => readKey(PC_KEY))
   const [editing, setEditing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
-  const agent = agents.find((a) => a.id === selectedId) ?? null
+  // 고른 PC가 볼 수 없는 폴더로 갔으면 고르지 않은 것으로
+  const agent = agents.find((a) => a.id === selectedId && folders.showsAgent(a.id)) ?? null
   // PC마다 결과 확인 작업 표시: 진행 중이면 진행률, 끝나고 아직 안 봤으면 '분석 완료' (누르면 그 결과를 연다)
   const jobs = useResultJobs()
   const schedules = useResultSchedules()
