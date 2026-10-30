@@ -645,8 +645,10 @@ function NumberField({ value, min, max, onCommit }: { value: number; min: number
 // 따로 조작: 누른 화면 하나만 포커스, 조작이 그 영상에만. 다시 동시 조작으로 켜면 그때의 어긋남을 기준 맞추기로 두고 함께 움직인다
 
 const COMPARE_RATES = [0.25, 0.5, 1, 2]
-// 기준 영상이 고른 구간 영상과 이만큼(초) 넘게 어긋나면 다시 맞춘다 (너무 작으면 계속 다시 찾느라 끊긴다)
-const COMPARE_DRIFT_S = 0.15
+// 동시 재생 중 기준 영상 맞추기: 이만큼(초) 넘게 어긋나면 그 자리로 옮기고, 그 안이면 재생 속도를 조금 바꿔 따라붙는다
+// (옮기면 다시 찾느라 끊기므로 작은 어긋남은 속도로). SYNC_S 안이면 맞은 것으로 본다 (30fps 한 프레임 0.033초보다 작게)
+const COMPARE_SEEK_S = 0.5
+const COMPARE_SYNC_S = 0.015
 // 기준 쪽 자리를 손으로 옮기는 한 번 (초)
 const NUDGE_S = 0.1
 
@@ -664,7 +666,7 @@ function CompareDialog({ pair, refCycle, playable, nameOf, onClose }: {
   const curVideo = useRef<HTMLVideoElement>(null)
   const ok = 'error' in pair ? null : pair
   const len = ok ? ok.end - ok.start : 0
-  // 밝기 흐름 맞춤이 어긋났을 때 기준 쪽을 손으로 옮긴 초
+  // 스텝 시작끼리 맞춘 자리가 어긋났을 때 기준 쪽을 손으로 옮긴 초
   const [nudge, setNudge] = useState(0)
   const refStart = ok ? Math.max(0, ok.refStart + nudge) : 0
   const [linked, setLinked] = useState(true)
@@ -699,7 +701,8 @@ function CompareDialog({ pair, refCycle, playable, nameOf, onClose }: {
   }
   const pauseTargets = () => {
     for (const k of targets) videoOf(k)?.pause()
-    // 동시: 멈춘 자리에서 기준 영상을 다시 맞춘다
+    // 동시: 멈춘 자리에서 기준 영상을 다시 맞춘다 (따라붙느라 바꾼 속도도 되돌림)
+    if (refVideo.current) refVideo.current.playbackRate = rate
     const c = curVideo.current
     if (linked && c && ok) seekRel('ref', c.currentTime - ok.start)
   }
@@ -728,10 +731,11 @@ function CompareDialog({ pair, refCycle, playable, nameOf, onClose }: {
     const r = refVideo.current
     c?.pause()
     r?.pause()
+    if (r) r.playbackRate = rate
     if (!linked && ok && c && r) {
       const t = clamp(c.currentTime - ok.start, 0, len)
       c.currentTime = ok.start + t
-      setNudge(Math.round((r.currentTime - t - ok.refStart) * 100) / 100)
+      setNudge(Math.round((r.currentTime - t - ok.refStart) * 1000) / 1000)
     }
     setLinked(!linked)
   }
@@ -758,6 +762,7 @@ function CompareDialog({ pair, refCycle, playable, nameOf, onClose }: {
         const tc = c.currentTime - ok.start
         if (linked) {
           if (!c.paused && tc >= len) {
+            r.playbackRate = rate
             if (loop) {
               c.currentTime = ok.start
               r.currentTime = refStart
@@ -765,8 +770,11 @@ function CompareDialog({ pair, refCycle, playable, nameOf, onClose }: {
               c.pause()
               r.pause()
             }
-          } else if (!c.paused && Math.abs(r.currentTime - (refStart + tc)) > COMPARE_DRIFT_S * Math.max(1, rate)) {
-            r.currentTime = Math.max(0, refStart + tc)
+          } else if (!c.paused) {
+            // 어긋남 (+ = 기준 영상이 앞섬)
+            const drift = r.currentTime - (refStart + tc)
+            if (Math.abs(drift) > COMPARE_SEEK_S) r.currentTime = Math.max(0, refStart + tc)
+            else r.playbackRate = Math.abs(drift) < COMPARE_SYNC_S ? rate : rate * clamp(1 - drift * 2, 0.8, 1.2)
           }
         } else {
           for (const [v, s] of [[c, ok.start], [r, refStart]] as const) {
@@ -908,16 +916,16 @@ function CompareDialog({ pair, refCycle, playable, nameOf, onClose }: {
               </div>
               <div className="rv-compare-bar small">
                 <span className="muted">
-                  {`기준 자리: ${stepText(ok.refRow, ok.offset)}${ok.shift ? ` · 밝기 흐름으로 ${signed(ok.shift)}초 맞춤` : ''}`}
+                  {`기준 자리: ${stepText(ok.refRow, ok.offset)} (구간 시작 바로 앞 스텝의 시작끼리 맞춤)`}
                 </span>
                 <span className="rv-spacer" />
                 {linked
                   ? (
                     <>
                       <span title="기준 쪽이 어긋나 보이면 옮깁니다 (따로 조작으로 맞춘 뒤 동시로 켜도 됩니다)">기준 맞추기</span>
-                      <button type="button" onClick={() => setNudge((v) => Math.round((v - NUDGE_S) * 100) / 100)} title={`기준 영상을 ${NUDGE_S}초 앞으로`}>−{NUDGE_S}</button>
+                      <button type="button" onClick={() => setNudge((v) => Math.round((v - NUDGE_S) * 1000) / 1000)} title={`기준 영상을 ${NUDGE_S}초 앞으로`}>−{NUDGE_S}</button>
                       <span className="mono">{`${signed(nudge)}s`}</span>
-                      <button type="button" onClick={() => setNudge((v) => Math.round((v + NUDGE_S) * 100) / 100)} title={`기준 영상을 ${NUDGE_S}초 뒤로`}>+{NUDGE_S}</button>
+                      <button type="button" onClick={() => setNudge((v) => Math.round((v + NUDGE_S) * 1000) / 1000)} title={`기준 영상을 ${NUDGE_S}초 뒤로`}>+{NUDGE_S}</button>
                       <button type="button" disabled={nudge === 0} onClick={() => setNudge(0)} title="처음 맞춘 자리로">↺</button>
                     </>
                   )
@@ -1084,7 +1092,7 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
             state.setComparing(!state.comparing)
           }}
           title={pairOf
-            ? `켜고 그래프를 끌어 구간을 고르면, 그 구간과 기준 Cycle(${cycle?.ref ?? ''})의 같은 자리(같은 스텝·오프셋에서 밝기 흐름으로 맞춤)를 나란히 동시에 재생합니다`
+            ? `켜고 그래프를 끌어 구간을 고르면, 그 구간과 기준 Cycle(${cycle?.ref ?? ''})의 같은 자리(구간 시작 바로 앞 스텝의 시작끼리 맞추고 같은 오프셋)를 나란히 동시에 재생합니다`
             : '분석한 뒤, Cycle이 둘 이상이면 씁니다'}
         >
           ⇆ 구간 비교

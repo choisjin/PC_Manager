@@ -774,8 +774,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
   const refCycleName = cycleCompare?.ref ?? null
   const comparePairOf = useMemo(
     () => (refCycleName === null ? null
-      : (video: number, start: number, end: number) => comparePair(sortedRows, rowPlace, analysis.frames, refCycleName, video, start, end)),
-    [refCycleName, sortedRows, rowPlace, analysis.frames],
+      : (video: number, start: number, end: number) => comparePair(sortedRows, rowPlace, refCycleName, video, start, end)),
+    [refCycleName, sortedRows, rowPlace],
   )
   const playableVideo = useCallback((video: number) => {
     const v = rawVideos[video]

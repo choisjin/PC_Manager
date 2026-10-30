@@ -5218,7 +5218,8 @@ th.sortable:hover {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(400px, 0.9fr) minmax(380px, 1fr);
+  /* 영상(16:9)이 높이에 맞춰지면 좌우가 남아서 표 쪽을 넓게 (약 43 : 57) */
+  grid-template-columns: minmax(400px, 0.75fr) minmax(380px, 1fr);
 }
 .rv-left { display: flex; flex-direction: column; min-height: 0; overflow: auto; border-right: 1px solid var(--border); }
 /* ATS: 영상이 남는 높이를 채우고 원본·결과 이미지는 아래에 고정 → 스크롤 없이 */
@@ -5597,6 +5598,9 @@ th.sortable:hover {
 .rv-table.fixed .rv-row > .rv-center { text-align: center; }
 /* 칸 선택 (끌어서 여러 칸·행, Ctrl+C 복사): 글자 선택 대신, 칸 색은 그대로 두고 위에 덮는다 */
 .rv-table.fixed .rv-table-body { user-select: none; }
+/* 머리글·본문 모두 세로 스크롤바 자리를 늘 비워 둔다: 본문만 스크롤바만큼 좁으면 fr 열이 머리글과 다르게 나뉘어 오른쪽 열 경계가 어긋남 */
+.rv-table.fixed .rv-head-scroll,
+.rv-table.fixed .rv-table-body { scrollbar-gutter: stable; }
 .rv-table.fixed .rv-table-body:focus { outline: none; }
 .rv-table.fixed .rv-row > .rv-cell-sel { box-shadow: inset 0 0 0 9999px color-mix(in srgb, var(--accent) 20%, transparent); }
 .rv-table.fixed .rv-row > .rv-cell-rowsel { color: var(--accent); font-weight: 600; }

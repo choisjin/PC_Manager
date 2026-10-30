@@ -180,7 +180,7 @@ export function placeMemos(
   return out
 }
 
-/** 구간 비교: 고른 구간과 기준 Cycle의 같은 자리 (영상 차례 · 영상 안 초). 구간 시작이 든 스텝 · 기준 Cycle의 같은 스텝 · 스텝부터 초 · 밝기 흐름으로 옮긴 초 */
+/** 구간 비교: 고른 구간과 기준 Cycle의 같은 자리 (영상 차례 · 영상 안 초). 구간 시작 바로 앞 스텝 · 기준 Cycle의 같은 스텝 · 스텝부터 초 */
 export interface ComparePair {
   video: number
   start: number
@@ -190,17 +190,15 @@ export interface ComparePair {
   offset: number
   refVideo: number
   refStart: number
-  shift: number
 }
 
 /**
- * 고른 구간(video, start~end)의 기준 Cycle 같은 자리: 구간 시작이 든 스텝 → 기준 Cycle의 같은 스텝(이름과 그 Cycle 안에서 몇 번째인지)에서
- * 같은 오프셋, 그리고 밝기 흐름으로 맞춘다 (메모 구간과 같은 규칙). 짝을 못 찾으면 그 까닭
+ * 고른 구간(video, start~end)의 기준 Cycle 같은 자리: 구간 시작 바로 앞 스텝(가장 가까운 이전 스텝) → 기준 Cycle의 같은 스텝(이름과 그 Cycle
+ * 안에서 몇 번째인지)에서 같은 오프셋. 스텝 시작끼리 맞춘다 (밝기 흐름으로 옮기지 않음). 짝을 못 찾으면 그 까닭
  */
 export function comparePair(
   rows: ResultRow[],
   position: (row: ResultRow) => { video: number; seconds: number } | null,
-  frames: (VideoFrames | undefined)[],
   refCycle: string,
   video: number,
   start: number,
@@ -215,13 +213,9 @@ export function comparePair(
   if (!refRow) return { error: `기준 Cycle(${refCycle})에 같은 스텝(${at.row.name})이 없습니다` }
   const p = position(refRow)
   if (!p) return { error: `기준 Cycle의 같은 스텝(${refRow.name})이 영상 밖입니다` }
-  const refAt = p.seconds + at.offset
-  const fa = frames[video]
-  const fb = frames[p.video]
-  const shift = fa?.n && fb?.n ? bestShift(fa, start, end, fb, refAt) : 0
   return {
     video, start, end, row: at.row, refRow, offset: at.offset,
-    refVideo: p.video, refStart: pyRound(Math.max(0, refAt + shift), 2), shift,
+    refVideo: p.video, refStart: pyRound(Math.max(0, p.seconds + at.offset), 3),
   }
 }
 
