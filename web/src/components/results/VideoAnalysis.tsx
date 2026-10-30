@@ -13,7 +13,7 @@ import { bisectLeft, type DetectedSegment, type DetectResult, type SegmentKind }
 import { type Exclusion, type ExclusionDraft, spansOf } from './videoExclude'
 import type { DetectParams } from './analysisDefaults'
 import { AnalysisDefaultsDialog } from './AnalysisDefaultsForm'
-import type { MemoPlace, MemoSpan } from './videoMemo'
+import type { ComparePair, MemoPlace, MemoSpan } from './videoMemo'
 
 // 결과 확인 영상 분석 화면 (ReplayKit_FailAnalyzer 영상 페이지의 영상 분석을 옮김):
 // 영상 위 화면 영역 표시(AnalysisOverlay) · 영상 아래 설정·진행·그래프·영상 정보(VideoAnalysisPanel) ·
@@ -640,9 +640,299 @@ function NumberField({ value, min, max, onCommit }: { value: number; min: number
   )
 }
 
+// ─────────────────────────────── 구간 비교 창 (모달): 고른 구간과 기준 Cycle의 같은 자리를 나란히 재생
+// 동시 조작: 두 화면 모두 포커스, 조작이 둘 다에 (고른 구간 영상을 기준으로 기준 영상을 맞춘다).
+// 따로 조작: 누른 화면 하나만 포커스, 조작이 그 영상에만. 다시 동시 조작으로 켜면 그때의 어긋남을 기준 맞추기로 두고 함께 움직인다
+
+const COMPARE_RATES = [0.25, 0.5, 1, 2]
+// 기준 영상이 고른 구간 영상과 이만큼(초) 넘게 어긋나면 다시 맞춘다 (너무 작으면 계속 다시 찾느라 끊긴다)
+const COMPARE_DRIFT_S = 0.15
+// 기준 쪽 자리를 손으로 옮기는 한 번 (초)
+const NUDGE_S = 0.1
+
+type CompareSide = 'ref' | 'cur'
+
+function CompareDialog({ pair, refCycle, playable, nameOf, onClose }: {
+  pair: ComparePair | { error: string }
+  refCycle: string
+  playable: (video: number) => { url: string; fps: number | null } | null
+  /** 영상이 여럿이면 영상 이름 */
+  nameOf: ((video: number) => string) | null
+  onClose: () => void
+}) {
+  const refVideo = useRef<HTMLVideoElement>(null)
+  const curVideo = useRef<HTMLVideoElement>(null)
+  const ok = 'error' in pair ? null : pair
+  const len = ok ? ok.end - ok.start : 0
+  // 밝기 흐름 맞춤이 어긋났을 때 기준 쪽을 손으로 옮긴 초
+  const [nudge, setNudge] = useState(0)
+  const refStart = ok ? Math.max(0, ok.refStart + nudge) : 0
+  const [linked, setLinked] = useState(true)
+  // 따로 조작에서 포커스한 화면 (조작을 받는 영상)
+  const [focus, setFocus] = useState<CompareSide>('cur')
+  // 영상마다 지금 위치 (영상 안 초) · 재생 중인지
+  const [at, setAt] = useState<Record<CompareSide, number>>({ ref: 0, cur: 0 })
+  const [running, setRunning] = useState<Record<CompareSide, boolean>>({ ref: false, cur: false })
+  const [loop, setLoop] = useState(true)
+  const [rate, setRate] = useState(1)
+  const [loaded, setLoaded] = useState(0)
+  const refSrc = ok ? playable(ok.refVideo) : null
+  const curSrc = ok ? playable(ok.video) : null
+  const frame = 1 / (curSrc?.fps || refSrc?.fps || 30)
+
+  const videoOf = (k: CompareSide) => (k === 'ref' ? refVideo.current : curVideo.current)
+  const startOf = (k: CompareSide) => (k === 'ref' ? refStart : ok?.start ?? 0)
+  /** 조작을 받는 영상: 동시면 둘 다, 따로면 포커스한 것 */
+  const targets: CompareSide[] = linked ? ['cur', 'ref'] : [focus]
+  /** 구간 안 위치 (영상의 비교 구간 시작부터 초) */
+  const relOf = (k: CompareSide) => at[k] - startOf(k)
+
+  /** 영상 k를 구간 안 위치 t로 (따로 조작은 구간 밖도 갈 수 있게 영상 처음까지만 막는다) */
+  const seekRel = (k: CompareSide, t: number) => {
+    const v = videoOf(k)
+    if (!v) return
+    v.currentTime = Math.max(0, startOf(k) + (linked ? clamp(t, 0, len) : t))
+  }
+  const seek = (t: number) => {
+    if (linked) for (const k of targets) seekRel(k, t)
+    else seekRel(focus, t)
+  }
+  const pauseTargets = () => {
+    for (const k of targets) videoOf(k)?.pause()
+    // 동시: 멈춘 자리에서 기준 영상을 다시 맞춘다
+    const c = curVideo.current
+    if (linked && c && ok) seekRel('ref', c.currentTime - ok.start)
+  }
+  const playTargets = () => {
+    if (linked) {
+      const c = curVideo.current
+      if (!ok || !c) return
+      const t = c.currentTime - ok.start
+      seek(t >= len - frame || t < 0 ? 0 : t)
+    } else if (relOf(focus) >= len - frame) seekRel(focus, 0)
+    for (const k of targets) videoOf(k)?.play().catch(() => {})
+  }
+  const togglePlay = () => (targets.some((k) => running[k]) ? pauseTargets() : playTargets())
+  const step = (dir: 1 | -1) => {
+    for (const k of targets) videoOf(k)?.pause()
+    if (linked) {
+      const c = curVideo.current
+      if (c && ok) seek(c.currentTime - ok.start + dir * frame)
+    } else seekRel(focus, relOf(focus) + dir * frame)
+  }
+  const jump = (sec: number) => (linked ? seek(relOf('cur') + sec) : seekRel(focus, relOf(focus) + sec))
+
+  // 동시 ↔ 따로: 둘 다 멈춘다. 다시 동시로 켜면 지금 두 영상의 어긋남을 기준 맞추기로 (고른 구간 영상 위치가 구간 안 위치)
+  const toggleLinked = () => {
+    const c = curVideo.current
+    const r = refVideo.current
+    c?.pause()
+    r?.pause()
+    if (!linked && ok && c && r) {
+      const t = clamp(c.currentTime - ok.start, 0, len)
+      c.currentTime = ok.start + t
+      setNudge(Math.round((r.currentTime - t - ok.refStart) * 100) / 100)
+    }
+    setLinked(!linked)
+  }
+
+  // 기준 쪽 자리를 옮기면 (동시 조작) 지금 위치로 다시 맞춘다
+  useEffect(() => {
+    const c = curVideo.current
+    const r = refVideo.current
+    if (linked && ok && c && r && loaded >= 2) r.currentTime = Math.max(0, refStart + c.currentTime - ok.start)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refStart, loaded])
+  useEffect(() => {
+    for (const v of [curVideo.current, refVideo.current]) if (v) v.playbackRate = rate
+  }, [rate, loaded])
+
+  // 매 프레임: 위치를 읽어 보이고, 동시면 기준 영상을 맞추고, 구간 끝에서 처음으로(되풀이) 또는 멈춤
+  useEffect(() => {
+    if (!ok) return
+    let id = 0
+    const tick = () => {
+      const c = curVideo.current
+      const r = refVideo.current
+      if (c && r) {
+        const tc = c.currentTime - ok.start
+        if (linked) {
+          if (!c.paused && tc >= len) {
+            if (loop) {
+              c.currentTime = ok.start
+              r.currentTime = refStart
+            } else {
+              c.pause()
+              r.pause()
+            }
+          } else if (!c.paused && Math.abs(r.currentTime - (refStart + tc)) > COMPARE_DRIFT_S * Math.max(1, rate)) {
+            r.currentTime = Math.max(0, refStart + tc)
+          }
+        } else {
+          for (const [v, s] of [[c, ok.start], [r, refStart]] as const) {
+            if (v.paused || v.currentTime - s < len) continue
+            if (loop) v.currentTime = s
+            else v.pause()
+          }
+        }
+        const next = { ref: r.currentTime, cur: c.currentTime }
+        setAt((prev) => (prev.ref === next.ref && prev.cur === next.cur ? prev : next))
+      }
+      id = requestAnimationFrame(tick)
+    }
+    id = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(id)
+  }, [ok, len, loop, refStart, rate, linked])
+
+  // Space 재생·멈춤 · Q/E 한 프레임 · A/D 1초 (영상 조작 줄과 같은 키) · Tab 포커스 바꾸기(따로) · L 동시/따로 — 창이 열린 동안은 이 창이 받는다
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return
+      const target = e.target as HTMLElement | null
+      if (target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) && (target as HTMLInputElement).type !== 'range') return
+      const actions: Record<string, () => void> = {
+        Space: () => { if (!e.repeat) togglePlay() },
+        KeyQ: () => step(-1),
+        KeyE: () => step(1),
+        KeyA: () => jump(-1),
+        KeyD: () => jump(1),
+        KeyL: toggleLinked,
+        Tab: () => { if (!linked) setFocus((f) => (f === 'ref' ? 'cur' : 'ref')) },
+      }
+      const action = actions[e.code]
+      if (!action || !ok) return
+      e.preventDefault()
+      e.stopPropagation()
+      action()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  })
+
+  const where = (video: number) => (nameOf ? `${nameOf(video)} ` : '')
+  const signed = (v: number) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}`
+  const side = (k: CompareSide, label: string, src: { url: string } | null, video: number) => {
+    const focused = linked || focus === k
+    return (
+      <figure
+        className={`rv-compare-side${focused ? ' focused' : ''}`}
+        onMouseDown={() => !linked && setFocus(k)}
+        title={linked ? '누르면 둘 다 재생·멈춤' : focused ? '누르면 이 영상 재생·멈춤' : '누르면 이 영상을 조작'}
+      >
+        <figcaption className="small">
+          <strong>{label}</strong>
+          <span className="mono muted">{`${where(video)}${formatFrameTime(at[k])} · 구간 ${signed(relOf(k))}s`}</span>
+        </figcaption>
+        {src
+          ? (
+            <video
+              ref={k === 'ref' ? refVideo : curVideo}
+              src={src.url}
+              muted
+              playsInline
+              preload="auto"
+              onLoadedMetadata={(e) => {
+                e.currentTarget.currentTime = startOf(k)
+                setLoaded((n) => n + 1)
+              }}
+              onPlay={() => setRunning((s) => ({ ...s, [k]: true }))}
+              onPause={() => setRunning((s) => ({ ...s, [k]: false }))}
+              onClick={() => {
+                if (linked) togglePlay()
+                else if (focus === k) {
+                  const v = videoOf(k)
+                  if (v?.paused) playTargets()
+                  else v?.pause()
+                }
+              }}
+            />
+          )
+          : <div className="rv-compare-empty small muted">이 영상은 아직 재생할 수 없습니다 (영상 변환 후 다시 여세요)</div>}
+      </figure>
+    )
+  }
+
+  const shownRel = linked ? relOf('cur') : relOf(focus)
+  const anyRunning = targets.some((k) => running[k])
+  const focusLabel = focus === 'ref' ? `기준 Cycle ${refCycle}` : `Cycle ${ok?.row.cycle ?? ''}`
+  return (
+    <div className="rv-modal" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="rv-modal-box panel rv-compare" role="dialog" aria-modal="true" aria-label="구간 비교">
+        <div className="rv-drawer-head">
+          <strong>⇆ 구간 비교</strong>
+          {ok && <span className="small muted">{`${stepText(ok.row, ok.offset)} · ${len.toFixed(2)}초`}</span>}
+          <span className="rv-spacer" />
+          <button type="button" className="icon" aria-label="닫기" title="닫기 (Esc)" onClick={onClose}>✕</button>
+        </div>
+        {!ok
+          ? <p className="error small">{'error' in pair ? pair.error : ''}</p>
+          : (
+            <>
+              <div className={`rv-compare-grid${linked ? ' linked' : ''}`}>
+                {side('ref', `기준 Cycle ${refCycle}`, refSrc, ok.refVideo)}
+                {side('cur', `Cycle ${ok.row.cycle}`, curSrc, ok.video)}
+              </div>
+              <div className="rv-compare-bar small">
+                <span className="rv-compare-mode" role="group" aria-label="조작 방식">
+                  <button type="button" className={linked ? 'active' : ''} aria-pressed={linked} onClick={() => !linked && toggleLinked()} title="두 화면 모두 포커스 — 재생·이동이 둘 다에 (L)">
+                    🔗 동시 조작
+                  </button>
+                  <button type="button" className={linked ? '' : 'active'} aria-pressed={!linked} onClick={() => linked && toggleLinked()} title="누른 화면 하나만 포커스 — 그 영상만 재생·이동 (L, Tab = 포커스 바꾸기)">
+                    따로 조작
+                  </button>
+                </span>
+                <button type="button" className="primary" disabled={!refSrc || !curSrc} onClick={togglePlay} title="재생·멈춤 (Space)">
+                  {anyRunning ? '⏸' : '▶'}
+                </button>
+                <button type="button" onClick={() => step(-1)} title="이전 프레임 (Q)">⏴</button>
+                <button type="button" onClick={() => step(1)} title="다음 프레임 (E)">⏵</button>
+                <input
+                  type="range"
+                  className="rv-compare-seek"
+                  min={0}
+                  max={len}
+                  step={0.01}
+                  value={clamp(shownRel, 0, len)}
+                  onChange={(e) => seek(Number(e.target.value))}
+                  title="구간 안 위치 (A/D 1초)"
+                />
+                <span className="mono">{`${signed(shownRel)} / ${len.toFixed(2)}s`}</span>
+                {!linked && <span className="muted">{`조작: ${focusLabel}`}</span>}
+                <select value={rate} onChange={(e) => setRate(Number(e.target.value))} title="재생 속도 (둘 다)">
+                  {COMPARE_RATES.map((r) => <option key={r} value={r}>{`${r}×`}</option>)}
+                </select>
+                <label title="구간 끝에서 처음부터 다시">
+                  <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />
+                  되풀이
+                </label>
+              </div>
+              <div className="rv-compare-bar small">
+                <span className="muted">
+                  {`기준 자리: ${stepText(ok.refRow, ok.offset)}${ok.shift ? ` · 밝기 흐름으로 ${signed(ok.shift)}초 맞춤` : ''}`}
+                </span>
+                <span className="rv-spacer" />
+                {linked
+                  ? (
+                    <>
+                      <span title="기준 쪽이 어긋나 보이면 옮깁니다 (따로 조작으로 맞춘 뒤 동시로 켜도 됩니다)">기준 맞추기</span>
+                      <button type="button" onClick={() => setNudge((v) => Math.round((v - NUDGE_S) * 100) / 100)} title={`기준 영상을 ${NUDGE_S}초 앞으로`}>−{NUDGE_S}</button>
+                      <span className="mono">{`${signed(nudge)}s`}</span>
+                      <button type="button" onClick={() => setNudge((v) => Math.round((v + NUDGE_S) * 100) / 100)} title={`기준 영상을 ${NUDGE_S}초 뒤로`}>+{NUDGE_S}</button>
+                      <button type="button" disabled={nudge === 0} onClick={() => setNudge(0)} title="처음 맞춘 자리로">↺</button>
+                    </>
+                  )
+                  : <span className="muted">{`두 영상 어긋남 ${signed(relOf('ref') - relOf('cur'))}s — 동시 조작으로 켜면 이대로 함께 움직입니다`}</span>}
+              </div>
+            </>
+          )}
+      </div>
+    </div>
+  )
+}
+
 // ─────────────────────────────── 패널 (영상 아래): 설정·진행·그래프·영상 정보
 
-export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle, memoPlaces, memoRemoved, anchor, videos, steps, currentPath, grab, escape, nowSeconds, onSeek }: {
+export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle, memoPlaces, memoRemoved, anchor, pairOf, playable, videos, steps, currentPath, grab, escape, nowSeconds, onSeek }: {
   state: VideoAnalysisState
   /** 정지 기준의 가장 작은 값 (초): 제외 구간 밖 스텝의 가장 짧은 DURATION */
   staticMin: number
@@ -657,6 +947,10 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
   memoRemoved: Map<string, number>
   /** 영상(차례) 위치 → 메모를 다는 스텝과 스텝 위치부터 초 (스텝 밖이면 null) */
   anchor: (video: number, seconds: number) => { row: ResultRow; offset: number } | null
+  /** 구간 비교: 고른 구간의 기준 Cycle 같은 자리 (Cycle 비교가 없으면 null) */
+  pairOf: ((video: number, start: number, end: number) => ComparePair | { error: string }) | null
+  /** 영상(차례)을 재생할 주소 · fps (아직 변환 전이면 null) */
+  playable: (video: number) => { url: string; fps: number | null } | null
   videos: SearchVideo[]
   /** 그래프에 스텝 경계를 그리는 Result 표 */
   steps: StepSource
@@ -687,6 +981,8 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
       e.stopPropagation()
       if (showDefaults) setShowDefaults(false)
       else if (state.picking) state.setPicking(null)
+      else if (state.compareSel) state.setCompareSel(null)
+      else if (state.comparing) state.setComparing(false)
       else if (state.memoDraft) state.setMemoDraft(null)
       else if (state.excludeEdit) state.setExcludeEdit(false)
       else state.close()
@@ -714,6 +1010,9 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
     () => (md && md.video === current && md.start !== null && md.end !== null ? [md.start, md.end] : null),
     [md, current],
   )
+  const cs = state.compareSel
+  const compareSpan = useMemo<[number, number] | null>(() => (state.comparing && cs && cs.video === current ? [cs.start, cs.end] : null), [state.comparing, cs, current])
+  const pair = useMemo(() => (cs && pairOf ? pairOf(cs.video, cs.start, cs.end) : null), [cs, pairOf])
 
   const frame = state.picking
   /** 고른 꼭짓점 (프레임 픽셀) → 비율 꼭짓점 넷 */
@@ -767,11 +1066,28 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
         <button
           type="button"
           className={state.memoDraft ? 'active' : ''}
-          onClick={() => state.setMemoDraft(state.memoDraft ? null : { video: current, start: null, end: null, memo: '', everyCycle: true, editing: null })}
+          onClick={() => {
+            state.setComparing(false)
+            state.setMemoDraft(state.memoDraft ? null : { video: current, start: null, end: null, memo: '', everyCycle: true, editing: null })
+          }}
           title="고른 Cycle(보통 정상 동작을 확인한 첫 Cycle)의 구간에 메모를 남기면, 모든 Cycle의 같은 자리에서 그 Cycle에 있던 것과 같은 검출을 뺍니다 (예: 켜질 때 웰컴 애니메이션 = 부팅 로드 중). 새로 생긴 깜박임 등은 그대로 둡니다"
         >
           📝 메모 구간
           {state.memos.length > 0 && <span className="rv-va-count on">{state.memos.length}</span>}
+        </button>
+        <button
+          type="button"
+          className={state.comparing ? 'active' : ''}
+          disabled={!pairOf}
+          onClick={() => {
+            state.setMemoDraft(null)
+            state.setComparing(!state.comparing)
+          }}
+          title={pairOf
+            ? `켜고 그래프를 끌어 구간을 고르면, 그 구간과 기준 Cycle(${cycle?.ref ?? ''})의 같은 자리(같은 스텝·오프셋에서 밝기 흐름으로 맞춤)를 나란히 동시에 재생합니다`
+            : '분석한 뒤, Cycle이 둘 이상이면 씁니다'}
+        >
+          ⇆ 구간 비교
         </button>
         <button
           type="button"
@@ -810,6 +1126,11 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
           onSeek={(video, t) => videos[video] && onSeek(videos[video].path, t)}
         />
       )}
+      {state.comparing && (
+        <p className="small muted">
+          {`⇆ 그래프를 끌어 비교할 구간을 고르세요 — 기준 Cycle(${cycle?.ref ?? ''})의 같은 자리와 나란히 재생합니다 (Esc 끄기)`}
+        </p>
+      )}
       {state.running && (
         <div className="small muted">
           <progress max={1} value={status?.progress ?? 0} />{' '}
@@ -839,10 +1160,12 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
           cycleMaps={(current >= 0 && cycle?.maps[current]) || NO_MAPS}
           anomalies={curAnomalies}
           memos={curMemos}
-          draft={draftSpan}
-          onSelect={state.memoDraft && current >= 0
-            ? (a, b) => state.setMemoDraft({ ...state.memoDraft!, video: current, start: Math.round(a * 100) / 100, end: Math.round(b * 100) / 100 })
-            : null}
+          draft={compareSpan ?? draftSpan}
+          onSelect={state.comparing && current >= 0
+            ? (a, b) => b - a >= 0.2 && state.setCompareSel({ video: current, start: Math.round(a * 100) / 100, end: Math.round(b * 100) / 100 })
+            : state.memoDraft && current >= 0
+              ? (a, b) => state.setMemoDraft({ ...state.memoDraft!, video: current, start: Math.round(a * 100) / 100, end: Math.round(b * 100) / 100 })
+              : null}
           duration={current >= 0 ? videos[current].duration : null}
           steps={chartSteps}
           now={nowSeconds}
@@ -881,6 +1204,16 @@ export function VideoAnalysisPanel({ state, staticMin, results, excluded, cycle,
         </div>
       )}
       {showDefaults && <AnalysisDefaultsDialog project={state.project} onClose={() => setShowDefaults(false)} />}
+      {pair && cycle && (
+        <CompareDialog
+          key={`${cs!.video}:${cs!.start}:${cs!.end}`}
+          pair={pair}
+          refCycle={cycle.ref}
+          playable={playable}
+          nameOf={multi ? (i) => videos[i]?.name ?? '' : null}
+          onClose={() => state.setCompareSel(null)}
+        />
+      )}
       {frame && (
         <QuadPickerDialog
           frame={frame}

@@ -5616,7 +5616,14 @@ th.sortable:hover {
 .rv-table.compact .rv-colhead-ico { font-size: 9px; }
 .rv-table.compact .rv-colhead-label { flex: 0 1 auto; }
 /* 머리글: 가로 스크롤은 본문을 따라감 · [전체 보기] 단추 (RFW Message) */
-.rv-head-scroll { flex: none; overflow: hidden; }
+.rv-head-scroll { flex: none; overflow: hidden; position: relative; }
+/* 열 경계 끌기: 머리글 위에 같은 grid로 겹친 칸의 오른쪽 끝 */
+.rv-col-resizers { position: absolute; inset: 0; display: grid; pointer-events: none; }
+.rv-col-resizers > span { position: relative; min-width: 0; }
+.rv-col-resize { position: absolute; top: 0; bottom: 0; right: -3px; width: 7px; z-index: 1; cursor: col-resize; pointer-events: auto; }
+.rv-col-resizers > span:last-child > .rv-col-resize { right: 0; width: 5px; }
+.rv-col-resize:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+body.rv-col-resizing, body.rv-col-resizing * { cursor: col-resize !important; user-select: none !important; }
 .rv-table.fixed .rv-row-head > .rv-colhead-wrap { display: flex; align-items: stretch; gap: 0; padding: 0; }
 /* 열이 아주 넓어져도 거르기(▾)·넓히기 단추는 글자 바로 옆에 */
 .rv-table.fixed .rv-colhead-wrap > .rv-colhead { flex: 0 1 auto; width: auto; min-width: 0; }
@@ -5625,6 +5632,9 @@ th.sortable:hover {
 .rv-colhead-expand:hover { background: var(--hover); color: var(--text); }
 .rv-colhead-expand.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .rv-colhead.center .rv-colhead-label { flex: 0 1 auto; }
+/* ATS(작은 글자): 머리글 가운데, 넓히기 단추도 작게 */
+.rv-table.compact .rv-row-head > .rv-colhead-wrap { justify-content: center; }
+.rv-table.compact .rv-colhead-expand { width: 16px; height: 18px; margin-left: 1px; font-size: 11px; }
 .rv-row:hover { background: var(--hover); }
 .rv-row-head { height: 26px; font-weight: 600; background: var(--panel); cursor: default; }
 .rv-row.selected { background: var(--selected); }
@@ -5674,6 +5684,24 @@ th.sortable:hover {
 .rv-modal-box { width: min(500px, 94vw); max-height: 90vh; overflow: auto; padding: 14px 16px; }
 .rv-modal-box.wide { width: min(780px, 94vw); }
 .rv-modal-box progress { width: 100%; }
+/* 영상 분석 구간 비교: 기준 Cycle · 고른 구간 영상을 나란히 */
+.rv-modal-box.rv-compare { width: 96vw; height: 92vh; max-height: 92vh; overflow: hidden; display: flex; flex-direction: column; gap: 8px; }
+.rv-compare .rv-drawer-head { display: flex; align-items: center; gap: 10px; }
+.rv-compare-grid { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-height: 0; }
+/* 포커스한 화면(조작을 받는 영상): 동시 조작이면 둘 다 */
+.rv-compare-side { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; min-height: 0; padding: 4px; border: 2px solid transparent; border-radius: 6px; cursor: pointer; }
+.rv-compare-side.focused { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.rv-compare-side figcaption { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.rv-compare-side video { flex: 1; width: 100%; min-height: 0; background: #000; border-radius: 4px; object-fit: contain; }
+.rv-compare-empty { flex: 1; display: grid; place-items: center; background: var(--hover); border-radius: 4px; padding: 12px; text-align: center; }
+.rv-compare-mode { display: inline-flex; }
+.rv-compare-mode > button { border-radius: 0; }
+.rv-compare-mode > button:first-child { border-radius: 4px 0 0 4px; }
+.rv-compare-mode > button:last-child { border-radius: 0 4px 4px 0; margin-left: -1px; }
+.rv-compare-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rv-compare-bar label { display: inline-flex; align-items: center; gap: 3px; }
+.rv-compare-seek { flex: 1; min-width: 160px; }
+@media (max-width: 760px) { .rv-compare-grid { grid-template-columns: 1fr; } }
 /* 영상 분석 기준값 (프로젝트): 묶음마다 이름 · 칸+단위 · 기본값 한 줄, 설명은 아래 작게 */
 .va-defaults { display: flex; flex-direction: column; gap: 10px; }
 .va-defaults .hint { margin: 0; }

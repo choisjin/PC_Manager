@@ -78,8 +78,9 @@ export interface TableSpec {
   timeCell: number
   /** 핵심만 한 줄로 줄여 보여 줄 열 (shortMessage). 원래 글은 마우스를 올리면 */
   pathCells?: number[]
-  /** 머리글 [전체 보기]로 내용 길이만큼 넓힐 열. expandColumns = 그때 앞 열들의 줄인 폭 */
-  expandCell?: number
+  /** 머리글 [전체 보기]로 내용 길이만큼 넓힐 수 있는 열 (한 번에 한 열) */
+  expandCells?: number[]
+  /** 넓힐 때 앞 열들의 줄인 폭 (넓히는 열이 마지막 열일 때, RFW). 없으면 다른 열은 그대로 두고 그 열만 넓힌다 */
   expandColumns?: string
   /** 작은 글자(9px, 머리글과 같게)·좁은 칸 여백·머리글 가운데 (ATS) */
   compact?: boolean
@@ -624,6 +625,8 @@ export function parseAts(text: string): ParsedResult {
     statusCells: [ATS_RESULT_CELL],
     alertCells: [ATS_ACTION_CELL],
     timeCell: 0,
+    // 긴 열(STATUS·STEP REMARK·STEP RESULT(DETAIL))은 머리글 [전체 보기]로 내용 길이만큼
+    expandCells: [4, 6, 8],
   }
   return { startTime: startFromPreamble(preamble), preamble, headers, mapping: ATS_MAPPING, timeKind: 'absolute', rows, table, cycleTotal: cycleTotal || null }
 }
@@ -695,7 +698,7 @@ export function parseRfw(text: string): ParsedResult {
     alertCells: [6],
     timeCell: 0,
     pathCells: [7],
-    expandCell: 7,
+    expandCells: [7],
     expandColumns: '178px 30px 72px 40px 44px 48px 40px',
   }
   attachRfwImages(rows, all.slice(1))

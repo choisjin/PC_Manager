@@ -29,7 +29,7 @@ import { AnalysisOverlay, ExcludeBar, VideoAnalysisPanel, VideoAnalysisResults }
 import { MARK_COLOR, STATIC_MIN, useVideoAnalysis } from './videoAnalysisState'
 import { compareCycles, CYCLE_COLOR } from './videoCycle'
 import { applyExclusions, type ExclusionDraft, mergeSpans, spansOf } from './videoExclude'
-import { anchorAt, applyMemos, placeMemos } from './videoMemo'
+import { anchorAt, applyMemos, comparePair, placeMemos } from './videoMemo'
 
 type PutSlot = 'result' | 'video' | 'image' | 'ref'
 type Dialog = null | 'save' | 'trim' | 'schedule'
@@ -37,6 +37,8 @@ type Dialog = null | 'save' | 'trim' | 'schedule'
 const ROW_HEIGHT = 26
 // 내용에 맞추는 열(TableSpec "fit")의 최대 폭: 더 긴 값은 … (마우스를 올리면 전체)
 const FIT_MAX = 200
+// 머리글 경계를 끌어 줄일 수 있는 가장 좁은 열 폭
+const COL_MIN = 24
 
 const sourceFromSet = (set: ResultSet): Source => ({
   mode: (set.config as ViewConfig | null)?.mode ?? 'rfw',
@@ -768,6 +770,17 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
     return compareCycles(sortedRows, rowPlace, analysis.frames, shownResults,
       { ...params, diff: analysis.cycleDiff, delayS: analysis.delayS, refCycle: analysis.refCycle }, excludeSpans, memoSpans)
   }, [vaOpen, analysis.frames, shownResults, params, analysis.cycleDiff, analysis.delayS, analysis.refCycle, sortedRows, rowPlace, excludeSpans, memoSpans])
+  // 구간 비교: 고른 구간 → 기준 Cycle의 같은 자리 · 영상 재생 주소 (변환이 끝난 영상만)
+  const refCycleName = cycleCompare?.ref ?? null
+  const comparePairOf = useMemo(
+    () => (refCycleName === null ? null
+      : (video: number, start: number, end: number) => comparePair(sortedRows, rowPlace, analysis.frames, refCycleName, video, start, end)),
+    [refCycleName, sortedRows, rowPlace, analysis.frames],
+  )
+  const playableVideo = useCallback((video: number) => {
+    const v = rawVideos[video]
+    return v?.prep === 'ready' && v.playPath ? { url: fileUrl(v.playPath), fps: v.fps ?? null } : null
+  }, [rawVideos, fileUrl])
   // 제외 구간에 드는 행 (표에 빗금): 둘 다 시각순이라 한 번 훑는다
   const rowsInExclude = useMemo(() => {
     const rowsIn = new Set<number>()
@@ -882,7 +895,7 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
             durationHint={currentRaw?.duration ?? null}
             fps={currentRaw?.fps ?? null}
             videoRef={videoRef}
-            keysEnabled={(dialog === null || trimMode) && !search.crop && !analysis.picking}
+            keysEnabled={(dialog === null || trimMode) && !search.crop && !analysis.picking && !analysis.compareSel}
             error={videoError}
             clip={clipNow}
             onTime={onTime}
@@ -1006,6 +1019,8 @@ function Viewer({ session, sessions, dialog, setDialog, setPreview }: {
               memoPlaces={memoPlaces}
               memoRemoved={memoApplied.removed}
               anchor={memoAnchor}
+              pairOf={comparePairOf}
+              playable={playableVideo}
               videos={searchVideos}
               steps={stepSource}
               currentPath={current}
@@ -1536,16 +1551,16 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   const bodyRef = useRef<HTMLDivElement>(null)
   const headRef = useRef<HTMLDivElement>(null)
   const [scroll, setScroll] = useState(0)
-  // [전체 보기]: 앞 열을 줄이고 그 열(RFW Message)을 가장 긴 내용만큼 넓힌다. 다시 누르면 원래대로
-  const [expanded, setExpanded] = useState(false)
-  const expandCell = spec?.expandCell
-  const canExpand = !!headers && expandCell !== undefined && !!spec?.expandColumns
+  // [전체 보기]: 그 열(RFW Message · ATS STATUS·STEP REMARK·DETAIL)을 가장 긴 내용만큼 넓힌다 (RFW는 앞 열을 줄임). 다시 누르면 원래대로
+  const [expanded, setExpanded] = useState<number | null>(null)
+  const canExpand = (i: number) => !!headers && !!spec?.expandCells?.includes(i)
+  const expandCell = expanded !== null && canExpand(expanded) ? expanded : null
   const expandWidth = useMemo(() => {
-    if (!expanded || !canExpand || !bodyRef.current) return 0
+    if (expandCell === null || !bodyRef.current) return 0
     const context = document.createElement('canvas').getContext('2d')
     if (!context) return 0
     // 표 칸과 같은 글꼴로 잰다
-    const sample = bodyRef.current.querySelector('.rv-row > span') ?? bodyRef.current
+    const sample = bodyRef.current.querySelector(`.rv-row > span[data-col="${expandCell}"]`) ?? bodyRef.current.querySelector('.rv-row > span') ?? bodyRef.current
     const st = getComputedStyle(sample)
     context.font = `${st.fontStyle} ${st.fontWeight} ${st.fontSize} ${st.fontFamily}`
     const show = (c: string) => (spec?.pathCells?.includes(expandCell) ? shortMessage(c) : c)
@@ -1553,8 +1568,10 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
     for (const row of rows) widest = Math.max(widest, context.measureText(show(row.cells[expandCell] ?? '')).width)
     // 칸 여백(좌우 5px) · 테두리 · 반올림 여유
     return Math.min(20000, Math.ceil(widest) + 16)
-  }, [expanded, canExpand, rows, spec, expandCell])
-  const wide = expanded && canExpand && expandWidth > 0
+  }, [expandCell, rows, spec])
+  const wide = expandCell !== null && expandWidth > 0
+  // RFW: 앞 열을 줄인 폭으로 (넓히는 열이 마지막 열)
+  const wideShrink = wide && !!spec?.expandColumns
   // 'fit' 열: 머리글·행 내용 중 가장 넓은 것 + 칸 여백 (표와 같은 글꼴로 잰다). 거르기로 행이 줄어도 좁아지지 않게
   // 넓어지기만 하고, 다른 표(spec)가 되면 다시 잰다
   const [fit, setFit] = useState<{ spec: TableSpec | null; widths: Map<number, number> }>({ spec: null, widths: new Map() })
@@ -1626,6 +1643,41 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
       return same ? prev : { spec, widths }
     })
   }, [spec, headers, rows, fontsReady])
+  // 머리글 경계를 끌어 정한 열 폭 (두 번 누르면 원래대로). 다른 표(spec)가 되면 비운다
+  const [manual, setManual] = useState<{ spec: TableSpec | null; widths: Map<number, number> }>({ spec: null, widths: new Map() })
+  const manualWidths = manual.spec === spec ? manual.widths : null
+  const setManualWidth = (col: number, width: number | null) =>
+    setManual((prev) => {
+      const widths = new Map(prev.spec === spec ? prev.widths : [])
+      if (width === null) widths.delete(col)
+      else widths.set(col, width)
+      return { spec, widths }
+    })
+  const stopResize = useRef<(() => void) | null>(null)
+  useEffect(() => () => stopResize.current?.(), [])
+  const onResizeDown = (e: React.MouseEvent, col: number) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    // 지금 보이는 머리글 칸의 폭에서 시작 (# 열이 있으면 한 칸 뒤)
+    const cell = headRef.current?.firstElementChild?.children[col + (spec?.noIndex ? 0 : 1)]
+    if (!cell) return
+    const start = cell.getBoundingClientRect().width
+    const x0 = e.clientX
+    if (expandCell === col) setExpanded(null)
+    stopResize.current?.()
+    const onMove = (ev: MouseEvent) => setManualWidth(col, Math.max(COL_MIN, Math.round(start + ev.clientX - x0)))
+    const stop = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', stop)
+      document.body.classList.remove('rv-col-resizing')
+      stopResize.current = null
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', stop)
+    document.body.classList.add('rv-col-resizing')
+    stopResize.current = stop
+  }
   const [height, setHeight] = useState(400)
   const lastUserScroll = useRef(0)
 
@@ -1764,18 +1816,26 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
   const last = Math.min(rows.length, Math.ceil((scroll + height) / ROW_HEIGHT) + 10)
   const anchorRows = new Set(anchors.map((a) => a.row))
   const center = new Set(spec?.center ?? [])
-  const columnList = spec ? splitColumns(spec.columns).map((t, i) => (t === 'fit' ? `${fitWidths?.get(i) ?? 60}px` : t)) : []
+  // 끌어서 정한 폭이 먼저. 넓힌 열(앞 열을 줄이지 않을 때): 그 열만 내용 길이를 최소 폭으로, 나머지는 그대로 (넓으면 가로 스크롤)
+  const columnList = spec
+    ? splitColumns(spec.columns).map((t, i) => {
+        const set = manualWidths?.get(i)
+        if (set !== undefined) return `${set}px`
+        if (wide && !wideShrink && i === expandCell) return `minmax(${expandWidth}px, 1fr)`
+        return t === 'fit' ? `${fitWidths?.get(i) ?? 60}px` : t
+      })
+    : []
   // 행 번호(#) 열 (ATS는 없음 — 기준점 📍은 시각 칸 앞에)
   const index = !spec?.noIndex
   const numberWidth = !index ? 0 : spec?.compact ? 34 : 40
   const wrapping = new Set(spec?.wrapCells ?? [])
   const grid = spec
-    ? { gridTemplateColumns: wide ? `40px ${spec.expandColumns} minmax(${expandWidth}px, 1fr)` : `${index ? `${numberWidth}px ` : ''}${columnList.join(' ')}` }
+    ? { gridTemplateColumns: wideShrink ? `40px ${spec.expandColumns} minmax(${expandWidth}px, 1fr)` : `${index ? `${numberWidth}px ` : ''}${columnList.join(' ')}` }
     : undefined
   // 넓힌 표는 가로로 스크롤 (머리글도 같이)
-  const wideWidth = wide ? 40 + (spec?.expandColumns ?? '').split(/\s+/).reduce((sum, w) => sum + (parseFloat(w) || 0), 0) + expandWidth : 0
+  const wideWidth = wideShrink ? 40 + (spec?.expandColumns ?? '').split(/\s+/).reduce((sum, w) => sum + (parseFloat(w) || 0), 0) + expandWidth : 0
   // 열 폭의 합(px·minmax 최소)이 창보다 넓으면 행·머리글을 그만큼 넓혀 가로로 스크롤 (행 배경·선택이 끝까지, 머리글과 칸이 맞게)
-  const minWidth = wide ? wideWidth
+  const minWidth = wideShrink ? wideWidth
     : spec ? numberWidth + columnList.reduce((sum, t) => sum + (parseFloat(/^minmax\(\s*([\d.]+)px/.exec(t)?.[1] ?? t) || 0), 0) : 0
 
   const colHead = (h: string, i: number) => (
@@ -1797,22 +1857,41 @@ function RowTable({ headers, spec, filtered, sort, onHeader, rows, selected, pla
       <div className="rv-head-scroll" ref={headRef}>
         <div className="rv-row rv-row-head small" style={{ ...grid, ...(minWidth ? { minWidth } : null) }}>
           {headers
-            ? <>{index && <span>#</span>}{headers.map((h, i) => (canExpand && i === expandCell ? (
+            ? <>{index && <span>#</span>}{headers.map((h, i) => (canExpand(i) ? (
                 <span key={i} className="rv-colhead-wrap">
                   {colHead(h, i)}
                   <button
                     type="button"
-                    className={`rv-colhead-expand${expanded ? ' on' : ''}`}
-                    title={expanded ? '원래 폭으로' : '전체 보기 — 앞 열을 줄이고 이 열을 내용 전체 길이로'}
-                    aria-pressed={expanded}
-                    onClick={() => setExpanded((v) => !v)}
+                    className={`rv-colhead-expand${expandCell === i ? ' on' : ''}`}
+                    title={expandCell === i ? '원래 폭으로' : spec?.expandColumns ? '전체 보기 — 앞 열을 줄이고 이 열을 내용 전체 길이로' : '전체 보기 — 이 열을 내용 전체 길이로'}
+                    aria-pressed={expandCell === i}
+                    onClick={() => {
+                      setExpanded((v) => (v === i ? null : i))
+                      setManualWidth(i, null)
+                    }}
                   >
-                    {expanded ? '⇤' : '⇔'}
+                    {expandCell === i ? '⇤' : '⇔'}
                   </button>
                 </span>
               ) : colHead(h, i)))}</>
             : <><span>#</span><span>시간</span><span>회차</span><span>스텝</span><span>결과</span><span>걸린 시간</span><span>메시지</span><span>영상</span></>}
         </div>
+        {/* 열 경계 끌기 손잡이: 머리글과 같은 grid를 위에 겹쳐 칸마다 오른쪽 끝에 (앞 열을 줄여 넓힌 RFW는 빼고) */}
+        {headers && spec && !wideShrink && (
+          <div className="rv-col-resizers" style={{ ...grid, ...(minWidth ? { minWidth } : null) }}>
+            {index && <span />}
+            {headers.map((h, i) => (
+              <span key={i}>
+                <span
+                  className="rv-col-resize"
+                  title={`${h} 폭 — 끌어서 조절, 두 번 누르면 원래대로`}
+                  onMouseDown={(e) => onResizeDown(e, i)}
+                  onDoubleClick={() => setManualWidth(i, null)}
+                />
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div
         className="rv-table-body"

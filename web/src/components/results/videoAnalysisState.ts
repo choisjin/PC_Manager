@@ -250,6 +250,9 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
   // 메모 구간 · 메모 구간 고르는 줄 (영상 분석 패널 안, 열려 있으면 그래프를 끌어 구간을 고른다)
   const [memos, setMemos] = useState<MemoSpan[]>([])
   const [memoDraft, setMemoDraft] = useState<MemoDraft | null>(null)
+  // 구간 비교: 켜면 그래프를 끌어 구간을 고르고, 고른 구간(영상 차례 · 영상 안 초)을 기준 Cycle의 같은 자리와 나란히 재생하는 창을 연다
+  const [comparing, setComparing] = useState(false)
+  const [compareSel, setCompareSel] = useState<{ video: number; start: number; end: number } | null>(null)
   // Cycle 비교: 첫 Cycle과 밝기가 이만큼(0~255) 넘게 다르면 특이점 (평균 색은 1.5배)
   const [cycleDiff, setCycleDiff] = useState(CYCLE_DIFF_DEFAULT)
   // Cycle 비교의 기준 Cycle (사용자가 정상 동작을 확인한 Cycle, null이면 첫 Cycle) · 화면 전환이 이만큼(초) 넘게 늦으면 지연
@@ -353,6 +356,8 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
     setPicking(null)
     setExcludeEdit(false)
     setMemoDraft(null)
+    setComparing(false)
+    setCompareSel(null)
   }
 
   /** i번째 영상: 아직 판정하지 않은 구간 경계마다 판정 (마지막 경계는 다 받았으면 끝까지 닫음). close: 멈춤·오류 — 받은 데까지 닫는다 */
@@ -590,6 +595,7 @@ export function useVideoAnalysis(ctx: JobContext, videos: SearchVideo[]) {
     schedulePayload, project,
     open, setOpen, close, customRoi, setCustomRoi, staticS, changeStatic, showRoi, setShowRoi,
     picking, setPicking, excludes, setExcludes, excludeEdit, setExcludeEdit, memos, setMemos, memoDraft, setMemoDraft,
+    comparing, setComparing, compareSel, setCompareSel,
     cycleDiff, setCycleDiff: changeCycleDiff,
     refCycle, setRefCycle, delayS, setDelayS: changeDelayS,
     frames, results, setup, status, error, warning, running, retrying, elapsed, startedAt, run, stop, picked, setPicked, startsRef,
