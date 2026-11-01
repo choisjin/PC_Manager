@@ -6262,7 +6262,9 @@ body.rv-col-resizing, body.rv-col-resizing * { cursor: col-resize !important; us
 .side-menu {
   display: flex;
   flex: none;
+  flex-wrap: wrap; /* 좁은 폭·배지로 넘치면 보조 버튼이 다음 줄 오른쪽으로 */
   align-items: center;
+  justify-content: flex-end;
   gap: 1px;
   min-width: 0;
   padding: 3px 4px;
@@ -6275,7 +6277,7 @@ body.rv-col-resizing, body.rv-col-resizing * { cursor: col-resize !important; us
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 6px;
+  padding: 2px 5px;
   font-size: 11px;
   white-space: nowrap;
   color: var(--muted);
@@ -6288,9 +6290,26 @@ body.rv-col-resizing, body.rv-col-resizing * { cursor: col-resize !important; us
   background: var(--hover);
 }
 .side-menu button[role='tab'].active {
-  color: var(--text);
-  background: var(--hover);
+  color: var(--accent);
+  background: var(--selected);
   font-weight: 600;
+}
+/* PC = 메인 버튼 (브랜드 색 · 왼쪽), 채팅·메모·진행상황 = 보조 버튼 (글자만 · 오른쪽 정렬) */
+.side-menu button[role='tab'].side-main {
+  margin-right: auto;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.side-menu button[role='tab'].side-main:hover {
+  background: var(--selected);
+}
+.side-menu button[role='tab'].side-main.active,
+.side-menu button[role='tab'].side-main.active:hover {
+  color: #fff;
+  background: var(--accent);
 }
 /* 탭 내용: 사이드바 남은 높이를 채운다 (진행상황은 PiP와 같은 목록) */
 .side-hub {

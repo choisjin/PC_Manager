@@ -448,7 +448,7 @@ export function PcTree({ variant = 'files', agents, groups, saveGroups, shares =
         <button type="button" className="icon tree-collapse" title="접기" onClick={onToggleCollapse}>
           ◂
         </button>
-        <button type="button" role="tab" aria-selected={tab === 'pc'} className={tab === 'pc' ? 'active' : ''} onClick={() => chooseTab('pc')}>
+        <button type="button" role="tab" aria-selected={tab === 'pc'} className={`side-main${tab === 'pc' ? ' active' : ''}`} onClick={() => chooseTab('pc')}>
           PC
         </button>
         {hub && HUB_TABS.map(([k, label]) => (
